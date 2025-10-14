@@ -21,6 +21,7 @@ export class Game {
     private readonly fixedDelta = 1 / RENDER.targetFPS;
     private pixelRatio = Math.min(window.devicePixelRatio, RENDER.maxPixelRatio);
     private prevBoost = false;
+    private started = false;
 
     private track!: Track;
     private ship!: Ship;
@@ -98,11 +99,18 @@ export class Game {
             this.ui.setStarted(true);
             this.audio.start();
             window.removeEventListener('keydown', handler);
+            document.getElementById('beginBtn')?.removeEventListener('click', begin);
+            this.started = true;
+            // remove the splash after transition to ensure it's gone
+            setTimeout(() => start?.remove(), 450);
+            // Request pointer lock for mouse look
+            this.renderer.domElement.requestPointerLock?.();
         };
         const handler = (e: KeyboardEvent) => {
             if (e.code === 'Space') begin();
         };
         window.addEventListener('keydown', handler);
+        document.getElementById('beginBtn')?.addEventListener('click', begin);
     }
 
     private onResize() {
@@ -136,6 +144,11 @@ export class Game {
     };
 
     private update(dt: number) {
+        if (!this.started) {
+            this.ui.update(this.ship.state);
+            return;
+        }
+
         this.ship.update(dt);
         this.particles.update(dt);
         this.env.update(dt);

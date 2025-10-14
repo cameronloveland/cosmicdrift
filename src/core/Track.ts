@@ -5,15 +5,19 @@ import { LineGeometry } from 'three-stdlib';
 import { COLORS } from './constants';
 
 function makeControlPoints(): THREE.Vector3[] {
+    // Create a long loop with gentle elevation changes
     const pts = [
         new THREE.Vector3(0, 0, 0),
-        new THREE.Vector3(15, 3, -40),
-        new THREE.Vector3(35, -2, -90),
-        new THREE.Vector3(0, -1, -140),
-        new THREE.Vector3(-40, 2, -190),
-        new THREE.Vector3(-5, 5, -240),
-        new THREE.Vector3(30, 0, -290),
-        new THREE.Vector3(0, -3, -340)
+        new THREE.Vector3(60, 2, -80),
+        new THREE.Vector3(140, 0, -160),
+        new THREE.Vector3(200, -1, -60),
+        new THREE.Vector3(240, 1, 60),
+        new THREE.Vector3(160, 3, 160),
+        new THREE.Vector3(40, 0, 220),
+        new THREE.Vector3(-80, -2, 160),
+        new THREE.Vector3(-160, 0, 40),
+        new THREE.Vector3(-140, 2, -100),
+        new THREE.Vector3(-60, 0, -180)
     ];
     return pts;
 }
@@ -26,47 +30,86 @@ export class Track {
 
     constructor() {
         const controls = makeControlPoints();
-        this.curve = new THREE.CatmullRomCurve3(controls, false, 'catmullrom', 0.15);
+        this.curve = new THREE.CatmullRomCurve3(controls, true, 'catmullrom', 0.15);
         this.length = this.curve.getLength();
 
-        // Tube surface
-        const tubularSegments = 800;
-        const radius = 2.2;
-        const radialSegments = 16;
-        const closed = false;
-        const tube = new THREE.TubeGeometry(this.curve, tubularSegments, radius, radialSegments, closed);
+        // Flat ribbon track that follows the curve
+        const trackWidth = 8.0;
+        const segments = 800;
+        const positions: number[] = [];
+        const normals: number[] = [];
+        const uvs: number[] = [];
+        const indices: number[] = [];
+        const normal = new THREE.Vector3();
+        const binormal = new THREE.Vector3();
+        const tangent = new THREE.Vector3();
+
+        for (let i = 0; i <= segments; i++) {
+            const t = i / segments;
+            const center = this.curve.getPointAt(t);
+            this.getStableFrame(t, normal, binormal, tangent);
+
+            // Use computed right vector as across-track direction
+            const half = trackWidth * 0.5;
+            const left = new THREE.Vector3().copy(center).addScaledVector(binormal, -half);
+            const right = new THREE.Vector3().copy(center).addScaledVector(binormal, half);
+
+            positions.push(left.x, left.y, left.z);
+            positions.push(right.x, right.y, right.z);
+
+            // Up vector from forward x right
+            const up = new THREE.Vector3().copy(tangent).cross(binormal).normalize();
+            normals.push(up.x, up.y, up.z);
+            normals.push(up.x, up.y, up.z);
+
+            // UVs for simple strip texture scrolling
+            uvs.push(0, t * 50);
+            uvs.push(1, t * 50);
+        }
+
+        for (let i = 0; i < segments; i++) {
+            const a = i * 2;
+            const b = a + 1;
+            const c = a + 2;
+            const d = a + 3;
+            indices.push(a, b, d, a, d, c);
+        }
+
+        const geom = new THREE.BufferGeometry();
+        geom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+        geom.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+        geom.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+        geom.setIndex(indices);
+
         const mat = new THREE.MeshPhysicalMaterial({
-            color: new THREE.Color(0x0f122a),
-            roughness: 0.2,
-            metalness: 0.1,
+            color: new THREE.Color(0x0e1130),
+            roughness: 0.35,
+            metalness: 0.05,
             transparent: true,
-            opacity: 0.95,
-            transmission: 0.4,
-            emissive: COLORS.deepBlue.clone().multiplyScalar(0.2),
-            envMapIntensity: 0.5
+            opacity: 0.98,
+            emissive: COLORS.deepBlue.clone().multiplyScalar(0.25),
+            envMapIntensity: 0.4
         });
-        const mesh = new THREE.Mesh(tube, mat);
-        mesh.receiveShadow = false;
-        this.root.add(mesh);
+        const ribbon = new THREE.Mesh(geom, mat);
+        ribbon.receiveShadow = false;
+        this.root.add(ribbon);
 
-        // Neon rails
-        const railOffset = radius + 0.15;
-        this.addRail(railOffset, COLORS.neonCyan, 3.0);
-        this.addRail(-railOffset, COLORS.neonMagenta, 3.0);
+        // Neon rails at edges (cyan right, magenta left)
+        const railOffset = trackWidth * 0.5 + 0.1;
+        this.addFlatRail(railOffset, COLORS.neonCyan, 3.0);
+        this.addFlatRail(-railOffset, COLORS.neonMagenta, 3.0);
 
-        // Ring lights
+        // Decorative arches above the track
         const rings = new THREE.Group();
-        const ringGeom = new THREE.TorusGeometry(radius + 0.4, 0.05, 8, 48);
+        const ringRadius = 1.2 * trackWidth * 0.5;
+        const ringGeom = new THREE.TorusGeometry(ringRadius, 0.05, 8, 48);
         const ringMat = new THREE.MeshBasicMaterial({ color: COLORS.violet, toneMapped: false });
-        for (let i = 0; i < 30; i++) {
-            const t = i / 30;
+        for (let i = 0; i < 24; i++) {
+            const t = i / 24;
             const pos = this.curve.getPointAt(t);
-            const tangent = this.curve.getTangentAt(t);
-            const q = new THREE.Quaternion();
-            q.setFromUnitVectors(new THREE.Vector3(0, 0, 1), tangent);
+            const up = new THREE.Vector3(0, 1, 0);
             const ring = new THREE.Mesh(ringGeom, ringMat);
-            ring.position.copy(pos);
-            ring.quaternion.copy(q);
+            ring.position.copy(pos).addScaledVector(up, 1.5);
             rings.add(ring);
         }
         this.root.add(rings);
@@ -81,7 +124,7 @@ export class Track {
         for (let i = 0; i <= samples; i++) {
             const t = i / samples;
             const pos = this.curve.getPointAt(t);
-            this.getFrenetFrame(t, normal, binormal, tangent);
+            this.getStableFrame(t, normal, binormal, tangent);
             const offset = new THREE.Vector3().copy(binormal).multiplyScalar(sideOffset);
             pos.add(offset);
             positions.push(pos.x, pos.y, pos.z);
@@ -98,6 +141,11 @@ export class Track {
         this.root.add(line);
     }
 
+    // Alias to maintain API clarity for flat track rails
+    private addFlatRail(sideOffset: number, color: THREE.Color, width: number) {
+        this.addRail(sideOffset, color, width);
+    }
+
     public updateResolution(width: number, height: number) {
         for (const m of this.railMaterials) m.resolution.set(width, height);
     }
@@ -112,6 +160,17 @@ export class Track {
         const arbitrary = Math.abs(tangent.y) < 0.99 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
         normal.copy(arbitrary).cross(tangent).normalize();
         binormal.copy(tangent).cross(normal).normalize();
+    }
+
+    // Stable world-up based frame to reduce twisting
+    private getStableFrame(t: number, normal: THREE.Vector3, binormal: THREE.Vector3, tangent: THREE.Vector3) {
+        const u = THREE.MathUtils.clamp(t, 0, 1);
+        tangent.copy(this.curve.getTangentAt(u)).normalize();
+        const worldUp = new THREE.Vector3(0, 1, 0);
+        // right
+        binormal.copy(worldUp).cross(tangent).normalize();
+        // up
+        normal.copy(tangent).cross(binormal).normalize();
     }
 }
 

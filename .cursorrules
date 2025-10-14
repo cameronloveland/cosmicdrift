@@ -1,0 +1,64 @@
+# 🌌 COSMIC DRIFT – Cursor Guidelines
+
+## 🎯 Purpose
+Prototype a **neon, cinematic space-racing game** in **TypeScript + Three.js**.  
+The world should feel fast, smooth, and visually polished — like *Need for Speed Underground* in space.
+
+---
+
+## 🧩 Tech & Structure
+- Language: **TypeScript (strict)**, built with **Vite**.
+- Core libs: `three`, `postprocessing`, `three-stdlib`, `stats.js`.
+- Entry: `index.html` → `src/main.ts` → `src/core/Game.ts`.
+- Systems live in `src/core/`: `Game`, `Track`, `Ship`, `Environment`, `Particles`, `AudioSystem`, `UI`, `constants`, `types`.
+- UI: vanilla DOM only (no React or frameworks).
+
+---
+
+## 🪞 Visual & Rendering Rules
+1. **Always cinematic.** Use realistic lighting, tone mapping, and subtle bloom.  
+2. **Renderer setup:** keep ACES tone mapping, sRGB color space, and soft shadows.  
+3. **Lighting:** minimal (1–2 lights) + HDRI environment for depth.  
+4. **Post-FX:** include bloom, vignette, color grading, motion blur, and chromatic aberration — subtle and cohesive.  
+5. **Materials:** use PBR or stylized shaders, no default grey.  
+6. **Camera:** chase-cam feel; small shake, FOV expands on boost.  
+7. **Particles:** lightweight, GPU-instanced; no per-frame allocations.
+
+---
+
+## ⚙️ Code & Performance
+- Keep methods small and focused (`update`/`render` pattern).
+- Reuse math objects (`Vector3`, `Matrix4`, etc.).
+- Maintain constants in `constants.ts`; no inline “magic numbers.”
+- Maintain a fixed timestep accumulator; cap steps per frame.
+- Target 60 FPS and smooth motion — quality > quantity.
+
+---
+
+## 🎮 Input & Gameplay
+- Keyboard only (WASD + Boost).  
+- Smooth damping, lerps, and momentum — never twitchy.  
+- Camera should feel tethered and weighty, not locked.
+
+---
+
+## 🧱 Contribution Rules
+- Prefer **small, self-contained diffs**.  
+- Avoid new libraries unless essential.  
+- Preserve existing file structure and formatting.  
+- Refactors should keep behavior identical unless otherwise requested.
+
+---
+
+## 🧪 Validation Checklist
+Before committing or merging:
+- [ ] Game boots with no console errors  
+- [ ] Visuals feel smooth and cinematic  
+- [ ] HUD/UI visible and working  
+- [ ] Controls responsive  
+- [ ] 60 FPS on mid hardware  
+
+---
+
+### ✨ Design Pillars
+**Fast • Chill • Polished • Cinematic • Clean Code**

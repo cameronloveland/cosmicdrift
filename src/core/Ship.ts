@@ -20,6 +20,10 @@ export class Ship {
     private velocitySide = 0;
     private velocityPitch = 0;
     private boostTimer = 0;
+    private mouseYawTarget = 0;
+    private mousePitchTarget = 0;
+    private mouseYaw = 0;
+    private mousePitch = 0;
 
     private tmp = {
         pos: new THREE.Vector3(),
@@ -51,6 +55,7 @@ export class Ship {
 
         window.addEventListener('keydown', (e) => this.onKey(e, true));
         window.addEventListener('keyup', (e) => this.onKey(e, false));
+        window.addEventListener('mousemove', (e) => this.onMouseMove(e));
     }
 
     private input = { left: false, right: false, up: false, down: false, boost: false };
@@ -61,6 +66,15 @@ export class Ship {
         if (e.code === 'ArrowUp' || e.code === 'KeyW') this.input.up = down;
         if (e.code === 'ArrowDown' || e.code === 'KeyS') this.input.down = down;
         if (e.code === 'Space') this.input.boost = down;
+    }
+
+    private onMouseMove(e: MouseEvent) {
+        // Only actively steer camera when pointer is locked; fall back to small deltas otherwise
+        const dx = (document.pointerLockElement ? e.movementX : 0);
+        const dy = (document.pointerLockElement ? e.movementY : 0);
+        if (dx === 0 && dy === 0) return;
+        this.mouseYawTarget = THREE.MathUtils.clamp(this.mouseYawTarget + dx * 0.002, -0.6, 0.6);
+        this.mousePitchTarget = THREE.MathUtils.clamp(this.mousePitchTarget + dy * 0.0015, -0.35, 0.35);
     }
 
     update(dt: number) {
@@ -94,18 +108,22 @@ export class Ship {
         const df = (fast && stable ? PHYSICS.flowFillSpeed : -PHYSICS.flowDrainSpeed) * dt;
         this.state.flow = THREE.MathUtils.clamp(this.state.flow + df, 0, 1);
 
-        // position and orientation from Frenet frames
+        // position and orientation from flat-track Frenet frame
         const { pos, tangent, normal, binormal, right, up, forward } = this.tmp;
         this.track.getPointAtT(this.state.t, pos);
         this.track.getFrenetFrame(this.state.t, normal, binormal, tangent);
-        forward.copy(tangent);
-        // Build a horizon-aligned frame so left/right is sideways, not vertical
-        const worldUp = new THREE.Vector3(0, 1, 0);
-        right.copy(worldUp).cross(forward).normalize();
-        up.copy(forward).cross(right).normalize();
 
-        // apply lateral offset and pitch
+        // Use world-up to construct a stable frame to avoid roll twist
+        forward.copy(tangent).normalize();
+        const worldUp = new THREE.Vector3(0, 1, 0);
+        // Fix left/right orientation: right should be forward x up (not up x forward)
+        right.copy(forward).cross(worldUp).normalize();
+        up.copy(right).cross(forward).normalize();
+
+        // apply lateral offset (side to side across the ribbon) and hover height
+        const hoverHeight = 0.3;
         pos.addScaledVector(right, this.state.lateralOffset);
+        pos.addScaledVector(up, hoverHeight);
 
         // compute quaternion from basis vectors (forward, up)
         const m = new THREE.Matrix4();
@@ -116,18 +134,33 @@ export class Ship {
         const q = new THREE.Quaternion().setFromRotationMatrix(m);
         const pitchQ = new THREE.Quaternion().setFromAxisAngle(x, this.state.pitch);
         // Bank visually with sideways velocity
-        const bankAngle = THREE.MathUtils.degToRad(15) * THREE.MathUtils.clamp(this.velocitySide / PHYSICS.lateralAccel, -1, 1);
+        const bankAngle = THREE.MathUtils.degToRad(12) * THREE.MathUtils.clamp(this.velocitySide / PHYSICS.lateralAccel, -1, 1);
         const bankQ = new THREE.Quaternion().setFromAxisAngle(z, -bankAngle);
         q.multiply(pitchQ).multiply(bankQ);
         this.root.position.copy(pos);
         this.root.quaternion.copy(q);
 
-        // chase camera spring (place directly behind the ship in local space)
-        const localCamOffset = new THREE.Vector3(0, CAMERA.chaseHeight, -CAMERA.chaseDistance * (1 + this.boostTimer * 0.6));
+        // chase camera: closer, lower, pitched down
+        const camDistance = CAMERA.chaseDistance * (1 + this.boostTimer * 0.6);
+        const localCamOffset = new THREE.Vector3(0, CAMERA.chaseHeight, -camDistance);
         const worldCamTarget = this.root.localToWorld(localCamOffset.clone());
         this.camera.position.lerp(worldCamTarget, 1 - Math.pow(0.001, dt));
-        const worldLookAt = this.root.localToWorld(new THREE.Vector3(0, 0.5, 2.0));
-        this.camera.lookAt(worldLookAt);
+
+        // Look ahead down the track, add smoothed mouse look deltas
+        const lookAhead = 2.4;
+        const baseLookPoint = this.root.localToWorld(new THREE.Vector3(0, 0.2, lookAhead));
+
+        // Smooth mouse deltas
+        this.mouseYaw = THREE.MathUtils.damp(this.mouseYaw, this.mouseYawTarget, 6, dt);
+        this.mousePitch = THREE.MathUtils.damp(this.mousePitch, this.mousePitchTarget, 6, dt);
+
+        // Build direction from camera to target and rotate by yaw/pitch around ship up/right axes
+        const toTarget = new THREE.Vector3().subVectors(baseLookPoint, this.camera.position);
+        const qYaw = new THREE.Quaternion().setFromAxisAngle(up, this.mouseYaw);
+        const qPitch = new THREE.Quaternion().setFromAxisAngle(right, -this.mousePitch);
+        toTarget.applyQuaternion(qYaw).applyQuaternion(qPitch);
+        const finalLook = new THREE.Vector3().addVectors(this.camera.position, toTarget);
+        this.camera.lookAt(finalLook);
 
         // subtle speed shake
         const shake = CAMERA.shakeMax * (this.state.speedKmh / PHYSICS.maxSpeed) * (0.4 + 0.6 * this.boostTimer);

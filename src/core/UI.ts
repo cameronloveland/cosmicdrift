@@ -3,7 +3,7 @@ import { ShipState } from './types';
 export class UI {
     private speedEl = document.getElementById('speed')!;
     private lapEl = document.getElementById('lap')!;
-    private flowBar = document.getElementById('flowBar')! as HTMLDivElement;
+    private boostBar = document.getElementById('boostBar')! as HTMLDivElement;
     private startEl = document.getElementById('start')!;
     private started = false;
 
@@ -16,7 +16,7 @@ export class UI {
         const speed = Math.round(state.speedKmh);
         this.speedEl.textContent = `${speed} KM/H`;
         this.lapEl.textContent = `LAP 1/3`;
-        this.flowBar.style.width = `${Math.round(state.flow * 100)}%`;
+        this.boostBar.style.width = `${Math.round(state.flow * 100)}%`;
         // pulse title subtly by flow if visible
         if (!this.started) {
             const t = performance.now() * 0.002;

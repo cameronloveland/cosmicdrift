@@ -12,9 +12,12 @@ export const CAMERA = {
     fov: 80,
     near: 0.1,
     far: 2000,
-    chaseDistance: 7,
-    chaseHeight: 2.2,
-    shakeMax: 0.02
+    chaseDistance: 4.8,
+    chaseHeight: 1.5,
+    shakeMax: 0.02,
+    // Additional camera tuning for Mario Kart-style presentation
+    lookAheadDistance: 6.0,
+    downPitchDeg: 12
 };
 
 export const PHYSICS = {
