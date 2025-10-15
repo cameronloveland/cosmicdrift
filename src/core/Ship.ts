@@ -199,21 +199,30 @@ export class Ship {
         this.root.position.copy(pos);
         this.root.quaternion.copy(q);
 
-        // chase camera: closer, lower, pitched down
+        wwwwwwwwaaaaaaaadddddddddddddddddddddddddddd        // chase camera anchored to track Frenet frame (keeps camera perpendicular to spline)
         const camDistance = CAMERA.chaseDistance * (1 + this.boostTimer * 0.6);
-        const localCamOffset = new THREE.Vector3(0, CAMERA.chaseHeight, -camDistance);
-        const worldCamTarget = this.root.localToWorld(localCamOffset.clone());
-        this.camera.position.lerp(worldCamTarget, 1 - Math.pow(0.001, dt));
+        const camPos = new THREE.Vector3()
+            .copy(pos)
+            .addScaledVector(right, this.state.lateralOffset * 0.6)
+            .addScaledVector(up, CAMERA.chaseHeight)
+            .addScaledVector(forward, -camDistance);
+        this.camera.position.lerp(camPos, 1 - Math.pow(0.001, dt));
 
-        // Look ahead down the track, add smoothed mouse look deltas
-        const lookAhead = 2.4;
-        const baseLookPoint = this.root.localToWorld(new THREE.Vector3(0, 0.2, lookAhead));
+        // Look ahead down the track in Frenet frame, then apply smoothed mouse look deltas
+        const lookAhead = CAMERA.lookAheadDistance;
+        const baseLookPoint = new THREE.Vector3()
+            .copy(pos)
+            .addScaledVector(forward, lookAhead)
+            .addScaledVector(up, 0.2);
+
+        // Align camera up with track normal so roll matches banking
+        this.camera.up.copy(up);
 
         // Smooth mouse deltas
         this.mouseYaw = THREE.MathUtils.damp(this.mouseYaw, this.mouseYawTarget, 6, dt);
         this.mousePitch = THREE.MathUtils.damp(this.mousePitch, this.mousePitchTarget, 6, dt);
 
-        // Build direction from camera to target and rotate by yaw/pitch around ship up/right axes
+        // Build direction from camera to target and rotate by yaw/pitch around track up/right axes
         const toTarget = new THREE.Vector3().subVectors(baseLookPoint, this.camera.position);
         const qYaw = new THREE.Quaternion().setFromAxisAngle(up, this.mouseYaw);
         const qPitch = new THREE.Quaternion().setFromAxisAngle(right, -this.mousePitch);
