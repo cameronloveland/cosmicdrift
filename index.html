@@ -142,7 +142,18 @@
             opacity: .8;
         }
 
+        .meters {
+            position: absolute;
+            right: 16px;
+            bottom: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            width: 280px;
+        }
+
         .boost {
+            /* meter container */
             position: absolute;
             right: 16px;
             bottom: 16px;
@@ -152,12 +163,28 @@
             box-shadow: 0 0 12px rgba(255, 0, 255, .25) inset;
         }
 
+        .meters .boost {
+            /* reset absolute to stack inside .meters */
+            position: static;
+        }
+
         .boost .bar {
             height: 100%;
             width: 0%;
             background: linear-gradient(90deg, #53d7ff, #c33dff, #ff2bd6);
             box-shadow: 0 0 18px rgba(197, 64, 255, 0.7);
             transition: width .08s ease-out;
+        }
+
+        .boost .label {
+            position: absolute;
+            top: -16px;
+            left: 0;
+            font-size: 11px;
+            letter-spacing: 1px;
+            color: #eaf6ff;
+            opacity: 0.9;
+            text-shadow: 0 0 10px rgba(83, 215, 255, .35);
         }
 
         .title {
@@ -406,8 +433,15 @@
             <div class="speed" id="speed">0 KM/H</div>
             <div class="lap" id="lap">LAP 1/3</div>
         </div>
-        <div class="boost">
-            <div class="bar" id="boostBar"></div>
+        <div class="meters">
+            <div class="boost">
+                <div class="label">BOOST</div>
+                <div class="bar" id="boostBar"></div>
+            </div>
+            <div class="boost">
+                <div class="label">FLOW</div>
+                <div class="bar" id="flowBar"></div>
+            </div>
         </div>
     </div>
     <div class="title visible" id="start">

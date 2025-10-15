@@ -14,6 +14,7 @@ export interface ShipState {
     boosting: boolean;
     lapCurrent: number;
     lapTotal: number;
+    boostLevel: number; // 0..1 visual intensity of manual boost
 }
 
 export interface TrackSystem {

@@ -88,9 +88,11 @@ export class Game {
         // Ensure environment encloses the whole track
         this.env.setStarfieldRadius(this.track.boundingRadius * 1.6);
 
+        // Particles
         this.particles = new Particles(this.ship);
         this.scene.add(this.particles.root);
 
+        // Speed stars
         this.speedStars = new SpeedStars(this.ship, this.track);
         this.scene.add(this.speedStars.root);
 

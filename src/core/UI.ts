@@ -3,6 +3,7 @@ import { ShipState } from './types';
 export class UI {
     private speedEl = document.getElementById('speed')!;
     private lapEl = document.getElementById('lap')!;
+    private flowBar = document.getElementById('flowBar')! as HTMLDivElement;
     private boostBar = document.getElementById('boostBar')! as HTMLDivElement;
     private startEl = document.getElementById('start')!;
     private radioRoot = document.getElementById('radio')!;
@@ -25,7 +26,8 @@ export class UI {
         const speed = Math.round(state.speedKmh);
         this.speedEl.textContent = `${speed} KM/H`;
         this.lapEl.textContent = `LAP ${state.lapCurrent}/${state.lapTotal}`;
-        this.boostBar.style.width = `${Math.round(state.flow * 100)}%`;
+        this.flowBar.style.width = `${Math.round(state.flow * 100)}%`;
+        this.boostBar.style.width = `${Math.round(state.boostLevel * 100)}%`;
         // keep splash text steady; no jiggle
         if (!this.started) {
             (this.startEl.firstElementChild as HTMLElement).style.transform = 'none';

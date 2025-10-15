@@ -14,14 +14,16 @@ export class Ship {
         flow: 0,
         boosting: false,
         lapCurrent: 1,
-        lapTotal: LAPS_TOTAL
+        lapTotal: LAPS_TOTAL,
+        boostLevel: 1
     };
 
     private track: Track;
     private camera: THREE.PerspectiveCamera;
     private velocitySide = 0;
     private velocityPitch = 0;
-    private boostTimer = 0;
+    private boostTimer = 0; // visual intensity for camera/shake
+    private boostEnergy = 1; // 0..1 manual boost resource
     private boosterExpiry: number[] = [];
     private now = 0;
     // lap detection helpers
@@ -111,13 +113,23 @@ export class Ship {
         }
         stacks = this.boosterExpiry.length;
 
-        const manual = this.input.boost ? PHYSICS.boostMultiplier : 1;
+        // Manual boost resource: drains while active, regens when not held
+        let isBoosting = false;
+        if (this.input.boost && this.boostEnergy > 0) {
+            isBoosting = true;
+            this.boostEnergy = Math.max(0, this.boostEnergy - dt / PHYSICS.boostDurationSec);
+        } else if (!this.input.boost) {
+            this.boostEnergy = Math.min(1, this.boostEnergy + PHYSICS.boostRegenPerSec * dt);
+        }
+
+        const manual = isBoosting ? PHYSICS.boostMultiplier : 1;
         const boosterMul = Math.pow(PHYSICS.trackBoosterMultiplier, stacks);
         const targetSpeed = Math.min(PHYSICS.maxSpeed, PHYSICS.baseSpeed * manual * boosterMul);
         const speedLerp = 1 - Math.pow(0.001, dt); // smooth
         this.state.speedKmh = THREE.MathUtils.lerp(this.state.speedKmh, targetSpeed, speedLerp);
-        this.state.boosting = this.input.boost;
-        if (this.input.boost) this.boostTimer = Math.min(this.boostTimer + dt, 1); else this.boostTimer = Math.max(this.boostTimer - dt * 2, 0);
+        this.state.boosting = isBoosting;
+        if (isBoosting) this.boostTimer = Math.min(this.boostTimer + dt, 1); else this.boostTimer = Math.max(this.boostTimer - dt * 2, 0);
+        this.state.boostLevel = this.boostEnergy;
 
         // advance along curve
         const mps = kmhToMps(this.state.speedKmh);

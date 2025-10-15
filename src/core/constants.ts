@@ -25,6 +25,9 @@ export const PHYSICS = {
     baseSpeed: 210, // km/h visualized in HUD (convert to m/s inside)
     maxSpeed: 360,
     boostMultiplier: 1.8,
+    // Manual boost resource
+    boostDurationSec: 3.0, // full-to-empty hold duration
+    boostRegenPerSec: 0.25, // refills in ~4s when not boosting and not holding
     trackBoosterMultiplier: 1.3,
     trackBoosterDuration: 10, // seconds
     boosterLateralRatio: 0.35, // fraction of track width allowed to pick up booster (center lane)
