@@ -22,7 +22,7 @@ export const CAMERA = {
 };
 
 export const PHYSICS = {
-    baseSpeed: 70, // km/h visualized in HUD (convert to m/s inside)
+    baseSpeed: 210, // km/h visualized in HUD (convert to m/s inside)
     maxSpeed: 360,
     boostMultiplier: 1.8,
     trackBoosterMultiplier: 1.3,

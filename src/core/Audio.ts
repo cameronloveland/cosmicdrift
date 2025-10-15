@@ -74,6 +74,7 @@ export class AudioSystem {
         el.src = streamUrl;
         el.preload = 'auto';
         (el as any).playsInline = true;
+        el.muted = false;
         el.volume = this.radioGain;
         el.style.display = 'none';
         document.body.appendChild(el);
