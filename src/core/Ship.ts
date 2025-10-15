@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CAMERA, PHYSICS } from './constants';
+import { CAMERA, LAPS_TOTAL, PHYSICS } from './constants';
 import { Track } from './Track';
 
 function kmhToMps(kmh: number) { return kmh / 3.6; }
@@ -12,7 +12,9 @@ export class Ship {
         lateralOffset: 0,
         pitch: 0,
         flow: 0,
-        boosting: false
+        boosting: false,
+        lapCurrent: 1,
+        lapTotal: LAPS_TOTAL
     };
 
     private track: Track;
@@ -20,10 +22,15 @@ export class Ship {
     private velocitySide = 0;
     private velocityPitch = 0;
     private boostTimer = 0;
+    // lap detection helpers
+    private prevT = 0;
+    private checkpointT = 0.0; // could move later; start line
+
     private mouseYawTarget = 0;
     private mousePitchTarget = 0;
     private mouseYaw = 0;
     private mousePitch = 0;
+    private mouseActive = false;
 
     private tmp = {
         pos: new THREE.Vector3(),
@@ -56,6 +63,8 @@ export class Ship {
         window.addEventListener('keydown', (e) => this.onKey(e, true));
         window.addEventListener('keyup', (e) => this.onKey(e, false));
         window.addEventListener('mousemove', (e) => this.onMouseMove(e));
+        window.addEventListener('mousedown', () => this.onMouseDown());
+        window.addEventListener('mouseup', () => this.onMouseUp());
     }
 
     private input = { left: false, right: false, up: false, down: false, boost: false };
@@ -69,12 +78,24 @@ export class Ship {
     }
 
     private onMouseMove(e: MouseEvent) {
-        // Only actively steer camera when pointer is locked; fall back to small deltas otherwise
-        const dx = (document.pointerLockElement ? e.movementX : 0);
-        const dy = (document.pointerLockElement ? e.movementY : 0);
+        if (!this.mouseActive) return;
+        // Only steer when mouse is active (mouse down). Invert controls per request
+        const dx = e.movementX;
+        const dy = e.movementY;
         if (dx === 0 && dy === 0) return;
-        this.mouseYawTarget = THREE.MathUtils.clamp(this.mouseYawTarget + dx * 0.002, -0.6, 0.6);
+        this.mouseYawTarget = THREE.MathUtils.clamp(this.mouseYawTarget - dx * 0.002, -0.6, 0.6);
         this.mousePitchTarget = THREE.MathUtils.clamp(this.mousePitchTarget + dy * 0.0015, -0.35, 0.35);
+    }
+
+    private onMouseDown() {
+        this.mouseActive = true;
+        // Try to capture pointer for a smoother feel
+        (document.body as any).requestPointerLock?.();
+    }
+
+    private onMouseUp() {
+        this.mouseActive = false;
+        document.exitPointerLock?.();
     }
 
     update(dt: number) {
@@ -87,8 +108,14 @@ export class Ship {
 
         // advance along curve
         const mps = kmhToMps(this.state.speedKmh);
+        this.prevT = this.state.t;
         this.state.t += (mps * dt) / this.track.length; // normalize by length
         if (this.state.t > 1) this.state.t -= 1; if (this.state.t < 0) this.state.t += 1;
+
+        // lap wrap detection: crossing from high t to low t past checkpoint
+        if (this.prevT > 0.9 && this.state.t < 0.1) {
+            this.state.lapCurrent = this.state.lapCurrent % this.state.lapTotal + 1;
+        }
 
         // lateral control
         const sideInput = (this.input.right ? 1 : 0) - (this.input.left ? 1 : 0);
@@ -108,17 +135,15 @@ export class Ship {
         const df = (fast && stable ? PHYSICS.flowFillSpeed : -PHYSICS.flowDrainSpeed) * dt;
         this.state.flow = THREE.MathUtils.clamp(this.state.flow + df, 0, 1);
 
-        // position and orientation from flat-track Frenet frame
+        // position and orientation from banked Frenet frame
         const { pos, tangent, normal, binormal, right, up, forward } = this.tmp;
         this.track.getPointAtT(this.state.t, pos);
         this.track.getFrenetFrame(this.state.t, normal, binormal, tangent);
 
-        // Use world-up to construct a stable frame to avoid roll twist
+        // Construct frame directly from cached normals/binormals for banking
         forward.copy(tangent).normalize();
-        const worldUp = new THREE.Vector3(0, 1, 0);
-        // Fix left/right orientation: right should be forward x up (not up x forward)
-        right.copy(forward).cross(worldUp).normalize();
-        up.copy(right).cross(forward).normalize();
+        right.copy(binormal).normalize();
+        up.copy(normal).normalize();
 
         // apply lateral offset (side to side across the ribbon) and hover height
         const hoverHeight = 0.3;

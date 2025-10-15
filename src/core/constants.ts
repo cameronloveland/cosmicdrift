@@ -1,4 +1,5 @@
-import { Color } from 'three';
+import { Color, Vector3 } from 'three';
+import type { TrackOptions } from './types';
 
 export const COLORS = {
     bgDeep: new Color(0x0a0324),
@@ -11,7 +12,7 @@ export const COLORS = {
 export const CAMERA = {
     fov: 80,
     near: 0.1,
-    far: 2000,
+    far: 20000,
     chaseDistance: 4.8,
     chaseHeight: 1.5,
     shakeMax: 0.02,
@@ -46,5 +47,28 @@ export const POST = {
     bloomThreshold: 0.2,
     motionBlurSamples: 8
 };
+
+export const LAPS_TOTAL = 3;
+
+export const TRACK_SOURCE = 'procedural' as const; // 'procedural' | 'custom'
+export const TRACK_SEED = 1337;
+export const TRACK_OPTS: Readonly<TrackOptions> = {
+    seed: TRACK_SEED,
+    controlPointCount: 72,
+    samples: 2400,
+    width: 14,
+    lengthMeters: 8000,
+    radiusMin: 500,
+    radiusMax: 1600,
+    elevationAmplitude: 320,
+    maxCurvature: 0.003,
+    maxGrade: 0.16,
+    bankMaxDeg: 36,
+    markerSpacing: 50
+};
+
+export const STARFIELD_MIN_RADIUS = 6000;
+
+export const CUSTOM_TRACK_POINTS: Vector3[] = [];
 
 

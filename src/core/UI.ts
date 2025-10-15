@@ -9,13 +9,16 @@ export class UI {
 
     setStarted(v: boolean) {
         this.started = v;
-        if (v) this.startEl.classList.add('hidden');
+        if (v) {
+            this.startEl.classList.remove('visible');
+            this.startEl.classList.add('hidden');
+        }
     }
 
     update(state: ShipState) {
         const speed = Math.round(state.speedKmh);
         this.speedEl.textContent = `${speed} KM/H`;
-        this.lapEl.textContent = `LAP 1/3`;
+        this.lapEl.textContent = `LAP ${state.lapCurrent}/${state.lapTotal}`;
         this.boostBar.style.width = `${Math.round(state.flow * 100)}%`;
         // pulse title subtly by flow if visible
         if (!this.started) {

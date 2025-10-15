@@ -74,6 +74,9 @@ export class Game {
         this.env = new Environment();
         this.scene.add(this.env.root);
 
+        // Ensure environment encloses the whole track
+        this.env.setStarfieldRadius(this.track.boundingRadius * 1.6);
+
         this.particles = new Particles(this.ship);
         this.scene.add(this.particles.root);
 
@@ -95,22 +98,24 @@ export class Game {
         // Start screen interaction
         const start = document.getElementById('start');
         const begin = () => {
+            if (this.started) return;
+            start?.classList.remove('visible');
             start?.classList.add('hidden');
             this.ui.setStarted(true);
             this.audio.start();
             window.removeEventListener('keydown', handler);
             document.getElementById('beginBtn')?.removeEventListener('click', begin);
+            start?.removeEventListener('pointerdown', begin);
             this.started = true;
             // remove the splash after transition to ensure it's gone
             setTimeout(() => start?.remove(), 450);
-            // Request pointer lock for mouse look
-            this.renderer.domElement.requestPointerLock?.();
         };
         const handler = (e: KeyboardEvent) => {
-            if (e.code === 'Space') begin();
+            if (e.code === 'Space' || e.code === 'Enter') { e.preventDefault(); begin(); }
         };
         window.addEventListener('keydown', handler);
         document.getElementById('beginBtn')?.addEventListener('click', begin);
+        start?.addEventListener('pointerdown', begin);
     }
 
     private onResize() {

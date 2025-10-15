@@ -6,6 +6,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>COSMIC DRIFT (コズミック・ドリフト)</title>
     <style>
+        /* Ethnocentric Bold Italic – expects font files in public/fonts/ */
+        @font-face {
+            font-family: 'Ethnocentric';
+            src: url('/fonts/ethnocentric-bold-italic.woff2') format('woff2'),
+                url('/fonts/ethnocentric-bold-italic.woff') format('woff');
+            font-weight: 800;
+            font-style: italic;
+            font-display: swap;
+        }
+
         html,
         body,
         #app {
@@ -86,6 +96,8 @@
             letter-spacing: 12px;
             margin: 0 0 8px;
             font-weight: 800;
+            font-style: italic;
+            font-family: 'Ethnocentric', "Exo 2", "Rajdhani", "Montserrat", ui-sans-serif, system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
             color: #e6f6ff;
             text-shadow: 0 0 24px rgba(83, 215, 255, .8), 0 0 48px rgba(195, 61, 255, .4);
         }
@@ -128,22 +140,25 @@
             position: absolute;
             inset: 0;
             border-radius: inherit;
-            padding: 2px; /* border thickness */
+            padding: 2px;
+            /* border thickness */
             background: linear-gradient(90deg, #53d7ff, #ff2bd6);
             -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
             mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
             -webkit-mask-composite: xor;
-            mask-composite: exclude; /* show only the border */
+            mask-composite: exclude;
+            /* show only the border */
             pointer-events: none;
         }
 
         .title .panel::before {
             content: "";
             position: absolute;
-            inset: -8px; /* outer glow size */
+            inset: -8px;
+            /* outer glow size */
             border-radius: inherit;
             background: radial-gradient(60% 100% at 0% 50%, rgba(83, 215, 255, .55), transparent 60%),
-                        radial-gradient(60% 100% at 100% 50%, rgba(255, 43, 214, .55), transparent 60%);
+                radial-gradient(60% 100% at 100% 50%, rgba(255, 43, 214, .55), transparent 60%);
             filter: blur(12px);
             opacity: .9;
             z-index: -1;

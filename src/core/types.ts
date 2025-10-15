@@ -12,6 +12,8 @@ export interface ShipState {
     pitch: number; // radians
     flow: number; // [0..1]
     boosting: boolean;
+    lapCurrent: number;
+    lapTotal: number;
 }
 
 export interface TrackSystem {
@@ -21,5 +23,30 @@ export interface TrackSystem {
     getFrenetFrame(t: number, normal: Vector3, binormal: Vector3, tangent: Vector3): void;
     root: Object3D;
 }
+
+
+export type TrackOptions = {
+    seed: number;
+    controlPointCount: number;
+    samples: number; // geometry resolution
+    width: number; // meters
+    lengthMeters: number;
+    radiusMin: number; // inner radius of course envelope
+    radiusMax: number; // outer radius of course envelope
+    elevationAmplitude: number; // max vertical variation
+    maxCurvature: number; // rad/m clamp for turns (heuristic)
+    maxGrade: number; // rise/run clamp
+    bankMaxDeg: number;
+    markerSpacing: number; // meters between markers
+};
+
+export type TrackSample = {
+    position: Vector3;
+    tangent: Vector3;
+    normal: Vector3;
+    binormal: Vector3;
+    bankRadians: number;
+    up: Vector3;
+};
 
 
