@@ -5,6 +5,11 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>COSMIC DRIFT (コズミック・ドリフト)</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Oxanium:wght@700;800&family=Orbitron:wght@600;800&family=Noto+Sans+JP:wght@700;900&display=swap"
+        rel="stylesheet">
     <style>
         /* Ethnocentric Bold Italic – expects font files in public/fonts/ */
         @font-face {
@@ -64,6 +69,7 @@
             box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35), 0 0 12px rgba(83, 215, 255, 0.25) inset;
             pointer-events: auto;
             user-select: none;
+            z-index: 1000;
         }
 
         .radio .label {
@@ -94,12 +100,26 @@
             box-shadow: 0 4px 16px rgba(195, 61, 255, .2), 0 0 10px rgba(83, 215, 255, .18) inset;
         }
 
-        .radio .btn.playing {
+        .radio .btn.on {
+            background: #16c9ff;
+        }
+
+        .radio .btn.off {
             background: #ff2bd6;
         }
 
-        .radio .btn.paused {
-            background: #16c9ff;
+        .radio .nav {
+            pointer-events: auto;
+            border: 1px solid rgba(255, 255, 255, .18);
+            background: rgba(20, 18, 35, .75);
+            color: #e6f6ff;
+            width: 26px;
+            height: 26px;
+            display: grid;
+            place-items: center;
+            border-radius: 8px;
+            font-weight: 800;
+            cursor: pointer;
         }
 
         .radio .btn.secondary {
@@ -154,24 +174,89 @@
         }
 
         .title h1 {
-            font-size: clamp(52px, 6.4vw, 84px);
-            letter-spacing: 12px;
-            margin: 0 0 8px;
+            font-size: clamp(48px, 6vw, 82px);
+            letter-spacing: 2px;
+            margin: 0;
+            line-height: 0.9;
             font-weight: 800;
-            font-style: italic;
-            font-family: 'Ethnocentric', "Exo 2", "Rajdhani", "Montserrat", ui-sans-serif, system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
-            color: #e6f6ff;
-            text-shadow: 0 0 24px rgba(83, 215, 255, .8), 0 0 48px rgba(195, 61, 255, .4);
+            font-style: normal;
+            white-space: nowrap;
+            /* force one line */
+            font-family: 'Orbitron', 'Oxanium', "Exo 2", "Montserrat", ui-sans-serif, system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+            color: #f5fbff;
+            text-shadow: 0 2px 0 rgba(255, 255, 255, .28), 0 0 24px rgba(83, 215, 255, .7), 0 0 48px rgba(195, 61, 255, .3);
+            -webkit-text-stroke: 0.35px rgba(255, 255, 255, .12);
         }
 
+        /* Accented word for a more futuristic split logo */
+        .title h1 .accent {
+            position: relative;
+            display: inline-block;
+            padding-inline: 6px;
+            background: linear-gradient(180deg, #ffffff 0%, #e8f3ff 55%, #bcd6ff 100%);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+            text-shadow: 0 0 22px rgba(83, 215, 255, .7), 0 0 40px rgba(255, 43, 214, .35);
+            filter: drop-shadow(0 6px 18px rgba(83, 215, 255, .25));
+        }
+
+        /* underline removed per request */
+
         .title h2 {
-            font-size: 20px;
-            margin: 0 0 12px;
+            font-size: clamp(22px, 2.6vw, 34px);
+            margin: -6px 0 10px;
+            /* sit tight under wordmark like a border */
             letter-spacing: 6px;
-            font-weight: 700;
-            color: #eae3ff;
-            opacity: .95;
-            text-shadow: 0 0 16px rgba(255, 43, 214, .6);
+            line-height: 1;
+            font-weight: 900;
+            font-family: 'Noto Sans JP', "Exo 2", "Rajdhani", "Montserrat", ui-sans-serif, system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+            color: #f7f1ff;
+            text-shadow: 0 0 8px rgba(255, 255, 255, .6), 0 0 18px rgba(83, 215, 255, .85), 0 0 36px rgba(255, 43, 214, .55);
+            animation: jpGlow 3.2s ease-in-out infinite;
+            will-change: filter, text-shadow;
+        }
+
+        @keyframes jpGlow {
+
+            0%,
+            100% {
+                text-shadow: 0 0 10px rgba(83, 215, 255, .85), 0 0 22px rgba(255, 43, 214, .55), 0 0 36px rgba(83, 215, 255, .75);
+            }
+
+            50% {
+                text-shadow: 0 0 12px rgba(255, 43, 214, .9), 0 0 26px rgba(83, 215, 255, 1), 0 0 48px rgba(255, 43, 214, .75);
+            }
+        }
+
+        /* Star-border inspired animated sparkles around the panel edge
+           inspired by: https://reactbits.dev/animations/star-border */
+        .title .panel-stars {
+            position: absolute;
+            inset: 0;
+            border-radius: inherit;
+            pointer-events: none;
+            padding: 2px;
+            /* same as border thickness */
+            background:
+                radial-gradient(2px 2px at 10% 50%, rgba(255, 255, 255, .95) 49%, rgba(255, 255, 255, 0) 51%) repeat-x,
+                radial-gradient(2px 2px at 30% 50%, rgba(83, 215, 255, 1) 49%, rgba(255, 255, 255, 0) 51%) repeat-x,
+                radial-gradient(2px 2px at 50% 50%, rgba(255, 43, 214, 1) 49%, rgba(255, 255, 255, 0) 51%) repeat-x;
+            background-size: 180px 100%, 260px 100%, 340px 100%;
+            background-position: 0 0, 0 0, 0 0;
+            -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+            mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+            -webkit-mask-composite: xor;
+            mask-composite: exclude;
+            /* show only the border area */
+            filter: drop-shadow(0 0 10px rgba(83, 215, 255, .45)) drop-shadow(0 0 16px rgba(255, 43, 214, .35));
+            animation: starBorderMove 6s linear infinite;
+        }
+
+        @keyframes starBorderMove {
+            to {
+                background-position: 360px 0, -280px 0, 220px 0;
+            }
         }
 
         .title .instructions {
@@ -284,10 +369,12 @@
     <div id="app"></div>
     <div class="hud" id="hud">
         <div class="radio" id="radio">
-            <button class="btn paused" id="radioToggle">PLAY</button>
+            <button class="nav" id="radioPrev" aria-label="Previous station">‹</button>
+            <button class="btn off" id="radioToggle">OFF</button>
             <div class="label">RADIO</div>
             <div class="station" id="radioStation">Nightride FM</div>
             <input type="range" id="radioVol" min="0" max="1" step="0.01" value="0.6" />
+            <button class="nav" id="radioNext" aria-label="Next station">›</button>
         </div>
         <div class="row">
             <div class="speed" id="speed">0 KM/H</div>
@@ -299,8 +386,9 @@
     </div>
     <div class="title visible" id="start">
         <div class="panel">
-            <h1>COSMIC DRIFT</h1>
-            <h2>コズミック・ドリフト</h2>
+            <span class="panel-stars" aria-hidden="true"></span>
+            <h1>COSMIC <span class="accent">DRIFT</span></h1>
+            <h2 class="logo-jp">コズミック・ドリフト</h2>
             <div class="instructions">WASD/Arrow keys to steer • Hold Space to Boost</div>
             <div class="cta">
                 <button class="btn" id="beginBtn">BEGIN</button>

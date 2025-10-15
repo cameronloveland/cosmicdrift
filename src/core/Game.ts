@@ -29,7 +29,16 @@ export class Game {
     private particles!: Particles;
     private ui!: UI;
     private audio!: AudioSystem;
-    private radio = { playing: false, stationName: 'Nightride FM', url: 'https://stream.nightride.fm/nightride.mp3' };
+    private radio = {
+        on: true,
+        stationIndex: 0,
+        stations: [
+            { name: 'Nightride FM', url: 'https://stream.nightride.fm/nightride.mp3' },
+            { name: 'SomaFM Space Station', url: 'https://ice2.somafm.com/spacestation-128-mp3' },
+            { name: 'SomaFM Groove Salad', url: 'https://ice3.somafm.com/groovesalad-128-mp3' },
+            { name: 'KEXP Seattle', url: 'https://kexp-mp3-128.streamguys1.com/kexp128.mp3' }
+        ] as { name: string; url: string; }[]
+    };
 
     constructor(container: HTMLElement) {
         this.container = container;
@@ -86,7 +95,8 @@ export class Game {
         this.audio = new AudioSystem();
         this.audio.attach(this.camera);
         // initialize radio stream source
-        this.audio.initRadio(this.radio.url);
+        const initial = this.radio.stations[this.radio.stationIndex];
+        this.audio.initRadio(initial.url);
 
         // Post FX
         this.composer = new EffectComposer(this.renderer);
@@ -106,11 +116,10 @@ export class Game {
             start?.classList.add('hidden');
             this.ui.setStarted(true);
             this.audio.start();
-            // try to autoplay radio once user interacted
-            this.audio.playRadio().then((ok) => {
-                this.radio.playing = ok;
-                this.ui.setRadioUi(this.radio.playing, this.radio.stationName);
-            });
+            // hide cursor only once the game actually starts
+            this.renderer.domElement.style.cursor = 'none';
+            // Autoplay radio on first user gesture
+            this.playOrAdvance().then(() => { /* state/UI updated in helper */ });
             window.removeEventListener('keydown', handler);
             document.getElementById('beginBtn')?.removeEventListener('click', begin);
             start?.removeEventListener('pointerdown', begin);
@@ -126,33 +135,51 @@ export class Game {
         start?.addEventListener('pointerdown', begin);
 
         // Radio UI wiring
-        this.ui.setRadioUi(false, this.radio.stationName);
+        this.ui.setRadioUi(false, initial.name);
         this.ui.setRadioVolumeSlider(0.6);
         this.ui.onRadioToggle(async () => {
-            if (this.radio.playing) {
-                this.audio.pauseRadio();
-                this.radio.playing = false;
+            const st = this.radio.stations[this.radio.stationIndex];
+            if (!this.audio.isRadioPlaying()) {
+                await this.playOrAdvance();
             } else {
-                const ok = await this.audio.playRadio();
-                this.radio.playing = ok;
+                this.audio.pauseRadio();
+                this.radio.on = false;
+                this.ui.setRadioUi(false, st.name);
             }
-            this.ui.setRadioUi(this.radio.playing, this.radio.stationName);
         });
         this.ui.onRadioVolume((v) => this.audio.setRadioVolume(v));
-        // Swap station if the default fails (basic fallback)
-        const fallbackStations = [
-            { name: 'Nightride FM', url: 'https://stream.nightride.fm/nightride.mp3' },
-            { name: 'Radio Paradise', url: 'https://stream.radioparadise.com/aac-320' },
-            { name: 'KEXP Seattle', url: 'https://kexp-mp3-128.streamguys1.com/kexp128.mp3' }
-        ];
-        // If audio element errors, try next station
-        (this as any).audio['radioMedia']?.addEventListener?.('error', () => {
-            const idx = fallbackStations.findIndex(s => s.url === this.radio.url);
-            const next = fallbackStations[(idx + 1) % fallbackStations.length];
-            this.radio.url = next.url;
-            this.radio.stationName = next.name;
-            this.audio.setRadioSource(this.radio.url);
-            this.ui.setRadioUi(this.radio.playing, this.radio.stationName);
+        // Prev/Next station
+        this.ui.onRadioPrev(async () => {
+            this.radio.stationIndex = (this.radio.stationIndex - 1 + this.radio.stations.length) % this.radio.stations.length;
+            const st = this.radio.stations[this.radio.stationIndex];
+            this.audio.setRadioSource(st.url);
+            if (this.radio.on) {
+                await this.playOrAdvance(2);
+            }
+            this.ui.setRadioUi(this.radio.on, st.name);
+        });
+        this.ui.onRadioNext(async () => {
+            this.radio.stationIndex = (this.radio.stationIndex + 1) % this.radio.stations.length;
+            const st = this.radio.stations[this.radio.stationIndex];
+            this.audio.setRadioSource(st.url);
+            if (this.radio.on) {
+                await this.playOrAdvance(2);
+            }
+            this.ui.setRadioUi(this.radio.on, st.name);
+        });
+        // If current station errors, auto-advance
+        this.audio.onRadioEvent('error', () => {
+            this.radio.stationIndex = (this.radio.stationIndex + 1) % this.radio.stations.length;
+            const st = this.radio.stations[this.radio.stationIndex];
+            this.audio.setRadioSource(st.url);
+            if (this.radio.on) this.audio.playRadio();
+            this.ui.setRadioUi(this.radio.on, st.name);
+        });
+        this.audio.onRadioEvent('stalled', () => {
+            if (!this.radio.on) return;
+            const st = this.radio.stations[this.radio.stationIndex];
+            this.audio.setRadioSource(st.url);
+            this.audio.playRadio();
         });
     }
 
@@ -203,6 +230,25 @@ export class Game {
 
     private render() {
         this.composer.render();
+    }
+
+    private async playOrAdvance(maxTries = 3) {
+        // Try current station; on failure, advance up to maxTries
+        for (let i = 0; i < maxTries; i++) {
+            const st = this.radio.stations[this.radio.stationIndex];
+            this.audio.setRadioSource(st.url);
+            const ok = await this.audio.playRadio();
+            if (ok) {
+                this.radio.on = true;
+                this.ui.setRadioUi(true, st.name);
+                return true;
+            }
+            this.radio.stationIndex = (this.radio.stationIndex + 1) % this.radio.stations.length;
+        }
+        this.radio.on = false;
+        const st = this.radio.stations[this.radio.stationIndex];
+        this.ui.setRadioUi(false, st.name);
+        return false;
     }
 }
 

@@ -9,6 +9,8 @@ export class UI {
     private radioToggle = document.getElementById('radioToggle')! as HTMLButtonElement;
     private radioStation = document.getElementById('radioStation')! as HTMLDivElement;
     private radioVol = document.getElementById('radioVol')! as HTMLInputElement;
+    private radioPrev = document.getElementById('radioPrev')! as HTMLButtonElement;
+    private radioNext = document.getElementById('radioNext')! as HTMLButtonElement;
     private started = false;
 
     setStarted(v: boolean) {
@@ -24,11 +26,9 @@ export class UI {
         this.speedEl.textContent = `${speed} KM/H`;
         this.lapEl.textContent = `LAP ${state.lapCurrent}/${state.lapTotal}`;
         this.boostBar.style.width = `${Math.round(state.flow * 100)}%`;
-        // pulse title subtly by flow if visible
+        // keep splash text steady; no jiggle
         if (!this.started) {
-            const t = performance.now() * 0.002;
-            const s = 1 + Math.sin(t) * 0.02;
-            (this.startEl.firstElementChild as HTMLElement).style.transform = `scale(${s})`;
+            (this.startEl.firstElementChild as HTMLElement).style.transform = 'none';
         }
     }
 
@@ -36,14 +36,22 @@ export class UI {
         this.radioToggle.addEventListener('click', handler);
     }
 
+    onRadioPrev(handler: () => void) {
+        this.radioPrev.addEventListener('click', handler);
+    }
+
+    onRadioNext(handler: () => void) {
+        this.radioNext.addEventListener('click', handler);
+    }
+
     onRadioVolume(handler: (v: number) => void) {
         this.radioVol.addEventListener('input', () => handler(parseFloat(this.radioVol.value)));
     }
 
-    setRadioUi(isPlaying: boolean, stationName: string) {
-        this.radioToggle.textContent = isPlaying ? 'PAUSE' : 'PLAY';
-        this.radioToggle.classList.toggle('playing', isPlaying);
-        this.radioToggle.classList.toggle('paused', !isPlaying);
+    setRadioUi(isOn: boolean, stationName: string) {
+        this.radioToggle.textContent = isOn ? 'ON' : 'OFF';
+        this.radioToggle.classList.toggle('on', isOn);
+        this.radioToggle.classList.toggle('off', !isOn);
         this.radioStation.textContent = stationName;
     }
 

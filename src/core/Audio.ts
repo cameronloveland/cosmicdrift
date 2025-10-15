@@ -18,24 +18,37 @@ export class AudioSystem {
     start() {
         if (this.started) return;
         this.started = true;
-        this.loader.load('/audio/bgm.mp3', (buffer) => {
+        // Load optional local SFX only if present and valid audio
+        this.safeLoad('/audio/bgm.mp3', (buffer) => {
             this.audio.setBuffer(buffer);
             this.audio.setLoop(true);
             this.audio.setVolume(0.35);
             this.audio.play();
             this.analyser = new THREE.AudioAnalyser(this.audio, 32);
         });
-        this.loader.load('/audio/wind.wav', (buffer) => {
+        this.safeLoad('/audio/wind.wav', (buffer) => {
             this.wind.setBuffer(buffer);
             this.wind.setLoop(true);
             this.wind.setVolume(0.0);
             this.wind.play();
         });
-        this.loader.load('/audio/boost.wav', (buffer) => {
+        this.safeLoad('/audio/boost.wav', (buffer) => {
             this.boost.setBuffer(buffer);
             this.boost.setLoop(false);
             this.boost.setVolume(0.6);
         });
+    }
+
+    private async safeLoad(url: string, onLoad: (buffer: AudioBuffer) => void) {
+        try {
+            const res = await fetch(url, { method: 'HEAD' });
+            if (!res.ok) return; // asset absent; skip silently
+            const ct = (res.headers.get('content-type') || '').toLowerCase();
+            if (!ct.startsWith('audio/')) return; // not audio -> skip to avoid decode error
+        } catch {
+            return; // network/HEAD blocked -> skip
+        }
+        this.loader.load(url, onLoad, undefined, () => { /* ignore decode errors */ });
     }
 
     setSpeed(speedKmh: number) {
@@ -57,11 +70,13 @@ export class AudioSystem {
     // Radio controls
     initRadio(streamUrl: string) {
         if (this.radioMedia) return;
-        const el = new Audio();
-        el.crossOrigin = 'anonymous';
+        const el = document.createElement('audio');
         el.src = streamUrl;
-        el.preload = 'none';
+        el.preload = 'auto';
+        (el as any).playsInline = true;
         el.volume = this.radioGain;
+        el.style.display = 'none';
+        document.body.appendChild(el);
         this.radioMedia = el;
     }
 
@@ -92,6 +107,18 @@ export class AudioSystem {
         this.radioGain = THREE.MathUtils.clamp(v, 0, 1);
         if (this.radioMedia) this.radioMedia.volume = this.radioGain;
         // HTMLAudioElement volume is enough; avoid extra graph to reduce CORS issues
+    }
+
+    onRadioEvent<K extends keyof HTMLMediaElementEventMap>(type: K, handler: (this: HTMLMediaElement, ev: HTMLMediaElementEventMap[K]) => any) {
+        if (!this.radioMedia) return () => { };
+        const el = this.radioMedia;
+        el.addEventListener(type, handler as any);
+        return () => el.removeEventListener(type, handler as any);
+    }
+
+    isRadioPlaying(): boolean {
+        const el = this.radioMedia;
+        return !!(el && !el.paused && !el.ended && el.currentTime > 0);
     }
 }
 
