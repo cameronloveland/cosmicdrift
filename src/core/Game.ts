@@ -35,10 +35,9 @@ export class Game {
         on: true,
         stationIndex: 0,
         stations: [
-            { name: 'SomaFM Groove Salad', url: 'https://ice3.somafm.com/groovesalad-128-mp3' },
-            { name: 'SomaFM Space Station', url: 'https://ice2.somafm.com/spacestation-128-mp3' },
             { name: 'Nightride FM', url: 'https://stream.nightride.fm/nightride.mp3' },
-            { name: 'KEXP Seattle', url: 'https://kexp-mp3-128.streamguys1.com/kexp128.mp3' }
+            { name: 'Nightwave Plaza', url: 'https://radio.plaza.one/mp3' },
+
         ] as { name: string; url: string; }[]
     };
 
