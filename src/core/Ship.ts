@@ -199,7 +199,7 @@ export class Ship {
         this.root.position.copy(pos);
         this.root.quaternion.copy(q);
 
-        wwwwwwwwaaaaaaaadddddddddddddddddddddddddddd        // chase camera anchored to track Frenet frame (keeps camera perpendicular to spline)
+        // chase camera anchored to track Frenet frame (keeps camera perpendicular to spline)
         const camDistance = CAMERA.chaseDistance * (1 + this.boostTimer * 0.6);
         const camPos = new THREE.Vector3()
             .copy(pos)
