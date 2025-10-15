@@ -40,9 +40,10 @@ export class Track {
     public generate(opts: TrackOptions, source: 'procedural' | 'custom') {
         this.opts = opts;
         this.width = opts.width;
-        const controls = (TRACK_SOURCE === 'custom' && CUSTOM_TRACK_POINTS.length > 3)
-            ? CUSTOM_TRACK_POINTS
-            : this.makeControlPoints(opts);
+        const controls =
+            (source === 'custom' && CUSTOM_TRACK_POINTS.length > 3)
+                ? CUSTOM_TRACK_POINTS
+                : this.makeControlPoints(opts);
         this.curve = new THREE.CatmullRomCurve3(controls, true, 'catmullrom', 0.15);
         this.length = this.curve.getLength();
         this.samples = opts.samples;
