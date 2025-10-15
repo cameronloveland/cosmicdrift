@@ -141,11 +141,11 @@ export class Game {
         start?.addEventListener('pointerdown', begin);
 
         // Radio UI wiring
-        this.ui.setRadioUi(false, initial.name);
+        this.ui.setRadioUi(this.radio.on, initial.name);
         this.ui.setRadioVolumeSlider(0.6);
         this.ui.onRadioToggle(async () => {
             const st = this.radio.stations[this.radio.stationIndex];
-            if (!this.audio.isRadioPlaying()) {
+            if (!this.radio.on) {
                 await this.playOrAdvance();
             } else {
                 this.audio.pauseRadio();
@@ -159,18 +159,16 @@ export class Game {
             this.radio.stationIndex = (this.radio.stationIndex - 1 + this.radio.stations.length) % this.radio.stations.length;
             const st = this.radio.stations[this.radio.stationIndex];
             this.audio.setRadioSource(st.url);
-            if (this.radio.on) {
-                await this.playOrAdvance(2);
-            }
+            this.ui.setRadioUi(this.radio.on, st.name);
+            if (this.radio.on) await this.playOrAdvance(2);
             this.ui.setRadioUi(this.radio.on, st.name);
         });
         this.ui.onRadioNext(async () => {
             this.radio.stationIndex = (this.radio.stationIndex + 1) % this.radio.stations.length;
             const st = this.radio.stations[this.radio.stationIndex];
             this.audio.setRadioSource(st.url);
-            if (this.radio.on) {
-                await this.playOrAdvance(2);
-            }
+            this.ui.setRadioUi(this.radio.on, st.name);
+            if (this.radio.on) await this.playOrAdvance(2);
             this.ui.setRadioUi(this.radio.on, st.name);
         });
         // If current station errors, auto-advance
@@ -180,6 +178,14 @@ export class Game {
             this.audio.setRadioSource(st.url);
             if (this.radio.on) this.audio.playRadio();
             this.ui.setRadioUi(this.radio.on, st.name);
+        });
+        this.audio.onRadioEvent('canplay', () => {
+            const st = this.radio.stations[this.radio.stationIndex];
+            if (this.radio.on) this.ui.setRadioUi(true, st.name);
+        });
+        this.audio.onRadioEvent('playing', () => {
+            const st = this.radio.stations[this.radio.stationIndex];
+            if (this.radio.on) this.ui.setRadioUi(true, st.name);
         });
         this.audio.onRadioEvent('stalled', () => {
             if (!this.radio.on) return;
