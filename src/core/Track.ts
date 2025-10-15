@@ -40,13 +40,16 @@ export class Track {
     public generate(opts: TrackOptions, source: 'procedural' | 'custom') {
         this.opts = opts;
         this.width = opts.width;
+        this.samples = opts.samples;
         const controls =
             (source === 'custom' && CUSTOM_TRACK_POINTS.length > 3)
                 ? CUSTOM_TRACK_POINTS
                 : this.makeControlPoints(opts);
-        this.curve = new THREE.CatmullRomCurve3(controls, true, 'catmullrom', 0.15);
+        // Use centripetal Catmull-Rom to avoid overshooting/self-intersections
+        this.curve = new THREE.CatmullRomCurve3(controls, true, 'centripetal');
+        // Increase arc length precision to remove quantization artifacts
+        this.curve.arcLengthDivisions = Math.max(200, this.samples * 4);
         this.length = this.curve.getLength();
-        this.samples = opts.samples;
 
         this.precomputeFramesAndBank();
         this.boundingRadius = this.computeBoundingRadius();
@@ -62,26 +65,42 @@ export class Track {
         const n = opts.controlPointCount;
         for (let i = 0; i < n; i++) {
             const a = (i / n) * Math.PI * 2;
-            const jitter = (rnd() - 0.5) * 0.6;
+            const jitter = (rnd() - 0.5) * 0.3; // reduce jitter to limit sharp pivots
             const r = THREE.MathUtils.lerp(opts.radiusMin, opts.radiusMax, rnd());
             const x = Math.cos(a + jitter) * r;
             const z = Math.sin(a + jitter) * r;
             const elev = (Math.sin(a * 0.5 + rnd() * 2.0) + Math.sin(a * 0.23 + rnd() * 4.0) * 0.5) * opts.elevationAmplitude * 0.5;
             const y = elev;
-            pts.push(new THREE.Vector3(x, y, z));
+            const p = new THREE.Vector3(x, y, z);
+            // enforce minimum chord length to avoid nearly coincident points
+            const last = pts.length > 0 ? pts[pts.length - 1] : null;
+            if (!last || last.distanceToSquared(p) >= opts.minChord * opts.minChord) {
+                pts.push(p);
+            }
         }
-        // slight smoothing by averaging neighbors to avoid spikes
-        for (let i = 0; i < pts.length; i++) {
-            const p0 = pts[(i - 1 + n) % n];
-            const p1 = pts[i];
-            const p2 = pts[(i + 1) % n];
-            pts[i] = new THREE.Vector3(
-                (p0.x + p1.x * 2 + p2.x) / 4,
-                (p0.y + p1.y * 2 + p2.y) / 4,
-                (p0.z + p1.z * 2 + p2.z) / 4
-            );
+        // Chaikin-style smoothing passes for a closed loop
+        const passes = Math.max(0, Math.floor(opts.controlPointSmoothPasses));
+        let out = pts;
+        for (let pass = 0; pass < passes; pass++) {
+            const next: THREE.Vector3[] = [];
+            for (let i = 0; i < out.length; i++) {
+                const a = out[i];
+                const b = out[(i + 1) % out.length];
+                // Q = 0.75*a + 0.25*b, R = 0.25*a + 0.75*b
+                next.push(new THREE.Vector3(
+                    a.x * 0.75 + b.x * 0.25,
+                    a.y * 0.75 + b.y * 0.25,
+                    a.z * 0.75 + b.z * 0.25
+                ));
+                next.push(new THREE.Vector3(
+                    a.x * 0.25 + b.x * 0.75,
+                    a.y * 0.25 + b.y * 0.75,
+                    a.z * 0.25 + b.z * 0.75
+                ));
+            }
+            out = next;
         }
-        return pts;
+        return out;
     }
 
     private precomputeFramesAndBank() {
@@ -121,6 +140,20 @@ export class Track {
             const bank = THREE.MathUtils.degToRad(this.opts.bankMaxDeg) * curveStrength * sign;
             this.cachedBank[i] = bank;
             tmpPrevTangent.copy(tan);
+        }
+
+        // Seam continuity: ensure first and last frames align for a closed loop
+        const n0 = this.cachedNormals[0].clone();
+        const nEnd = this.cachedNormals[this.samples - 1].clone();
+        const t0 = this.cachedTangents[0];
+        const cross = new THREE.Vector3().crossVectors(n0, nEnd);
+        const sign = Math.sign(cross.dot(t0) || 1);
+        const angle = Math.atan2(cross.length(), THREE.MathUtils.clamp(n0.dot(nEnd), -1, 1)) * sign;
+        for (let i = 0; i < this.samples; i++) {
+            const f = i / this.samples;
+            const q = new THREE.Quaternion().setFromAxisAngle(this.cachedTangents[i], -angle * f);
+            this.cachedNormals[i].applyQuaternion(q);
+            this.cachedBinormals[i].applyQuaternion(q);
         }
 
         // smooth bank angles
@@ -245,12 +278,31 @@ export class Track {
 
     private addRail(sideOffset: number, color: THREE.Color, width: number) {
         const positions: number[] = [];
-        for (let i = 0; i <= this.samples; i++) {
-            const idx = i % this.samples;
-            const pos = this.cachedPositions[idx].clone();
-            const bin = this.cachedBinormals[idx];
-            pos.addScaledVector(bin, sideOffset);
-            positions.push(pos.x, pos.y, pos.z);
+        const maxAngle = this.opts.railMaxAngle;
+        for (let i = 0; i < this.samples; i++) {
+            const idx = i;
+            const next = (i + 1) % this.samples;
+            const p0 = this.cachedPositions[idx];
+            const p1 = this.cachedPositions[next];
+            const b0 = this.cachedBinormals[idx];
+            const b1 = this.cachedBinormals[next];
+            const t0 = this.cachedTangents[idx];
+            const t1 = this.cachedTangents[next];
+            const dot = THREE.MathUtils.clamp(t0.dot(t1), -1, 1);
+            const ang = Math.acos(dot);
+            const steps = Math.max(1, Math.ceil(ang / maxAngle));
+            for (let s = 0; s < steps; s++) {
+                const u = s / steps;
+                const pos = new THREE.Vector3().copy(p0).lerp(p1, u);
+                const bin = new THREE.Vector3().copy(b0).lerp(b1, u).normalize();
+                pos.addScaledVector(bin, sideOffset);
+                positions.push(pos.x, pos.y, pos.z);
+            }
+        }
+        // close the loop by adding the final point
+        {
+            const p = this.cachedPositions[0].clone().addScaledVector(this.cachedBinormals[0], sideOffset);
+            positions.push(p.x, p.y, p.z);
         }
         const geom = new LineGeometry();
         geom.setPositions(positions);

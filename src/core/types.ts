@@ -38,6 +38,10 @@ export type TrackOptions = {
     maxGrade: number; // rise/run clamp
     bankMaxDeg: number;
     markerSpacing: number; // meters between markers
+    // NEW: smoothing/quality controls
+    controlPointSmoothPasses: number; // Chaikin passes for controls
+    minChord: number; // minimum distance between control points
+    railMaxAngle: number; // max radians between rail segments before subdivision
 };
 
 export type TrackSample = {

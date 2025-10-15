@@ -45,7 +45,9 @@ export const POST = {
     bloomStrength: 1.2,
     bloomRadius: 0.4,
     bloomThreshold: 0.2,
-    motionBlurSamples: 8
+    motionBlurSamples: 8,
+    // Optional additional antialiasing for crisp rails/edges
+    enableSMAA: true
 };
 
 export const LAPS_TOTAL = 3;
@@ -64,7 +66,12 @@ export const TRACK_OPTS: Readonly<TrackOptions> = {
     maxCurvature: 0.003,
     maxGrade: 0.16,
     bankMaxDeg: 36,
-    markerSpacing: 50
+    markerSpacing: 50,
+    // New tunables for smoothing/quality
+    controlPointSmoothPasses: 2,
+    minChord: 40,
+    // radians; max angular change between rail segments before subdivision
+    railMaxAngle: 0.08
 };
 
 export const STARFIELD_MIN_RADIUS = 6000;

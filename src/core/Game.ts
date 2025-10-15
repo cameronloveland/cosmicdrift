@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import Stats from 'stats.js';
-import { EffectComposer, RenderPass, EffectPass, BloomEffect, ChromaticAberrationEffect, VignetteEffect } from 'postprocessing';
+import { EffectComposer, RenderPass, EffectPass, BloomEffect, ChromaticAberrationEffect, VignetteEffect, SMAAEffect } from 'postprocessing';
 import { CAMERA, POST, RENDER } from './constants';
 import { Ship } from './Ship';
 import { Track } from './Track';
@@ -107,6 +107,12 @@ export class Game {
         const effects = new EffectPass(this.camera, bloom, chroma, vignette);
         this.composer.addPass(renderPass);
         this.composer.addPass(effects);
+
+        if (POST.enableSMAA) {
+            const smaa = new SMAAEffect();
+            const smaaPass = new EffectPass(this.camera, smaa);
+            this.composer.addPass(smaaPass);
+        }
 
         // Start screen interaction
         const start = document.getElementById('start');
