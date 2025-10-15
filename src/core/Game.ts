@@ -7,6 +7,7 @@ import { Track } from './Track';
 import { UI } from './UI';
 import { Environment } from './Environment';
 import { Particles } from './Particles';
+import { SpeedStars } from './SpeedStars';
 import { AudioSystem } from './Audio';
 
 export class Game {
@@ -27,6 +28,7 @@ export class Game {
     private ship!: Ship;
     private env!: Environment;
     private particles!: Particles;
+    private speedStars!: SpeedStars;
     private ui!: UI;
     private audio!: AudioSystem;
     private radio = {
@@ -89,6 +91,9 @@ export class Game {
 
         this.particles = new Particles(this.ship);
         this.scene.add(this.particles.root);
+
+        this.speedStars = new SpeedStars(this.ship, this.track);
+        this.scene.add(this.speedStars.root);
 
         this.ui = new UI();
 
@@ -233,6 +238,7 @@ export class Game {
 
         this.ship.update(dt);
         this.particles.update(dt);
+        this.speedStars.update(dt);
         this.env.update(dt);
         this.ui.update(this.ship.state);
         this.audio.setSpeed(this.ship.state.speedKmh);

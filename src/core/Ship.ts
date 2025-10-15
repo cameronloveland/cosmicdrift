@@ -22,6 +22,8 @@ export class Ship {
     private velocitySide = 0;
     private velocityPitch = 0;
     private boostTimer = 0;
+    private boosterExpiry: number[] = [];
+    private now = 0;
     // lap detection helpers
     private prevT = 0;
     private checkpointT = 0.0; // could move later; start line
@@ -99,8 +101,19 @@ export class Ship {
     }
 
     update(dt: number) {
+        this.now += dt;
         // speed and boost
-        const targetSpeed = this.input.boost ? Math.min(PHYSICS.maxSpeed, PHYSICS.baseSpeed * PHYSICS.boostMultiplier) : PHYSICS.baseSpeed;
+        // Booster stacking: multiplicative with manual boost, capped at maxSpeed
+        // Count active stacks
+        let stacks = 0;
+        for (let i = this.boosterExpiry.length - 1; i >= 0; i--) {
+            if (this.boosterExpiry[i] <= this.now) this.boosterExpiry.splice(i, 1);
+        }
+        stacks = this.boosterExpiry.length;
+
+        const manual = this.input.boost ? PHYSICS.boostMultiplier : 1;
+        const boosterMul = Math.pow(PHYSICS.trackBoosterMultiplier, stacks);
+        const targetSpeed = Math.min(PHYSICS.maxSpeed, PHYSICS.baseSpeed * manual * boosterMul);
         const speedLerp = 1 - Math.pow(0.001, dt); // smooth
         this.state.speedKmh = THREE.MathUtils.lerp(this.state.speedKmh, targetSpeed, speedLerp);
         this.state.boosting = this.input.boost;
@@ -111,6 +124,27 @@ export class Ship {
         this.prevT = this.state.t;
         this.state.t += (mps * dt) / this.track.length; // normalize by length
         if (this.state.t > 1) this.state.t -= 1; if (this.state.t < 0) this.state.t += 1;
+
+        // Booster pickup detection: if crossing a booster T and near center lane
+        const boosterTs = this.track.getBoosterTs?.() ?? [];
+        if (boosterTs.length > 0) {
+            const minT = this.prevT;
+            const maxT = this.state.t;
+            const crossed = (t: number) => {
+                if (maxT >= minT) return t >= minT && t < maxT;
+                // wrap around
+                return t >= minT || t < maxT;
+            };
+            const lateralLimit = this.track.width * PHYSICS.boosterLateralRatio;
+            if (Math.abs(this.state.lateralOffset) <= lateralLimit) {
+                for (let i = 0; i < boosterTs.length; i++) {
+                    const bt = boosterTs[i];
+                    if (crossed(bt)) {
+                        this.boosterExpiry.push(this.now + PHYSICS.trackBoosterDuration);
+                    }
+                }
+            }
+        }
 
         // lap wrap detection: crossing from high t to low t past checkpoint
         if (this.prevT > 0.9 && this.state.t < 0.1) {

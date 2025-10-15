@@ -23,8 +23,11 @@ export const CAMERA = {
 
 export const PHYSICS = {
     baseSpeed: 70, // km/h visualized in HUD (convert to m/s inside)
-    maxSpeed: 260,
-    boostMultiplier: 1.5,
+    maxSpeed: 360,
+    boostMultiplier: 1.8,
+    trackBoosterMultiplier: 1.3,
+    trackBoosterDuration: 10, // seconds
+    boosterLateralRatio: 0.35, // fraction of track width allowed to pick up booster (center lane)
     lateralMax: 1.6,
     lateralAccel: 6.0,
     lateralDamping: 4.5,
@@ -75,6 +78,10 @@ export const TRACK_OPTS: Readonly<TrackOptions> = {
 };
 
 export const STARFIELD_MIN_RADIUS = 6000;
+
+// Booster visual/spacing
+export const BOOSTER_SPACING_METERS = 600;
+export const BOOSTER_COLOR = 0xfff066;
 
 export const CUSTOM_TRACK_POINTS: Vector3[] = [];
 

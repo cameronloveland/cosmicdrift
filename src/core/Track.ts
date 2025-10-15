@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { Line2 } from 'three-stdlib';
 import { LineMaterial } from 'three-stdlib';
 import { LineGeometry } from 'three-stdlib';
-import { COLORS, TRACK_OPTS, TRACK_SOURCE, CUSTOM_TRACK_POINTS } from './constants';
+import { COLORS, TRACK_OPTS, TRACK_SOURCE, CUSTOM_TRACK_POINTS, BOOSTER_SPACING_METERS, BOOSTER_COLOR } from './constants';
 import type { TrackOptions, TrackSample } from './types';
 
 function mulberry32(seed: number) {
@@ -21,6 +21,9 @@ export class Track {
     public length = 0;
     public width = TRACK_OPTS.width;
     public boundingRadius = 2000;
+
+    private boosterTs: number[] = [];
+    private boosters?: THREE.InstancedMesh;
 
     private railMaterials: LineMaterial[] = [];
     private opts: TrackOptions = TRACK_OPTS;
@@ -57,6 +60,7 @@ export class Track {
         this.buildGeometry();
         this.buildRails();
         this.buildMarkers();
+        this.buildBoosters(BOOSTER_SPACING_METERS);
     }
 
     private makeControlPoints(opts: TrackOptions): THREE.Vector3[] {
@@ -276,6 +280,54 @@ export class Track {
         this.root.add(group);
     }
 
+    private buildBoosters(spacingMeters: number) {
+        // clear old boosters
+        if (this.boosters && this.boosters.parent) this.root.remove(this.boosters);
+        this.boosterTs = [];
+
+        const count = Math.max(1, Math.floor(this.length / spacingMeters));
+        if (count <= 0) return;
+
+        // small triangular strip geometry
+        const tri = new THREE.BufferGeometry();
+        const size = this.width * 0.22; // proportion of track width
+        const len = Math.max(2.0, spacingMeters * 0.12); // visual length
+        const verts = new Float32Array([
+            0, 0.02, 0, // tip
+            -size * 0.5, 0.02, -len * 0.5,
+            size * 0.5, 0.02, -len * 0.5
+        ]);
+        tri.setAttribute('position', new THREE.BufferAttribute(verts, 3));
+        tri.setIndex([0, 1, 2]);
+        tri.computeVertexNormals();
+        const mat = new THREE.MeshBasicMaterial({ color: BOOSTER_COLOR, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false });
+        const imesh = new THREE.InstancedMesh(tri, mat, count);
+        const tmpObj = new THREE.Object3D();
+
+        for (let i = 0; i < count; i++) {
+            const t = i / count;
+            const idx = Math.floor(t * this.samples) % this.samples;
+            const pos = this.cachedPositions[idx];
+            const tan = this.cachedTangents[idx];
+            const up = this.cachedNormals[idx];
+            // align triangle to face forward along tangent, lie on track plane
+            const z = new THREE.Vector3().copy(tan).normalize();
+            const x = new THREE.Vector3().crossVectors(up, z).normalize();
+            const y = new THREE.Vector3().crossVectors(z, x).normalize();
+            const m = new THREE.Matrix4().makeBasis(x, y, z);
+            const q = new THREE.Quaternion().setFromRotationMatrix(m);
+            tmpObj.position.copy(pos).addScaledVector(up, 0.03); // avoid z-fight
+            tmpObj.quaternion.copy(q);
+            tmpObj.scale.setScalar(1);
+            tmpObj.updateMatrix();
+            imesh.setMatrixAt(i, tmpObj.matrix);
+            this.boosterTs.push(t);
+        }
+        imesh.instanceMatrix.needsUpdate = true;
+        this.boosters = imesh;
+        this.root.add(imesh);
+    }
+
     private addRail(sideOffset: number, color: THREE.Color, width: number) {
         const positions: number[] = [];
         const maxAngle = this.opts.railMaxAngle;
@@ -351,6 +403,8 @@ export class Track {
         }
         return best / this.samples;
     }
+
+    public getBoosterTs(): readonly number[] { return this.boosterTs; }
 
     public getCheckpointCount(): number {
         return 16;
