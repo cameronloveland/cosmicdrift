@@ -5,6 +5,8 @@ export class AudioSystem {
     private audio = new THREE.Audio(this.listener);
     private boost = new THREE.Audio(this.listener);
     private wind = new THREE.Audio(this.listener);
+    private radioMedia: HTMLAudioElement | null = null;
+    private radioGain = 0.6;
     private analyser: THREE.AudioAnalyser | null = null;
     private loader = new THREE.AudioLoader();
     private started = false;
@@ -50,6 +52,46 @@ export class AudioSystem {
         if (!this.analyser) return 0.5 + 0.5 * Math.sin(performance.now() * 0.004);
         const data = this.analyser.getAverageFrequency();
         return data / 256; // approx 0..1
+    }
+
+    // Radio controls
+    initRadio(streamUrl: string) {
+        if (this.radioMedia) return;
+        const el = new Audio();
+        el.crossOrigin = 'anonymous';
+        el.src = streamUrl;
+        el.preload = 'none';
+        el.volume = this.radioGain;
+        this.radioMedia = el;
+    }
+
+    setRadioSource(streamUrl: string) {
+        if (!this.radioMedia) {
+            this.initRadio(streamUrl);
+            return;
+        }
+        try { this.radioMedia.pause(); } catch { }
+        this.radioMedia.src = streamUrl;
+        this.radioMedia.load();
+    }
+
+    async playRadio(): Promise<boolean> {
+        try {
+            await this.radioMedia?.play();
+            return true;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    pauseRadio() {
+        this.radioMedia?.pause();
+    }
+
+    setRadioVolume(v: number) {
+        this.radioGain = THREE.MathUtils.clamp(v, 0, 1);
+        if (this.radioMedia) this.radioMedia.volume = this.radioGain;
+        // HTMLAudioElement volume is enough; avoid extra graph to reduce CORS issues
     }
 }
 

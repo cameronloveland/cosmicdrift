@@ -29,6 +29,7 @@ export class Game {
     private particles!: Particles;
     private ui!: UI;
     private audio!: AudioSystem;
+    private radio = { playing: false, stationName: 'Nightride FM', url: 'https://stream.nightride.fm/nightride.mp3' };
 
     constructor(container: HTMLElement) {
         this.container = container;
@@ -84,6 +85,8 @@ export class Game {
 
         this.audio = new AudioSystem();
         this.audio.attach(this.camera);
+        // initialize radio stream source
+        this.audio.initRadio(this.radio.url);
 
         // Post FX
         this.composer = new EffectComposer(this.renderer);
@@ -103,6 +106,11 @@ export class Game {
             start?.classList.add('hidden');
             this.ui.setStarted(true);
             this.audio.start();
+            // try to autoplay radio once user interacted
+            this.audio.playRadio().then((ok) => {
+                this.radio.playing = ok;
+                this.ui.setRadioUi(this.radio.playing, this.radio.stationName);
+            });
             window.removeEventListener('keydown', handler);
             document.getElementById('beginBtn')?.removeEventListener('click', begin);
             start?.removeEventListener('pointerdown', begin);
@@ -116,6 +124,36 @@ export class Game {
         window.addEventListener('keydown', handler);
         document.getElementById('beginBtn')?.addEventListener('click', begin);
         start?.addEventListener('pointerdown', begin);
+
+        // Radio UI wiring
+        this.ui.setRadioUi(false, this.radio.stationName);
+        this.ui.setRadioVolumeSlider(0.6);
+        this.ui.onRadioToggle(async () => {
+            if (this.radio.playing) {
+                this.audio.pauseRadio();
+                this.radio.playing = false;
+            } else {
+                const ok = await this.audio.playRadio();
+                this.radio.playing = ok;
+            }
+            this.ui.setRadioUi(this.radio.playing, this.radio.stationName);
+        });
+        this.ui.onRadioVolume((v) => this.audio.setRadioVolume(v));
+        // Swap station if the default fails (basic fallback)
+        const fallbackStations = [
+            { name: 'Nightride FM', url: 'https://stream.nightride.fm/nightride.mp3' },
+            { name: 'Radio Paradise', url: 'https://stream.radioparadise.com/aac-320' },
+            { name: 'KEXP Seattle', url: 'https://kexp-mp3-128.streamguys1.com/kexp128.mp3' }
+        ];
+        // If audio element errors, try next station
+        (this as any).audio['radioMedia']?.addEventListener?.('error', () => {
+            const idx = fallbackStations.findIndex(s => s.url === this.radio.url);
+            const next = fallbackStations[(idx + 1) % fallbackStations.length];
+            this.radio.url = next.url;
+            this.radio.stationName = next.name;
+            this.audio.setRadioSource(this.radio.url);
+            this.ui.setRadioUi(this.radio.playing, this.radio.stationName);
+        });
     }
 
     private onResize() {

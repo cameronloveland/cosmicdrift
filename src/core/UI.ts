@@ -5,6 +5,10 @@ export class UI {
     private lapEl = document.getElementById('lap')!;
     private boostBar = document.getElementById('boostBar')! as HTMLDivElement;
     private startEl = document.getElementById('start')!;
+    private radioRoot = document.getElementById('radio')!;
+    private radioToggle = document.getElementById('radioToggle')! as HTMLButtonElement;
+    private radioStation = document.getElementById('radioStation')! as HTMLDivElement;
+    private radioVol = document.getElementById('radioVol')! as HTMLInputElement;
     private started = false;
 
     setStarted(v: boolean) {
@@ -26,6 +30,25 @@ export class UI {
             const s = 1 + Math.sin(t) * 0.02;
             (this.startEl.firstElementChild as HTMLElement).style.transform = `scale(${s})`;
         }
+    }
+
+    onRadioToggle(handler: () => void) {
+        this.radioToggle.addEventListener('click', handler);
+    }
+
+    onRadioVolume(handler: (v: number) => void) {
+        this.radioVol.addEventListener('input', () => handler(parseFloat(this.radioVol.value)));
+    }
+
+    setRadioUi(isPlaying: boolean, stationName: string) {
+        this.radioToggle.textContent = isPlaying ? 'PAUSE' : 'PLAY';
+        this.radioToggle.classList.toggle('playing', isPlaying);
+        this.radioToggle.classList.toggle('paused', !isPlaying);
+        this.radioStation.textContent = stationName;
+    }
+
+    setRadioVolumeSlider(v: number) {
+        this.radioVol.value = String(v);
     }
 }
 
