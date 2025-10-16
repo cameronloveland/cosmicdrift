@@ -1,0 +1,462 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>COSMIC DRIFT (コズミック・ドリフト)</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Oxanium:wght@700;800&family=Orbitron:wght@600;800&family=Noto+Sans+JP:wght@700;900&display=swap"
+        rel="stylesheet">
+    <style>
+        /* Ethnocentric Bold Italic – expects font files in public/fonts/ */
+        @font-face {
+            font-family: 'Ethnocentric';
+            src: url('/fonts/ethnocentric-bold-italic.woff2') format('woff2'),
+                url('/fonts/ethnocentric-bold-italic.woff') format('woff');
+            font-weight: 800;
+            font-style: italic;
+            font-display: swap;
+        }
+
+        html,
+        body,
+        #app {
+            height: 100%;
+            margin: 0;
+            background: radial-gradient(ellipse at center, #0a0324 0%, #050314 60%, #030211 100%);
+            overflow: hidden;
+        }
+
+        canvas {
+            display: block;
+        }
+
+        .hud {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            font-family: ui-sans-serif, system-ui, Segoe UI, Roboto, Helvetica, Arial;
+            color: #dff;
+        }
+
+        .hud .row {
+            position: absolute;
+            left: 16px;
+            bottom: 16px;
+            display: flex;
+            gap: 16px;
+            align-items: center;
+            text-shadow: 0 0 8px rgba(0, 255, 255, .4);
+        }
+
+        .radio {
+            position: absolute;
+            top: 12px;
+            left: 12px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 10px;
+            background: rgba(8, 6, 22, 0.65);
+            backdrop-filter: blur(4px) saturate(120%);
+            border-radius: 10px;
+            box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35), 0 0 12px rgba(83, 215, 255, 0.25) inset;
+            pointer-events: auto;
+            user-select: none;
+            z-index: 1000;
+        }
+
+        .radio .label {
+            font-size: 12px;
+            letter-spacing: 1.2px;
+            color: #eaf6ff;
+            text-shadow: 0 0 10px rgba(83, 215, 255, .45);
+            margin-right: 4px;
+        }
+
+        .radio .station {
+            font-size: 12px;
+            opacity: .9;
+            color: #dff;
+            white-space: nowrap;
+        }
+
+        .radio .btn {
+            pointer-events: auto;
+            border: 1px solid rgba(255, 255, 255, .18);
+            color: #fff;
+            border-radius: 999px;
+            padding: 4px 10px;
+            font-size: 11px;
+            font-weight: 800;
+            letter-spacing: 1px;
+            cursor: pointer;
+            box-shadow: 0 4px 16px rgba(195, 61, 255, .2), 0 0 10px rgba(83, 215, 255, .18) inset;
+        }
+
+        .radio .btn.on {
+            background: #16c9ff;
+        }
+
+        .radio .btn.off {
+            background: #ff2bd6;
+        }
+
+        .radio .nav {
+            pointer-events: auto;
+            border: 1px solid rgba(255, 255, 255, .18);
+            background: rgba(20, 18, 35, .75);
+            color: #e6f6ff;
+            width: 26px;
+            height: 26px;
+            display: grid;
+            place-items: center;
+            border-radius: 8px;
+            font-weight: 800;
+            cursor: pointer;
+        }
+
+        .radio .btn.secondary {
+            background: rgba(20, 18, 35, .75);
+            color: #e6f6ff;
+            box-shadow: 0 0 0 rgba(0, 0, 0, 0);
+        }
+
+        .radio input[type="range"] {
+            width: 90px;
+        }
+
+        .hud .speed {
+            font-size: 18px;
+            letter-spacing: 2px;
+        }
+
+        .hud .lap {
+            font-size: 14px;
+            opacity: .8;
+        }
+
+        .meters {
+            position: absolute;
+            right: 16px;
+            bottom: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            width: 280px;
+        }
+
+        .boost {
+            /* meter container */
+            position: absolute;
+            right: 16px;
+            bottom: 16px;
+            width: 280px;
+            height: 10px;
+            border: 1px solid rgba(255, 255, 255, .25);
+            box-shadow: 0 0 12px rgba(255, 0, 255, .25) inset;
+        }
+
+        .meters .boost {
+            /* reset absolute to stack inside .meters */
+            position: static;
+        }
+
+        .boost .bar {
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg, #53d7ff, #c33dff, #ff2bd6);
+            box-shadow: 0 0 18px rgba(197, 64, 255, 0.7);
+            transition: width .08s ease-out;
+        }
+
+        .boost .label {
+            position: absolute;
+            top: -16px;
+            left: 0;
+            font-size: 11px;
+            letter-spacing: 1px;
+            color: #eaf6ff;
+            opacity: 0.9;
+            text-shadow: 0 0 10px rgba(83, 215, 255, .35);
+        }
+
+        .title {
+            position: absolute;
+            inset: 0;
+            display: grid;
+            place-items: center;
+            pointer-events: auto;
+            text-align: center;
+            /* no fullscreen overlay; show normal background */
+            background: transparent;
+            backdrop-filter: none;
+            font-family: "Exo 2", "Rajdhani", "Montserrat", ui-sans-serif, system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+        }
+
+        .title h1 {
+            font-size: clamp(48px, 6vw, 82px);
+            letter-spacing: 2px;
+            margin: 0;
+            line-height: 0.9;
+            font-weight: 800;
+            font-style: normal;
+            white-space: nowrap;
+            /* force one line */
+            font-family: 'Orbitron', 'Oxanium', "Exo 2", "Montserrat", ui-sans-serif, system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+            color: #f5fbff;
+            text-shadow: 0 2px 0 rgba(255, 255, 255, .28), 0 0 24px rgba(83, 215, 255, .7), 0 0 48px rgba(195, 61, 255, .3);
+            -webkit-text-stroke: 0.35px rgba(255, 255, 255, .12);
+        }
+
+        /* Accented word for a more futuristic split logo */
+        .title h1 .accent {
+            position: relative;
+            display: inline-block;
+            padding-inline: 6px;
+            background: linear-gradient(180deg, #ffffff 0%, #e8f3ff 55%, #bcd6ff 100%);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+            text-shadow: 0 0 22px rgba(83, 215, 255, .7), 0 0 40px rgba(255, 43, 214, .35);
+            filter: drop-shadow(0 6px 18px rgba(83, 215, 255, .25));
+        }
+
+        /* underline removed per request */
+
+        .logo-jp {
+            font-size: clamp(22px, 2.6vw, 34px);
+            margin: -4px 0 8px;
+            letter-spacing: 6px;
+            line-height: 1;
+            font-weight: 900;
+            font-family: 'Noto Sans JP', 'Orbitron', sans-serif;
+            color: transparent;
+            background: linear-gradient(90deg, #53d7ff 0%, #ff2bd6 50%, #53d7ff 100%);
+            -webkit-background-clip: text;
+            background-clip: text;
+            background-size: 200% 100%;
+            animation: neonSweep 4s linear infinite;
+            text-shadow: 0 0 10px rgba(83, 215, 255, .75), 0 0 20px rgba(255, 43, 214, .55), 0 0 36px rgba(83, 215, 255, .6);
+        }
+
+        @keyframes neonSweep {
+            0% {
+                background-position: 0% 50%;
+            }
+
+            100% {
+                background-position: 200% 50%;
+            }
+        }
+
+        /* Star-border inspired animated sparkles around the panel edge
+           inspired by: https://reactbits.dev/animations/star-border */
+        .title .panel-stars {
+            position: absolute;
+            inset: 0;
+            border-radius: inherit;
+            pointer-events: none;
+            padding: 2px;
+            /* same as border thickness */
+            background:
+                radial-gradient(2px 2px at 10% 50%, rgba(255, 255, 255, .95) 49%, rgba(255, 255, 255, 0) 51%) repeat-x,
+                radial-gradient(2px 2px at 30% 50%, rgba(83, 215, 255, 1) 49%, rgba(255, 255, 255, 0) 51%) repeat-x,
+                radial-gradient(2px 2px at 50% 50%, rgba(255, 43, 214, 1) 49%, rgba(255, 255, 255, 0) 51%) repeat-x;
+            background-size: 180px 100%, 260px 100%, 340px 100%;
+            background-position: 0 0, 0 0, 0 0;
+            -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+            mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+            -webkit-mask-composite: xor;
+            mask-composite: exclude;
+            /* show only the border area */
+            filter: drop-shadow(0 0 10px rgba(83, 215, 255, .45)) drop-shadow(0 0 16px rgba(255, 43, 214, .35));
+            animation: starBorderMove 6s linear infinite;
+        }
+
+        @keyframes starBorderMove {
+            to {
+                background-position: 360px 0, -280px 0, 220px 0;
+            }
+        }
+
+        .title .instructions {
+            margin-top: 6px;
+            font-size: 16px;
+            color: #eaf6ff;
+            opacity: 0.95;
+            letter-spacing: 0.5px;
+            text-shadow: 0 0 12px rgba(255, 255, 255, 0.28);
+        }
+
+        .title .panel {
+            width: min(820px, 52vw);
+            min-height: 34vh;
+            display: grid;
+            place-items: center;
+            padding: 20px 28px 24px;
+            background: rgba(8, 6, 22, 0.78);
+            backdrop-filter: blur(4px) saturate(120%);
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45), 0 0 24px rgba(83, 215, 255, 0.18) inset;
+            position: relative;
+        }
+
+        /* Neon dual-color border + glow around the splash panel */
+        .title .panel::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            border-radius: inherit;
+            padding: 2px;
+            /* border thickness */
+            background: linear-gradient(90deg, #53d7ff, #ff2bd6);
+            -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+            mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+            -webkit-mask-composite: xor;
+            mask-composite: exclude;
+            /* show only the border */
+            pointer-events: none;
+        }
+
+        .title .panel::before {
+            content: "";
+            position: absolute;
+            inset: -8px;
+            /* outer glow size */
+            border-radius: inherit;
+            background: radial-gradient(60% 100% at 0% 50%, rgba(83, 215, 255, .55), transparent 60%),
+                radial-gradient(60% 100% at 100% 50%, rgba(255, 43, 214, .55), transparent 60%);
+            filter: blur(12px);
+            opacity: .9;
+            z-index: -1;
+            pointer-events: none;
+        }
+
+        .title>div {
+            padding: 0;
+            background: transparent;
+            border-radius: 0;
+            box-shadow: none;
+        }
+
+        .title .cta {
+            margin-top: 24px;
+            display: grid;
+            place-items: center;
+            gap: 10px;
+            width: 100%;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .btn {
+            pointer-events: auto;
+            background: linear-gradient(90deg, #53d7ff, #ff2bd6);
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            font-weight: 800;
+            letter-spacing: 2px;
+            font-size: 15px;
+            border-radius: 999px;
+            box-shadow: 0 8px 28px rgba(195, 61, 255, .45), 0 0 24px rgba(83, 215, 255, .35) inset;
+            cursor: pointer;
+        }
+
+        /* START CTA: balanced padding, min width, pink -> teal on hover */
+        #beginBtn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: clamp(200px, 28vw, 320px);
+            padding: 16px 36px;
+            border-radius: 10px;
+            font-size: clamp(16px, 2.2vw, 22px);
+            letter-spacing: 2px;
+            background: #ff2bd6;
+            /* opaque pink */
+            box-shadow: 0 18px 60px rgba(195, 61, 255, 0.45), 0 0 28px rgba(83, 215, 255, 0.35) inset;
+            transition: background-color .2s ease, transform .05s ease;
+        }
+
+        #beginBtn:hover {
+            background: #53d7ff;
+            /* teal */
+        }
+
+        #beginBtn:active {
+            transform: scale(0.985);
+        }
+
+        .hint {
+            position: absolute;
+            bottom: 24px;
+            width: 100%;
+            text-align: center;
+            font-size: 12px;
+            opacity: .6;
+            color: #e6f6ff;
+        }
+
+        .hidden {
+            opacity: 0;
+            transition: opacity .4s ease;
+            pointer-events: none;
+        }
+
+        .visible {
+            opacity: 1;
+            transition: opacity .6s ease;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="app"></div>
+    <div class="hud" id="hud">
+        <div class="radio" id="radio">
+            <button class="nav" id="radioPrev" aria-label="Previous station">‹</button>
+            <button class="btn off" id="radioToggle">OFF</button>
+            <div class="label">RADIO</div>
+            <div class="station" id="radioStation">Nightride FM</div>
+            <input type="range" id="radioVol" min="0" max="1" step="0.01" value="0.6" />
+            <button class="nav" id="radioNext" aria-label="Next station">›</button>
+        </div>
+        <div class="row">
+            <div class="speed" id="speed">0 KM/H</div>
+            <div class="lap" id="lap">LAP 1/3</div>
+        </div>
+        <div class="meters">
+            <div class="boost">
+                <div class="label">BOOST</div>
+                <div class="bar" id="boostBar"></div>
+            </div>
+            <div class="boost">
+                <div class="label">FLOW</div>
+                <div class="bar" id="flowBar"></div>
+            </div>
+        </div>
+    </div>
+    <div class="title visible" id="start">
+        <div class="panel">
+            <span class="panel-stars" aria-hidden="true"></span>
+            <h1>COSMIC <span class="accent">DRIFT</span></h1>
+            <h2 class="logo-jp">コズミック・ドリフト</h2>
+            <div class="instructions">WASD/Arrow keys to steer • Hold Space to Boost</div>
+            <div class="cta">
+                <button class="btn" id="beginBtn">START</button>
+                <div class="hint">Press Space to Start</div>
+            </div>
+        </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+</body>
+
+</html>
