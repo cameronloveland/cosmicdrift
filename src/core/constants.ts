@@ -32,8 +32,8 @@ export const PHYSICS = {
     trackBoosterDuration: 10, // seconds
     boosterLateralRatio: 0.35, // fraction of track width allowed to pick up booster (center lane)
     lateralMax: 1.6,
-    lateralAccel: 6.0,
-    lateralDamping: 4.5,
+    lateralAccel: 9.0,
+    lateralDamping: 8.0,
     pitchMax: 0.2,
     pitchAccel: 1.8,
     pitchDamping: 3.0,
@@ -64,7 +64,7 @@ export const TRACK_OPTS: Readonly<TrackOptions> = {
     seed: TRACK_SEED,
     controlPointCount: 72,
     samples: 2400,
-    width: 14,
+    width: 24,
     lengthMeters: 8000,
     radiusMin: 500,
     radiusMax: 1600,

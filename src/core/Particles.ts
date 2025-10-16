@@ -21,9 +21,9 @@ export class Particles {
     }
 
     update(dt: number) {
-        // spawn rate scales nonlinearly with speed (stronger at high speed)
-        const f = THREE.MathUtils.clamp((this.ship.state.speedKmh - 50) / (PHYSICS.maxSpeed - 50), 0, 1);
-        const ratePerSec = 40 + 140 * f * f; // particles per second
+        // Emit only when manual boost is active (blue trailers)
+        if (!this.ship.state.boosting) return;
+        const ratePerSec = 180;
         const count = Math.floor(ratePerSec * dt);
         for (let i = 0; i < count; i++) this.spawn();
     }

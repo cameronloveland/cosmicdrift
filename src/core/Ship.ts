@@ -69,6 +69,10 @@ export class Ship {
         window.addEventListener('mousemove', (e) => this.onMouseMove(e));
         window.addEventListener('mousedown', () => this.onMouseDown());
         window.addEventListener('mouseup', () => this.onMouseUp());
+
+        // Start a short distance behind the start line at t=0
+        const behindMeters = 30;
+        this.state.t = THREE.MathUtils.euclideanModulo(1 - behindMeters / this.track.length, 1);
     }
 
     private input = { left: false, right: false, up: false, down: false, boost: false };
@@ -126,6 +130,7 @@ export class Ship {
         const boosterMul = Math.pow(PHYSICS.trackBoosterMultiplier, stacks);
         const targetSpeed = Math.min(PHYSICS.maxSpeed, PHYSICS.baseSpeed * manual * boosterMul);
         const speedLerp = 1 - Math.pow(0.001, dt); // smooth
+        // Maintain consistent speed across track width for uniform turning feel
         this.state.speedKmh = THREE.MathUtils.lerp(this.state.speedKmh, targetSpeed, speedLerp);
         this.state.boosting = isBoosting;
         if (isBoosting) this.boostTimer = Math.min(this.boostTimer + dt, 1); else this.boostTimer = Math.max(this.boostTimer - dt * 2, 0);
@@ -158,8 +163,12 @@ export class Ship {
             }
         }
 
-        // lap wrap detection: crossing from high t to low t past checkpoint
-        if (this.prevT > 0.9 && this.state.t < 0.1) {
+        // lap detection: crossing checkpoint at t=0
+        const crossedCheckpoint = (a: number, b: number, tCheck: number) => {
+            if (a <= b) return a < tCheck && b >= tCheck; // inclusive on b end
+            return a < tCheck || b >= tCheck; // wrapped around
+        };
+        if (crossedCheckpoint(this.prevT, this.state.t, 0.0)) {
             this.state.lapCurrent = this.state.lapCurrent % this.state.lapTotal + 1;
         }
 
@@ -167,7 +176,9 @@ export class Ship {
         const sideInput = (this.input.right ? 1 : 0) - (this.input.left ? 1 : 0);
         const targetSideVel = sideInput * PHYSICS.lateralAccel;
         this.velocitySide = THREE.MathUtils.damp(this.velocitySide, targetSideVel, PHYSICS.lateralDamping, dt);
-        this.state.lateralOffset = THREE.MathUtils.clamp(this.state.lateralOffset + this.velocitySide * dt, -PHYSICS.lateralMax, PHYSICS.lateralMax);
+        const half = this.track.width * 0.5;
+        const lateralLimit = half * 0.95;
+        this.state.lateralOffset = THREE.MathUtils.clamp(this.state.lateralOffset + this.velocitySide * dt, -lateralLimit, lateralLimit);
 
         // pitch control
         const pitchInput = (this.input.up ? 1 : 0) - (this.input.down ? 1 : 0);

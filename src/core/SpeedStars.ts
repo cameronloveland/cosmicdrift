@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { Ship } from './Ship';
 import { Track } from './Track';
+import { PHYSICS } from './constants';
 
 export class SpeedStars {
     public root = new THREE.Group();
@@ -31,6 +32,9 @@ export class SpeedStars {
     }
 
     update(dt: number) {
+        const show = this.ship.state.speedKmh >= (PHYSICS.maxSpeed * 0.9);
+        this.root.visible = show;
+        if (!show) return;
         const forward = new THREE.Vector3(0, 0, 1);
         this.ship.root.localToWorld(forward).sub(this.ship.root.position).normalize();
         const up = new THREE.Vector3(0, 1, 0).applyQuaternion(this.ship.root.quaternion);

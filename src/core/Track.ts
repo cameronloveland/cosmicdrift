@@ -60,6 +60,7 @@ export class Track {
         this.buildGeometry();
         this.buildRails();
         this.buildMarkers();
+        this.buildStartLine();
         this.buildBoosters(BOOSTER_SPACING_METERS);
     }
 
@@ -248,7 +249,7 @@ export class Track {
             envMapIntensity: 0.4
         });
         const ribbon = new THREE.Mesh(geom, mat);
-        ribbon.receiveShadow = false;
+        ribbon.receiveShadow = true;
         this.root.add(ribbon);
     }
 
@@ -288,37 +289,30 @@ export class Track {
         const count = Math.max(1, Math.floor(this.length / spacingMeters));
         if (count <= 0) return;
 
-        // small triangular strip geometry
-        const tri = new THREE.BufferGeometry();
-        const size = this.width * 0.22; // proportion of track width
-        const len = Math.max(2.0, spacingMeters * 0.12); // visual length
-        const verts = new Float32Array([
-            0, 0.02, 0, // tip
-            -size * 0.5, 0.02, -len * 0.5,
-            size * 0.5, 0.02, -len * 0.5
-        ]);
-        tri.setAttribute('position', new THREE.BufferAttribute(verts, 3));
-        tri.setIndex([0, 1, 2]);
-        tri.computeVertexNormals();
+        // Glowing square pads flush with the track surface at center lane
+        const quad = new THREE.PlaneGeometry(1, 1);
+        const size = this.width * 0.22; // pad spans ~22% of track width
+        const len = Math.max(2.0, spacingMeters * 0.10);
         const mat = new THREE.MeshBasicMaterial({ color: BOOSTER_COLOR, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false });
-        const imesh = new THREE.InstancedMesh(tri, mat, count);
+        const imesh = new THREE.InstancedMesh(quad, mat, count);
         const tmpObj = new THREE.Object3D();
 
         for (let i = 0; i < count; i++) {
             const t = i / count;
             const idx = Math.floor(t * this.samples) % this.samples;
             const pos = this.cachedPositions[idx];
-            const tan = this.cachedTangents[idx];
             const up = this.cachedNormals[idx];
-            // align triangle to face forward along tangent, lie on track plane
-            const z = new THREE.Vector3().copy(tan).normalize();
-            const x = new THREE.Vector3().crossVectors(up, z).normalize();
+            const bin = this.cachedBinormals[idx];
+            // Build basis with z=up (quad normal), x across track (binormal), y forward (derived)
+            const z = new THREE.Vector3().copy(up).normalize();
+            const x = new THREE.Vector3().copy(bin).normalize();
             const y = new THREE.Vector3().crossVectors(z, x).normalize();
             const m = new THREE.Matrix4().makeBasis(x, y, z);
             const q = new THREE.Quaternion().setFromRotationMatrix(m);
-            tmpObj.position.copy(pos).addScaledVector(up, 0.03); // avoid z-fight
+            tmpObj.position.copy(pos).addScaledVector(up, 0.015); // slight lift to avoid z-fighting
             tmpObj.quaternion.copy(q);
-            tmpObj.scale.setScalar(1);
+            // scale quad to desired size (x across track, y along track)
+            tmpObj.scale.set(size, len, 1);
             tmpObj.updateMatrix();
             imesh.setMatrixAt(i, tmpObj.matrix);
             this.boosterTs.push(t);
@@ -326,6 +320,27 @@ export class Track {
         imesh.instanceMatrix.needsUpdate = true;
         this.boosters = imesh;
         this.root.add(imesh);
+    }
+
+    private buildStartLine() {
+        // A glowing stripe across the full width at t=0, flush on the ribbon
+        const idx = 0;
+        const center = this.cachedPositions[idx];
+        const up = this.cachedNormals[idx];
+        const bin = this.cachedBinormals[idx];
+        const stripe = new THREE.PlaneGeometry(1, 1);
+        const mat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false });
+        const mesh = new THREE.Mesh(stripe, mat);
+        // Orient plane so normal==up and x across width
+        const z = new THREE.Vector3().copy(up).normalize();
+        const x = new THREE.Vector3().copy(bin).normalize();
+        const y = new THREE.Vector3().crossVectors(z, x).normalize();
+        const m = new THREE.Matrix4().makeBasis(x, y, z);
+        const q = new THREE.Quaternion().setFromRotationMatrix(m);
+        mesh.quaternion.copy(q);
+        mesh.position.copy(center).addScaledVector(up, 0.016);
+        mesh.scale.set(this.width, 1.4, 1); // thin stripe
+        this.root.add(mesh);
     }
 
     private addRail(sideOffset: number, color: THREE.Color, width: number) {
