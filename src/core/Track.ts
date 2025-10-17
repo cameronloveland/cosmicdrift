@@ -1,9 +1,6 @@
 import * as THREE from 'three';
-import { Line2 } from 'three-stdlib';
-import { LineMaterial } from 'three-stdlib';
-import { LineGeometry } from 'three-stdlib';
-import { COLORS, TRACK_OPTS, TRACK_SOURCE, CUSTOM_TRACK_POINTS, BOOSTER_SPACING_METERS, BOOSTER_COLOR } from './constants';
-import type { TrackOptions, TrackSample } from './types';
+import { COLORS, TRACK_OPTS, TRACK_SOURCE, CUSTOM_TRACK_POINTS, BOOSTER_SPACING_METERS, BOOSTER_COLOR, TUNNEL } from './constants';
+import type { TrackOptions, TrackSample, TunnelSegment, TunnelInfo } from './types';
 
 function mulberry32(seed: number) {
     let t = seed >>> 0;
@@ -25,7 +22,9 @@ export class Track {
     private boosterTs: number[] = [];
     private boosters?: THREE.InstancedMesh;
 
-    private railMaterials: LineMaterial[] = [];
+    private tunnelSegments: TunnelSegment[] = [];
+    private tunnels = new THREE.Group();
+
     private opts: TrackOptions = TRACK_OPTS;
 
     // sampled frames cache
@@ -51,7 +50,7 @@ export class Track {
         // Use centripetal Catmull-Rom to avoid overshooting/self-intersections
         this.curve = new THREE.CatmullRomCurve3(controls, true, 'centripetal');
         // Increase arc length precision to remove quantization artifacts
-        this.curve.arcLengthDivisions = Math.max(200, this.samples * 4);
+        this.curve.arcLengthDivisions = Math.max(200, this.samples * 8);
         this.length = this.curve.getLength();
 
         this.precomputeFramesAndBank();
@@ -62,6 +61,7 @@ export class Track {
         this.buildMarkers();
         this.buildStartLine();
         this.buildBoosters(BOOSTER_SPACING_METERS);
+        this.buildTunnels();
     }
 
     private makeControlPoints(opts: TrackOptions): THREE.Vector3[] {
@@ -257,6 +257,10 @@ export class Track {
         const railOffset = this.width * 0.5 + 0.1;
         this.addRail(railOffset, COLORS.neonCyan, 3.0);
         this.addRail(-railOffset, COLORS.neonMagenta, 3.0);
+
+        // Add soft edge glow strips to hide any track faceting
+        this.addEdgeGlow(this.width * 0.5, COLORS.neonCyan, 0.15); // right edge
+        this.addEdgeGlow(-this.width * 0.5, COLORS.neonMagenta, 0.15); // left edge
     }
 
     private buildMarkers() {
@@ -343,47 +347,234 @@ export class Track {
         this.root.add(mesh);
     }
 
-    private addRail(sideOffset: number, color: THREE.Color, width: number) {
-        const positions: number[] = [];
-        const maxAngle = this.opts.railMaxAngle;
-        for (let i = 0; i < this.samples; i++) {
-            const idx = i;
-            const next = (i + 1) % this.samples;
-            const p0 = this.cachedPositions[idx];
-            const p1 = this.cachedPositions[next];
-            const b0 = this.cachedBinormals[idx];
-            const b1 = this.cachedBinormals[next];
-            const t0 = this.cachedTangents[idx];
-            const t1 = this.cachedTangents[next];
-            const dot = THREE.MathUtils.clamp(t0.dot(t1), -1, 1);
-            const ang = Math.acos(dot);
-            const steps = Math.max(1, Math.ceil(ang / maxAngle));
-            for (let s = 0; s < steps; s++) {
-                const u = s / steps;
-                const pos = new THREE.Vector3().copy(p0).lerp(p1, u);
-                const bin = new THREE.Vector3().copy(b0).lerp(b1, u).normalize();
-                pos.addScaledVector(bin, sideOffset);
-                positions.push(pos.x, pos.y, pos.z);
+    private buildTunnels() {
+        // Clear old tunnels
+        if (this.tunnels.parent) this.root.remove(this.tunnels);
+        this.tunnels = new THREE.Group();
+        this.tunnelSegments = [];
+
+        const rnd = mulberry32(this.opts.seed + 1000); // different seed for tunnel placement
+        const count = Math.floor(rnd() * (TUNNEL.countMax - TUNNEL.countMin + 1)) + TUNNEL.countMin;
+
+        // Generate random tunnel placements ensuring minimum spacing
+        const placements: number[] = [];
+        const maxAttempts = 100;
+        
+        for (let i = 0; i < count; i++) {
+            let attempts = 0;
+            let validPlacement = false;
+            let startT = 0;
+            
+            while (!validPlacement && attempts < maxAttempts) {
+                startT = rnd();
+                validPlacement = true;
+                
+                // Check spacing with existing tunnels
+                for (const existing of placements) {
+                    const distT = Math.abs(startT - existing);
+                    const wrapDist = Math.min(distT, 1 - distT);
+                    const distMeters = wrapDist * this.length;
+                    if (distMeters < TUNNEL.minSpacing) {
+                        validPlacement = false;
+                        break;
+                    }
+                }
+                attempts++;
+            }
+            
+            if (validPlacement) {
+                placements.push(startT);
             }
         }
-        // close the loop by adding the final point
-        {
-            const p = this.cachedPositions[0].clone().addScaledVector(this.cachedBinormals[0], sideOffset);
-            positions.push(p.x, p.y, p.z);
+
+        // Build tunnel geometry for each placement
+        for (const startT of placements) {
+            const lengthMeters = TUNNEL.lengthMin + rnd() * (TUNNEL.lengthMax - TUNNEL.lengthMin);
+            const endT = THREE.MathUtils.euclideanModulo(startT + lengthMeters / this.length, 1);
+            
+            this.tunnelSegments.push({ startT, endT, lengthMeters });
+            
+            // Create tunnel tube geometry
+            const tunnelPoints: THREE.Vector3[] = [];
+            const segmentCount = Math.floor((lengthMeters / this.length) * this.samples);
+            
+            for (let i = 0; i <= segmentCount; i++) {
+                const t = startT + (i / segmentCount) * (lengthMeters / this.length);
+                const idx = Math.floor(THREE.MathUtils.euclideanModulo(t, 1) * this.samples) % this.samples;
+                tunnelPoints.push(this.cachedPositions[idx].clone());
+            }
+            
+            const tunnelCurve = new THREE.CatmullRomCurve3(tunnelPoints, false, 'centripetal');
+            const tubeGeometry = new THREE.TubeGeometry(
+                tunnelCurve,
+                TUNNEL.segmentCount,
+                TUNNEL.radius,
+                TUNNEL.radialSegments,
+                false
+            );
+            
+            // Create gradient colors along tunnel length
+            const colors = new Float32Array(tubeGeometry.attributes.position.count * 3);
+            const posCount = tubeGeometry.attributes.position.count;
+            
+            for (let i = 0; i < posCount; i++) {
+                const progress = (i % (TUNNEL.radialSegments + 1)) / TUNNEL.radialSegments;
+                const colorMix = new THREE.Color().lerpColors(TUNNEL.colorStart, TUNNEL.colorEnd, progress);
+                colors[i * 3] = colorMix.r;
+                colors[i * 3 + 1] = colorMix.g;
+                colors[i * 3 + 2] = colorMix.b;
+            }
+            
+            tubeGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+            
+            const tunnelMaterial = new THREE.MeshBasicMaterial({
+                vertexColors: true,
+                transparent: true,
+                opacity: 0.25,
+                blending: THREE.AdditiveBlending,
+                side: THREE.BackSide,
+                depthWrite: false,
+                toneMapped: false
+            });
+            
+            const tunnelMesh = new THREE.Mesh(tubeGeometry, tunnelMaterial);
+            this.tunnels.add(tunnelMesh);
+            
+            // Add decorative neon rings along the tunnel
+            this.addTunnelRings(tunnelCurve, lengthMeters, startT);
         }
-        const geom = new LineGeometry();
-        geom.setPositions(positions);
-        const mat = new LineMaterial({ color: color.getHex(), linewidth: width, worldUnits: true });
-        mat.resolution.set(window.innerWidth, window.innerHeight);
-        this.railMaterials.push(mat);
-        const line = new Line2(geom, mat);
-        line.computeLineDistances();
-        (line.material as any).toneMapped = false;
-        this.root.add(line);
+        
+        this.root.add(this.tunnels);
+    }
+
+    private addTunnelRings(tunnelCurve: THREE.CatmullRomCurve3, lengthMeters: number, startT: number) {
+        const ringCount = Math.floor(lengthMeters / TUNNEL.ringSpacing);
+        const torusGeometry = new THREE.TorusGeometry(TUNNEL.radius * 0.95, 0.3, 8, 24);
+        
+        for (let i = 0; i < ringCount; i++) {
+            const progress = i / ringCount;
+            const t = progress;
+            
+            // Get position and orientation along the tunnel curve
+            const pos = tunnelCurve.getPointAt(t);
+            const tangent = tunnelCurve.getTangentAt(t);
+            
+            // Calculate corresponding track index for proper orientation
+            const trackT = THREE.MathUtils.euclideanModulo(startT + progress * (lengthMeters / this.length), 1);
+            const idx = Math.floor(trackT * this.samples) % this.samples;
+            const normal = this.cachedNormals[idx];
+            const binormal = this.cachedBinormals[idx];
+            
+            // Create ring with color gradient
+            const colorMix = new THREE.Color().lerpColors(TUNNEL.colorStart, TUNNEL.colorEnd, progress);
+            const ringMaterial = new THREE.MeshBasicMaterial({
+                color: colorMix,
+                transparent: true,
+                opacity: 0.6,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false,
+                toneMapped: false
+            });
+            
+            const ring = new THREE.Mesh(torusGeometry, ringMaterial);
+            
+            // Orient ring perpendicular to tangent
+            const z = tangent.clone().normalize();
+            const x = binormal.clone().normalize();
+            const y = new THREE.Vector3().crossVectors(z, x).normalize();
+            const m = new THREE.Matrix4().makeBasis(x, y, z);
+            const q = new THREE.Quaternion().setFromRotationMatrix(m);
+            
+            ring.position.copy(pos);
+            ring.quaternion.copy(q);
+            
+            this.tunnels.add(ring);
+        }
+    }
+
+    private addRail(sideOffset: number, color: THREE.Color, width: number) {
+        // Create offset curve by transforming the main curve
+        const offsetCurve = this.createOffsetCurve(sideOffset);
+
+        // Create TubeGeometry for smooth rails
+        const tubularSegments = this.samples;
+        const radius = width * 0.1; // Convert line width to tube radius
+        const radialSegments = 8;
+
+        const tubeGeom = new THREE.TubeGeometry(
+            offsetCurve,
+            tubularSegments,
+            radius,
+            radialSegments,
+            true // closed
+        );
+
+        const mat = new THREE.MeshBasicMaterial({
+            color: color,
+            transparent: true,
+            opacity: 0.9,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+            toneMapped: false
+        });
+
+        const tubeMesh = new THREE.Mesh(tubeGeom, mat);
+        this.root.add(tubeMesh);
+    }
+
+    private createOffsetCurve(sideOffset: number): THREE.CatmullRomCurve3 {
+        // Create control points offset from the main curve
+        const offsetPoints: THREE.Vector3[] = [];
+
+        for (let i = 0; i < this.samples; i++) {
+            const t = i / this.samples;
+            const center = this.curve.getPointAt(t);
+            const tangent = this.curve.getTangentAt(t).normalize();
+            const normal = this.cachedNormals[i];
+
+            // Build orthonormal frame
+            const up = normal.clone();
+            const binormal = new THREE.Vector3().crossVectors(tangent, up).normalize();
+
+            // Offset position along binormal
+            const offsetPos = center.clone().addScaledVector(binormal, sideOffset);
+            offsetPoints.push(offsetPos);
+        }
+
+        return new THREE.CatmullRomCurve3(offsetPoints, true, 'centripetal');
+    }
+
+    private addEdgeGlow(sideOffset: number, color: THREE.Color, radius: number) {
+        // Create offset curve for the edge glow
+        const offsetCurve = this.createOffsetCurve(sideOffset);
+
+        // Create thin TubeGeometry for soft edge glow
+        const tubularSegments = this.samples;
+        const radialSegments = 6; // fewer segments for softer look
+
+        const tubeGeom = new THREE.TubeGeometry(
+            offsetCurve,
+            tubularSegments,
+            radius,
+            radialSegments,
+            true // closed
+        );
+
+        const mat = new THREE.MeshBasicMaterial({
+            color: color,
+            transparent: true,
+            opacity: 0.3, // subtle glow
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+            toneMapped: false
+        });
+
+        const glowMesh = new THREE.Mesh(tubeGeom, mat);
+        this.root.add(glowMesh);
     }
 
     public updateResolution(width: number, height: number) {
-        for (const m of this.railMaterials) m.resolution.set(width, height);
+        // No longer needed with TubeGeometry rails
     }
 
     public getPointAtT(t: number, target: THREE.Vector3): THREE.Vector3 {
@@ -420,6 +611,46 @@ export class Track {
     }
 
     public getBoosterTs(): readonly number[] { return this.boosterTs; }
+
+    public getTunnelAtT(t: number, lateralOffset: number): TunnelInfo {
+        const normalizedT = THREE.MathUtils.euclideanModulo(t, 1);
+        
+        for (const tunnel of this.tunnelSegments) {
+            let inTunnel = false;
+            let progress = 0;
+            
+            // Handle wrap-around case
+            if (tunnel.startT <= tunnel.endT) {
+                // Normal case: tunnel doesn't wrap around t=0/1
+                inTunnel = normalizedT >= tunnel.startT && normalizedT <= tunnel.endT;
+                if (inTunnel) {
+                    progress = (normalizedT - tunnel.startT) / (tunnel.endT - tunnel.startT);
+                }
+            } else {
+                // Wrap case: tunnel crosses t=0/1 boundary
+                inTunnel = normalizedT >= tunnel.startT || normalizedT <= tunnel.endT;
+                if (inTunnel) {
+                    if (normalizedT >= tunnel.startT) {
+                        progress = (normalizedT - tunnel.startT) / (1 - tunnel.startT + tunnel.endT);
+                    } else {
+                        progress = (1 - tunnel.startT + normalizedT) / (1 - tunnel.startT + tunnel.endT);
+                    }
+                }
+            }
+            
+            if (inTunnel) {
+                // Calculate center alignment (0 = at edge, 1 = perfectly centered)
+                const centerAlignment = 1 - Math.abs(lateralOffset) / (this.width * 0.5);
+                return {
+                    inTunnel: true,
+                    progress,
+                    centerAlignment: Math.max(0, centerAlignment)
+                };
+            }
+        }
+        
+        return { inTunnel: false, progress: 0, centerAlignment: 0 };
+    }
 
     public getCheckpointCount(): number {
         return 16;

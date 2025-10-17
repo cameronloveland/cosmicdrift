@@ -54,4 +54,16 @@ export type TrackSample = {
     up: Vector3;
 };
 
+export type TunnelSegment = {
+    startT: number;
+    endT: number;
+    lengthMeters: number;
+};
+
+export type TunnelInfo = {
+    inTunnel: boolean;
+    progress: number; // 0..1 progress through current tunnel
+    centerAlignment: number; // 0..1 how centered the ship is
+};
+
 

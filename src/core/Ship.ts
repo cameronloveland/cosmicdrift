@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CAMERA, LAPS_TOTAL, PHYSICS } from './constants';
+import { CAMERA, COLORS, LAPS_TOTAL, PHYSICS, TUNNEL } from './constants';
 import { Track } from './Track';
 
 function kmhToMps(kmh: number) { return kmh / 3.6; }
@@ -15,7 +15,10 @@ export class Ship {
         boosting: false,
         lapCurrent: 1,
         lapTotal: LAPS_TOTAL,
-        boostLevel: 1
+        boostLevel: 1,
+        currentColor: 'default' as 'cyan' | 'magenta' | 'default',
+        inTunnel: false,
+        tunnelCenterBoost: 1.0 // multiplier from tunnel center alignment
     };
 
     private track: Track;
@@ -36,6 +39,13 @@ export class Ship {
     private mousePitch = 0;
     private mouseActive = false;
 
+    private tunnelBoostAccumulator = 1.0; // tracks current tunnel boost multiplier
+    private baseFov = CAMERA.fov;
+    private currentFov = CAMERA.fov;
+
+    private shipMaterial!: THREE.MeshStandardMaterial;
+    private glowMaterial!: THREE.MeshBasicMaterial;
+
     private tmp = {
         pos: new THREE.Vector3(),
         tangent: new THREE.Vector3(),
@@ -53,12 +63,18 @@ export class Ship {
         // simple hover-ship mesh
         const body = new THREE.Group();
         const geo = new THREE.ConeGeometry(0.45, 1.2, 16);
-        const mat = new THREE.MeshStandardMaterial({ color: 0x99ddff, metalness: 0.3, roughness: 0.2, emissive: new THREE.Color(0x53d7ff) });
-        const mesh = new THREE.Mesh(geo, mat);
+        this.shipMaterial = new THREE.MeshStandardMaterial({ color: 0x99ddff, metalness: 0.3, roughness: 0.2, emissive: new THREE.Color(0x53d7ff) });
+        const mesh = new THREE.Mesh(geo, this.shipMaterial);
         mesh.rotation.x = Math.PI / 2;
         body.add(mesh);
 
-        const glow = new THREE.Mesh(new THREE.SphereGeometry(0.2, 16, 16), new THREE.MeshBasicMaterial({ color: 0xff2bd6, toneMapped: false }));
+        this.glowMaterial = new THREE.MeshBasicMaterial({
+            color: 0x53d7ff,
+            toneMapped: false,
+            transparent: false,
+            opacity: 1.0
+        });
+        const glow = new THREE.Mesh(new THREE.SphereGeometry(0.2, 16, 16), this.glowMaterial);
         glow.position.set(0, -0.15, -0.3);
         body.add(glow);
 
@@ -128,7 +144,30 @@ export class Ship {
 
         const manual = isBoosting ? PHYSICS.boostMultiplier : 1;
         const boosterMul = Math.pow(PHYSICS.trackBoosterMultiplier, stacks);
-        const targetSpeed = Math.min(PHYSICS.maxSpeed, PHYSICS.baseSpeed * manual * boosterMul);
+        
+        // Tunnel boost logic: progressive boost based on center alignment
+        const tunnelInfo = this.track.getTunnelAtT(this.state.t, this.state.lateralOffset);
+        this.state.inTunnel = tunnelInfo.inTunnel;
+        
+        if (tunnelInfo.inTunnel && tunnelInfo.centerAlignment >= TUNNEL.centerThreshold) {
+            // Accumulate boost when well-centered in tunnel
+            const targetBoost = 1 + (TUNNEL.centerBoostMultiplier - 1) * tunnelInfo.centerAlignment;
+            this.tunnelBoostAccumulator = THREE.MathUtils.lerp(
+                this.tunnelBoostAccumulator,
+                targetBoost,
+                TUNNEL.boostAccumulationSpeed * dt
+            );
+        } else {
+            // Decay boost when not in tunnel or not centered
+            this.tunnelBoostAccumulator = THREE.MathUtils.lerp(
+                this.tunnelBoostAccumulator,
+                1.0,
+                TUNNEL.boostDecaySpeed * dt
+            );
+        }
+        this.state.tunnelCenterBoost = this.tunnelBoostAccumulator;
+        
+        const targetSpeed = Math.min(PHYSICS.maxSpeed, PHYSICS.baseSpeed * manual * boosterMul * this.tunnelBoostAccumulator);
         const speedLerp = 1 - Math.pow(0.001, dt); // smooth
         // Maintain consistent speed across track width for uniform turning feel
         this.state.speedKmh = THREE.MathUtils.lerp(this.state.speedKmh, targetSpeed, speedLerp);
@@ -179,6 +218,47 @@ export class Ship {
         const half = this.track.width * 0.5;
         const lateralLimit = half * 0.95;
         this.state.lateralOffset = THREE.MathUtils.clamp(this.state.lateralOffset + this.velocitySide * dt, -lateralLimit, lateralLimit);
+
+        // Rail collision detection and color change
+        // Ship hits the rails when at the lateral limit (fully touching)
+        const collisionThreshold = lateralLimit * 0.98; // trigger when 98% to the edge (almost fully touching)
+
+        // Check collision with cyan rail (right side)
+        if (this.state.lateralOffset >= collisionThreshold && this.state.currentColor !== 'cyan') {
+            this.state.currentColor = 'cyan';
+            this.shipMaterial.color.copy(COLORS.neonCyan);
+            this.shipMaterial.emissive.copy(COLORS.neonCyan).multiplyScalar(0.5);
+            this.shipMaterial.needsUpdate = true;
+
+            // Force glow material update
+            this.glowMaterial.color.copy(COLORS.neonCyan);
+            this.glowMaterial.needsUpdate = true;
+            console.log('Ship changed to cyan, glow color set to:', this.glowMaterial.color.getHexString());
+        }
+        // Check collision with magenta rail (left side)
+        else if (this.state.lateralOffset <= -collisionThreshold && this.state.currentColor !== 'magenta') {
+            this.state.currentColor = 'magenta';
+            this.shipMaterial.color.copy(COLORS.neonMagenta);
+            this.shipMaterial.emissive.copy(COLORS.neonMagenta).multiplyScalar(0.5);
+            this.shipMaterial.needsUpdate = true;
+
+            // Force glow material update
+            this.glowMaterial.color.copy(COLORS.neonMagenta);
+            this.glowMaterial.needsUpdate = true;
+            console.log('Ship changed to magenta, glow color set to:', this.glowMaterial.color.getHexString());
+        }
+        // Reset to default when in center
+        else if (Math.abs(this.state.lateralOffset) < collisionThreshold * 0.5 && this.state.currentColor !== 'default') {
+            this.state.currentColor = 'default';
+            this.shipMaterial.color.setHex(0x99ddff);
+            this.shipMaterial.emissive.copy(COLORS.neonCyan);
+            this.shipMaterial.needsUpdate = true;
+
+            // Reset glow to cyan
+            this.glowMaterial.color.copy(COLORS.neonCyan);
+            this.glowMaterial.needsUpdate = true;
+            console.log('Ship reset to default cyan, glow color set to:', this.glowMaterial.color.getHexString());
+        }
 
         // pitch control
         const pitchInput = (this.input.up ? 1 : 0) - (this.input.down ? 1 : 0);
@@ -252,6 +332,12 @@ export class Ship {
         toTarget.applyQuaternion(qYaw).applyQuaternion(qPitch);
         const finalLook = new THREE.Vector3().addVectors(this.camera.position, toTarget);
         this.camera.lookAt(finalLook);
+
+        // Dynamic FOV in tunnels
+        const targetFov = this.state.inTunnel ? this.baseFov + TUNNEL.fovBoost : this.baseFov;
+        this.currentFov = THREE.MathUtils.lerp(this.currentFov, targetFov, 1 - Math.pow(0.01, dt));
+        this.camera.fov = this.currentFov;
+        this.camera.updateProjectionMatrix();
 
         // subtle speed shake
         const shake = CAMERA.shakeMax * (this.state.speedKmh / PHYSICS.maxSpeed) * (0.4 + 0.6 * this.boostTimer);

@@ -21,9 +21,21 @@ export class Particles {
     }
 
     update(dt: number) {
-        // Emit only when manual boost is active (blue trailers)
-        if (!this.ship.state.boosting) return;
-        const ratePerSec = 180;
+        // Emit when manual boost is active or in tunnel
+        const baseRate = 180;
+        let ratePerSec = 0;
+        
+        if (this.ship.state.boosting) {
+            ratePerSec = baseRate;
+        }
+        
+        // Increase particle rate dramatically when in tunnel
+        if (this.ship.state.inTunnel) {
+            ratePerSec = Math.max(ratePerSec, baseRate * 2.5);
+        }
+        
+        if (ratePerSec === 0) return;
+        
         const count = Math.floor(ratePerSec * dt);
         for (let i = 0; i < count; i++) this.spawn();
     }
@@ -37,8 +49,26 @@ export class Particles {
         this.tmpObj.scale.setScalar(0.6 + Math.random() * 0.8);
         this.tmpObj.updateMatrix();
         this.imesh.setMatrixAt(i, this.tmpObj.matrix);
-        const c = 0.7 + 0.3 * Math.random();
-        this.imesh.setColorAt(i, new THREE.Color(0.2, c, 1));
+        
+        // Vary particle colors: cyan/magenta gradient in tunnels, cyan when boosting
+        let color: THREE.Color;
+        if (this.ship.state.inTunnel) {
+            // Mix cyan and magenta for tunnel particles
+            const mix = Math.random();
+            if (mix > 0.5) {
+                // Cyan
+                color = new THREE.Color(0.2, 0.7 + 0.3 * Math.random(), 1);
+            } else {
+                // Magenta tint
+                color = new THREE.Color(1, 0.2, 0.7 + 0.3 * Math.random());
+            }
+        } else {
+            // Default boost particles (cyan)
+            const c = 0.7 + 0.3 * Math.random();
+            color = new THREE.Color(0.2, c, 1);
+        }
+        
+        this.imesh.setColorAt(i, color);
         this.imesh.instanceMatrix.needsUpdate = true;
         (this.imesh.instanceColor as any).needsUpdate = true;
     }

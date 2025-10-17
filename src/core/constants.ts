@@ -88,4 +88,26 @@ export const BOOSTER_COLOR = 0xfff066;
 
 export const CUSTOM_TRACK_POINTS: Vector3[] = [];
 
+// Tunnel configuration
+export const TUNNEL = {
+    countMin: 2,
+    countMax: 3,
+    lengthMin: 400, // meters
+    lengthMax: 600, // meters
+    radius: 16, // slightly larger than track width for enclosure feel
+    segmentCount: 64, // geometry detail per tunnel section
+    radialSegments: 16, // tube cross-section detail
+    centerBoostMultiplier: 1.5, // max speed boost when perfectly centered
+    centerThreshold: 0.7, // lateral alignment ratio needed for boost (0-1)
+    boostAccumulationSpeed: 0.8, // how fast boost builds when centered
+    boostDecaySpeed: 1.5, // how fast boost decays when off-center
+    fovBoost: 8, // FOV increase when in tunnel
+    minSpacing: 800, // minimum meters between tunnel starts
+    // Neon gradient colors for tunnel
+    colorStart: new Color(0x53d7ff), // cyan
+    colorEnd: new Color(0xff2bd6), // magenta
+    glowIntensity: 1.2,
+    ringSpacing: 25 // meters between decorative rings
+};
+
 
