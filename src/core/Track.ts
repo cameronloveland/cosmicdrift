@@ -62,6 +62,7 @@ export class Track {
         this.buildStartLine();
         this.buildBoosters(BOOSTER_SPACING_METERS);
         this.buildTunnels();
+        this.updateTrackAlphaForTunnels();
     }
 
     private makeControlPoints(opts: TrackOptions): THREE.Vector3[] {
@@ -202,8 +203,10 @@ export class Track {
         const positions: number[] = [];
         const normals: number[] = [];
         const uvs: number[] = [];
+        const colors: number[] = []; // RGBA for vertex colors with alpha
         const indices: number[] = [];
 
+        // Initialize with full opacity - we'll update this after tunnels are built
         for (let i = 0; i <= segments; i++) {
             const idx = i % segments;
             const center = this.cachedPositions[idx];
@@ -223,6 +226,10 @@ export class Track {
             const v = (i / segments) * (this.length / 10);
             uvs.push(0, v);
             uvs.push(1, v);
+
+            // Add vertex colors (RGBA) - start with full opacity
+            colors.push(1, 1, 1, 1); // left vertex
+            colors.push(1, 1, 1, 1); // right vertex
         }
 
         for (let i = 0; i < segments; i++) {
@@ -237,6 +244,7 @@ export class Track {
         geom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
         geom.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
         geom.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+        geom.setAttribute('color', new THREE.Float32BufferAttribute(colors, 4));
         geom.setIndex(indices);
 
         const mat = new THREE.MeshPhysicalMaterial({
@@ -246,7 +254,9 @@ export class Track {
             transparent: true,
             opacity: 0.98,
             emissive: COLORS.deepBlue.clone().multiplyScalar(0.25),
-            envMapIntensity: 0.4
+            envMapIntensity: 0.4,
+            vertexColors: true,
+            alphaTest: 0.01 // Ensure alpha blending works properly
         });
         const ribbon = new THREE.Mesh(geom, mat);
         ribbon.receiveShadow = true;
@@ -264,12 +274,30 @@ export class Track {
     }
 
     private buildMarkers() {
-        // simple neon posts along the track
+        // simple neon posts along the track - enhanced for better visibility
         const group = new THREE.Group();
         const spacing = this.opts.markerSpacing;
         const count = Math.max(8, Math.floor(this.length / spacing));
-        const geom = new THREE.CylinderGeometry(0.06, 0.06, 0.8, 8);
-        const mat = new THREE.MeshBasicMaterial({ color: 0x53d7ff, toneMapped: false });
+        const geom = new THREE.CylinderGeometry(0.08, 0.08, 1.0, 8); // larger and taller
+        const mat = new THREE.MeshBasicMaterial({
+            color: 0x53d7ff,
+            toneMapped: false,
+            transparent: true,
+            opacity: 0.95,
+            blending: THREE.AdditiveBlending
+        });
+
+        // Add glow halo geometry for extra visibility
+        const haloGeom = new THREE.SphereGeometry(0.15, 8, 8);
+        const haloMat = new THREE.MeshBasicMaterial({
+            color: 0x53d7ff,
+            transparent: true,
+            opacity: 0.4,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+            toneMapped: false
+        });
+
         for (let i = 0; i < count; i++) {
             const t = (i / count);
             const idx = Math.floor(t * this.samples) % this.samples;
@@ -277,10 +305,17 @@ export class Track {
             const up = this.cachedNormals[idx];
             const bin = this.cachedBinormals[idx];
             const side = (i % 2 === 0 ? 1 : -1);
-            const p = new THREE.Vector3().copy(pos).addScaledVector(bin, side * (this.width * 0.5 + 0.3)).addScaledVector(up, 0.5);
+            const p = new THREE.Vector3().copy(pos).addScaledVector(bin, side * (this.width * 0.5 + 0.3)).addScaledVector(up, 0.6);
+
+            // Main marker post
             const m = new THREE.Mesh(geom, mat);
             m.position.copy(p);
             group.add(m);
+
+            // Add glow halo at the top
+            const halo = new THREE.Mesh(haloGeom, haloMat);
+            halo.position.copy(p).addScaledVector(up, 0.5);
+            group.add(halo);
         }
         this.root.add(group);
     }
@@ -295,9 +330,16 @@ export class Track {
 
         // Glowing square pads flush with the track surface at center lane
         const quad = new THREE.PlaneGeometry(1, 1);
-        const size = this.width * 0.22; // pad spans ~22% of track width
-        const len = Math.max(2.0, spacingMeters * 0.10);
-        const mat = new THREE.MeshBasicMaterial({ color: BOOSTER_COLOR, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false });
+        const size = this.width * 0.25; // pad spans ~25% of track width (increased from 22%)
+        const len = Math.max(2.5, spacingMeters * 0.12); // longer and more visible
+        const mat = new THREE.MeshBasicMaterial({
+            color: BOOSTER_COLOR,
+            transparent: true,
+            opacity: 1.0, // fully opaque for maximum visibility
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+            toneMapped: false
+        });
         const imesh = new THREE.InstancedMesh(quad, mat, count);
         const tmpObj = new THREE.Object3D();
 
@@ -359,16 +401,16 @@ export class Track {
         // Generate random tunnel placements ensuring minimum spacing
         const placements: number[] = [];
         const maxAttempts = 100;
-        
+
         for (let i = 0; i < count; i++) {
             let attempts = 0;
             let validPlacement = false;
             let startT = 0;
-            
+
             while (!validPlacement && attempts < maxAttempts) {
                 startT = rnd();
                 validPlacement = true;
-                
+
                 // Check spacing with existing tunnels
                 for (const existing of placements) {
                     const distT = Math.abs(startT - existing);
@@ -381,7 +423,7 @@ export class Track {
                 }
                 attempts++;
             }
-            
+
             if (validPlacement) {
                 placements.push(startT);
             }
@@ -391,80 +433,46 @@ export class Track {
         for (const startT of placements) {
             const lengthMeters = TUNNEL.lengthMin + rnd() * (TUNNEL.lengthMax - TUNNEL.lengthMin);
             const endT = THREE.MathUtils.euclideanModulo(startT + lengthMeters / this.length, 1);
-            
+
             this.tunnelSegments.push({ startT, endT, lengthMeters });
-            
+
             // Create tunnel tube geometry
             const tunnelPoints: THREE.Vector3[] = [];
             const segmentCount = Math.floor((lengthMeters / this.length) * this.samples);
-            
+
             for (let i = 0; i <= segmentCount; i++) {
                 const t = startT + (i / segmentCount) * (lengthMeters / this.length);
                 const idx = Math.floor(THREE.MathUtils.euclideanModulo(t, 1) * this.samples) % this.samples;
                 tunnelPoints.push(this.cachedPositions[idx].clone());
             }
-            
+
             const tunnelCurve = new THREE.CatmullRomCurve3(tunnelPoints, false, 'centripetal');
-            const tubeGeometry = new THREE.TubeGeometry(
-                tunnelCurve,
-                TUNNEL.segmentCount,
-                TUNNEL.radius,
-                TUNNEL.radialSegments,
-                false
-            );
-            
-            // Create gradient colors along tunnel length
-            const colors = new Float32Array(tubeGeometry.attributes.position.count * 3);
-            const posCount = tubeGeometry.attributes.position.count;
-            
-            for (let i = 0; i < posCount; i++) {
-                const progress = (i % (TUNNEL.radialSegments + 1)) / TUNNEL.radialSegments;
-                const colorMix = new THREE.Color().lerpColors(TUNNEL.colorStart, TUNNEL.colorEnd, progress);
-                colors[i * 3] = colorMix.r;
-                colors[i * 3 + 1] = colorMix.g;
-                colors[i * 3 + 2] = colorMix.b;
-            }
-            
-            tubeGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-            
-            const tunnelMaterial = new THREE.MeshBasicMaterial({
-                vertexColors: true,
-                transparent: true,
-                opacity: 0.25,
-                blending: THREE.AdditiveBlending,
-                side: THREE.BackSide,
-                depthWrite: false,
-                toneMapped: false
-            });
-            
-            const tunnelMesh = new THREE.Mesh(tubeGeometry, tunnelMaterial);
-            this.tunnels.add(tunnelMesh);
-            
-            // Add decorative neon rings along the tunnel
+
+            // Add decorative neon rings along the tunnel (no tube walls)
             this.addTunnelRings(tunnelCurve, lengthMeters, startT);
         }
-        
+
         this.root.add(this.tunnels);
     }
 
     private addTunnelRings(tunnelCurve: THREE.CatmullRomCurve3, lengthMeters: number, startT: number) {
         const ringCount = Math.floor(lengthMeters / TUNNEL.ringSpacing);
         const torusGeometry = new THREE.TorusGeometry(TUNNEL.radius * 0.95, 0.3, 8, 24);
-        
+
         for (let i = 0; i < ringCount; i++) {
             const progress = i / ringCount;
             const t = progress;
-            
+
             // Get position and orientation along the tunnel curve
             const pos = tunnelCurve.getPointAt(t);
             const tangent = tunnelCurve.getTangentAt(t);
-            
+
             // Calculate corresponding track index for proper orientation
             const trackT = THREE.MathUtils.euclideanModulo(startT + progress * (lengthMeters / this.length), 1);
             const idx = Math.floor(trackT * this.samples) % this.samples;
             const normal = this.cachedNormals[idx];
             const binormal = this.cachedBinormals[idx];
-            
+
             // Create ring with color gradient
             const colorMix = new THREE.Color().lerpColors(TUNNEL.colorStart, TUNNEL.colorEnd, progress);
             const ringMaterial = new THREE.MeshBasicMaterial({
@@ -475,21 +483,101 @@ export class Track {
                 depthWrite: false,
                 toneMapped: false
             });
-            
+
             const ring = new THREE.Mesh(torusGeometry, ringMaterial);
-            
+
             // Orient ring perpendicular to tangent
             const z = tangent.clone().normalize();
             const x = binormal.clone().normalize();
             const y = new THREE.Vector3().crossVectors(z, x).normalize();
             const m = new THREE.Matrix4().makeBasis(x, y, z);
             const q = new THREE.Quaternion().setFromRotationMatrix(m);
-            
+
             ring.position.copy(pos);
             ring.quaternion.copy(q);
-            
+
             this.tunnels.add(ring);
         }
+    }
+
+    private updateTrackAlphaForTunnels() {
+        // Find the track ribbon mesh and update its vertex alpha
+        const ribbon = this.root.children.find(child => child instanceof THREE.Mesh && child.geometry.attributes.color) as THREE.Mesh | undefined;
+        if (!ribbon || !ribbon.geometry.attributes.color) return;
+
+        const colorAttr = ribbon.geometry.attributes.color;
+        const colors = colorAttr.array as Float32Array;
+
+        // For each vertex pair (left and right edge of track)
+        for (let i = 0; i <= this.samples; i++) {
+            const idx = i % this.samples;
+            const t = idx / this.samples;
+
+            // Check if this position is inside any tunnel
+            let inTunnel = false;
+            let transitionFactor = 1.0; // 1.0 = visible, 0.0 = invisible
+
+            for (const tunnel of this.tunnelSegments) {
+                let isInside = false;
+
+                if (tunnel.startT <= tunnel.endT) {
+                    // Normal case - check if we're inside the tunnel
+                    isInside = t >= tunnel.startT && t <= tunnel.endT;
+                } else {
+                    // Wrap case - tunnel crosses t=0/1 boundary
+                    isInside = t >= tunnel.startT || t <= tunnel.endT;
+                }
+
+                if (isInside) {
+                    inTunnel = true;
+                    transitionFactor = 0.0; // Completely transparent inside tunnel
+                    break; // No need to check other tunnels
+                }
+            }
+
+            // Only add fade transitions at tunnel edges if not inside any tunnel
+            if (!inTunnel) {
+                for (const tunnel of this.tunnelSegments) {
+                    let nearEdge = false;
+                    let fadeDistance = 0.02; // 2% of track for smooth entry/exit
+
+                    if (tunnel.startT <= tunnel.endT) {
+                        // Normal case
+                        const distFromStart = Math.abs(t - tunnel.startT);
+                        const distFromEnd = Math.abs(t - tunnel.endT);
+                        const tunnelLength = tunnel.endT - tunnel.startT;
+                        const edgeFadeDistance = Math.min(fadeDistance, tunnelLength * 0.1);
+
+                        if (distFromStart < edgeFadeDistance) {
+                            nearEdge = true;
+                            transitionFactor = Math.min(transitionFactor, distFromStart / edgeFadeDistance);
+                        } else if (distFromEnd < edgeFadeDistance) {
+                            nearEdge = true;
+                            transitionFactor = Math.min(transitionFactor, distFromEnd / edgeFadeDistance);
+                        }
+                    } else {
+                        // Wrap case
+                        const distFromStart = Math.min(Math.abs(t - tunnel.startT), Math.abs(t - tunnel.startT + 1), Math.abs(t - tunnel.startT - 1));
+                        const distFromEnd = Math.min(Math.abs(t - tunnel.endT), Math.abs(t - tunnel.endT + 1), Math.abs(t - tunnel.endT - 1));
+
+                        if (distFromStart < fadeDistance) {
+                            nearEdge = true;
+                            transitionFactor = Math.min(transitionFactor, distFromStart / fadeDistance);
+                        } else if (distFromEnd < fadeDistance) {
+                            nearEdge = true;
+                            transitionFactor = Math.min(transitionFactor, distFromEnd / fadeDistance);
+                        }
+                    }
+                }
+            }
+
+            // Update alpha for both vertices (left and right edge)
+            const baseIdx = i * 2 * 4; // 2 vertices per segment * 4 components (RGBA)
+            colors[baseIdx + 3] = transitionFactor;     // left vertex alpha
+            colors[baseIdx + 7] = transitionFactor;     // right vertex alpha
+        }
+
+        colorAttr.needsUpdate = true;
     }
 
     private addRail(sideOffset: number, color: THREE.Color, width: number) {
@@ -614,11 +702,11 @@ export class Track {
 
     public getTunnelAtT(t: number, lateralOffset: number): TunnelInfo {
         const normalizedT = THREE.MathUtils.euclideanModulo(t, 1);
-        
+
         for (const tunnel of this.tunnelSegments) {
             let inTunnel = false;
             let progress = 0;
-            
+
             // Handle wrap-around case
             if (tunnel.startT <= tunnel.endT) {
                 // Normal case: tunnel doesn't wrap around t=0/1
@@ -637,7 +725,7 @@ export class Track {
                     }
                 }
             }
-            
+
             if (inTunnel) {
                 // Calculate center alignment (0 = at edge, 1 = perfectly centered)
                 const centerAlignment = 1 - Math.abs(lateralOffset) / (this.width * 0.5);
@@ -648,7 +736,7 @@ export class Track {
                 };
             }
         }
-        
+
         return { inTunnel: false, progress: 0, centerAlignment: 0 };
     }
 

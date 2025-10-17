@@ -37,7 +37,6 @@ export class Ship {
     private mousePitchTarget = 0;
     private mouseYaw = 0;
     private mousePitch = 0;
-    private mouseActive = false;
 
     private tunnelBoostAccumulator = 1.0; // tracks current tunnel boost multiplier
     private baseFov = CAMERA.fov;
@@ -83,8 +82,6 @@ export class Ship {
         window.addEventListener('keydown', (e) => this.onKey(e, true));
         window.addEventListener('keyup', (e) => this.onKey(e, false));
         window.addEventListener('mousemove', (e) => this.onMouseMove(e));
-        window.addEventListener('mousedown', () => this.onMouseDown());
-        window.addEventListener('mouseup', () => this.onMouseUp());
 
         // Start a short distance behind the start line at t=0
         const behindMeters = 30;
@@ -102,24 +99,12 @@ export class Ship {
     }
 
     private onMouseMove(e: MouseEvent) {
-        if (!this.mouseActive) return;
-        // Only steer when mouse is active (mouse down). Invert controls per request
+        // Free mouse look - always active for cinematic camera exploration
         const dx = e.movementX;
         const dy = e.movementY;
         if (dx === 0 && dy === 0) return;
         this.mouseYawTarget = THREE.MathUtils.clamp(this.mouseYawTarget - dx * 0.002, -0.6, 0.6);
         this.mousePitchTarget = THREE.MathUtils.clamp(this.mousePitchTarget + dy * 0.0015, -0.35, 0.35);
-    }
-
-    private onMouseDown() {
-        this.mouseActive = true;
-        // Try to capture pointer for a smoother feel
-        (document.body as any).requestPointerLock?.();
-    }
-
-    private onMouseUp() {
-        this.mouseActive = false;
-        document.exitPointerLock?.();
     }
 
     update(dt: number) {
@@ -144,11 +129,11 @@ export class Ship {
 
         const manual = isBoosting ? PHYSICS.boostMultiplier : 1;
         const boosterMul = Math.pow(PHYSICS.trackBoosterMultiplier, stacks);
-        
+
         // Tunnel boost logic: progressive boost based on center alignment
         const tunnelInfo = this.track.getTunnelAtT(this.state.t, this.state.lateralOffset);
         this.state.inTunnel = tunnelInfo.inTunnel;
-        
+
         if (tunnelInfo.inTunnel && tunnelInfo.centerAlignment >= TUNNEL.centerThreshold) {
             // Accumulate boost when well-centered in tunnel
             const targetBoost = 1 + (TUNNEL.centerBoostMultiplier - 1) * tunnelInfo.centerAlignment;
@@ -166,8 +151,8 @@ export class Ship {
             );
         }
         this.state.tunnelCenterBoost = this.tunnelBoostAccumulator;
-        
-        const targetSpeed = Math.min(PHYSICS.maxSpeed, PHYSICS.baseSpeed * manual * boosterMul * this.tunnelBoostAccumulator);
+
+        const targetSpeed = PHYSICS.baseSpeed * manual * boosterMul * this.tunnelBoostAccumulator;
         const speedLerp = 1 - Math.pow(0.001, dt); // smooth
         // Maintain consistent speed across track width for uniform turning feel
         this.state.speedKmh = THREE.MathUtils.lerp(this.state.speedKmh, targetSpeed, speedLerp);
