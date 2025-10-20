@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CAMERA, COLORS, FLIP, LAPS_TOTAL, PHYSICS, TUNNEL } from './constants';
+import { CAMERA, COLORS, LAPS_TOTAL, PHYSICS, TUNNEL } from './constants';
 import { Track } from './Track';
 
 function kmhToMps(kmh: number) { return kmh / 3.6; }
@@ -18,9 +18,6 @@ export class Ship {
         boostLevel: 1,
         inTunnel: false,
         tunnelCenterBoost: 1.0, // multiplier from tunnel center alignment
-        flipped: false,
-        flipProgress: 0,
-        topColor: 'cyan' as 'cyan' | 'magenta'
     };
 
     private track: Track;
@@ -46,7 +43,6 @@ export class Ship {
 
     private shipMaterial!: THREE.MeshStandardMaterial;
     private glowMaterial!: THREE.MeshBasicMaterial;
-    private targetFlipped = false; // flip animation target state
 
     private tmp = {
         pos: new THREE.Vector3(),
@@ -69,20 +65,21 @@ export class Ship {
             color: COLORS.neonCyan,
             metalness: 0.3,
             roughness: 0.2,
-            emissive: COLORS.neonCyan.clone().multiplyScalar(0.5)
+            emissive: COLORS.neonCyan.clone().multiplyScalar(0.8)
         });
         const mesh = new THREE.Mesh(geo, this.shipMaterial);
         mesh.rotation.x = Math.PI / 2;
         body.add(mesh);
 
-        // Glow starts as cyan (matches initial top color)
         this.glowMaterial = new THREE.MeshBasicMaterial({
             color: COLORS.neonCyan,
-            toneMapped: false,
-            transparent: false,
-            opacity: 1.0
+            transparent: true,
+            opacity: 0.9,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+            toneMapped: false
         });
-        const glow = new THREE.Mesh(new THREE.SphereGeometry(0.2, 16, 16), this.glowMaterial);
+        const glow = new THREE.Mesh(new THREE.SphereGeometry(0.25, 16, 16), this.glowMaterial);
         glow.position.set(0, -0.15, -0.3);
         body.add(glow);
 
@@ -209,50 +206,6 @@ export class Ship {
         const lateralLimit = half * 0.95;
         this.state.lateralOffset = THREE.MathUtils.clamp(this.state.lateralOffset + this.velocitySide * dt, -lateralLimit, lateralLimit);
 
-        // Flip detection: touching opposite-colored rail triggers flip
-        const collisionThreshold = lateralLimit * FLIP.collisionThreshold;
-
-        // Check collision with cyan rail (right side, positive offset)
-        if (this.state.lateralOffset >= collisionThreshold) {
-            // If top color is magenta, touching cyan rail flips back
-            if (this.state.topColor === 'magenta') {
-                this.targetFlipped = false;
-            }
-        }
-        // Check collision with magenta rail (left side, negative offset)
-        else if (this.state.lateralOffset <= -collisionThreshold) {
-            // If top color is cyan, touching magenta rail triggers flip
-            if (this.state.topColor === 'cyan') {
-                this.targetFlipped = true;
-            }
-        }
-
-        // Flip animation: smooth transition of flipProgress
-        const targetProgress = this.targetFlipped ? 1 : 0;
-        const progressDelta = FLIP.animationSpeed * dt;
-        if (this.state.flipProgress < targetProgress) {
-            this.state.flipProgress = Math.min(this.state.flipProgress + progressDelta, targetProgress);
-        } else if (this.state.flipProgress > targetProgress) {
-            this.state.flipProgress = Math.max(this.state.flipProgress - progressDelta, targetProgress);
-        }
-
-        // Update flipped state and topColor when passing halfway point
-        const wasFlipped = this.state.flipped;
-        this.state.flipped = this.state.flipProgress > 0.5;
-        if (wasFlipped !== this.state.flipped) {
-            // Crossed the halfway point - swap top color
-            this.state.topColor = this.state.topColor === 'cyan' ? 'magenta' : 'cyan';
-
-            // Update ship material color to match new top color
-            const shipColor = this.state.topColor === 'cyan' ? COLORS.neonCyan : COLORS.neonMagenta;
-            this.shipMaterial.color.copy(shipColor);
-            this.shipMaterial.emissive.copy(shipColor).multiplyScalar(0.5);
-            this.shipMaterial.needsUpdate = true;
-
-            // Update glow color to match new top color
-            this.glowMaterial.color.copy(shipColor);
-            this.glowMaterial.needsUpdate = true;
-        }
 
         // pitch control
         const pitchInput = (this.input.up ? 1 : 0) - (this.input.down ? 1 : 0);
@@ -280,9 +233,7 @@ export class Ship {
         const hoverHeight = 0.3;
         pos.addScaledVector(right, this.state.lateralOffset);
 
-        // When flipped, drive on underside of track (invert vertical offset)
-        const verticalOffset = this.state.flipped ? -hoverHeight : hoverHeight;
-        pos.addScaledVector(up, verticalOffset);
+        pos.addScaledVector(up, hoverHeight);
 
         // compute quaternion from basis vectors (forward, up)
         const m = new THREE.Matrix4();
@@ -296,11 +247,7 @@ export class Ship {
         const bankAngle = THREE.MathUtils.degToRad(22) * THREE.MathUtils.clamp(this.velocitySide / PHYSICS.lateralAccel, -1, 1);
         const bankQ = new THREE.Quaternion().setFromAxisAngle(z, -bankAngle);
 
-        // Apply flip rotation (roll around forward axis)
-        const flipAngle = Math.PI * this.state.flipProgress;
-        const flipQ = new THREE.Quaternion().setFromAxisAngle(z, flipAngle);
-
-        q.multiply(pitchQ).multiply(bankQ).multiply(flipQ);
+        q.multiply(pitchQ).multiply(bankQ);
         this.root.position.copy(pos);
         this.root.quaternion.copy(q);
 

@@ -103,10 +103,5 @@ export const TUNNEL = {
     ringSpacing: 25 // meters between decorative rings
 };
 
-// Track flip mechanic
-export const FLIP = {
-    animationSpeed: 3.0, // radians per second for flip rotation
-    collisionThreshold: 0.98 // lateral limit ratio to trigger flip (same as rail collision)
-};
 
 

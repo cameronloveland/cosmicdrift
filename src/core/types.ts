@@ -15,9 +15,6 @@ export interface ShipState {
     lapCurrent: number;
     lapTotal: number;
     boostLevel: number; // 0..1 visual intensity of manual boost
-    flipped: boolean; // true when driving on underside of track
-    flipProgress: number; // 0..1 animation progress
-    topColor: 'cyan' | 'magenta'; // which color is currently on top
 }
 
 export interface TrackSystem {
