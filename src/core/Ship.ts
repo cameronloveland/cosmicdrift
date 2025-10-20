@@ -95,8 +95,8 @@ export class Ship {
         window.addEventListener('mouseup', (e) => this.onMouseButton(e, false));
         window.addEventListener('contextmenu', (e) => e.preventDefault());
 
-        // Start near the first tunnel area
-        this.state.t = 0.0; // Start at 30% along the track (near tunnel area)
+        // Start behind the starting line like a proper racing game
+        this.state.t = -0.0001 // Start behind the starting line (t=0.0)
     }
 
     private input = { left: false, right: false, up: false, down: false, boost: false };

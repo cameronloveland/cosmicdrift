@@ -328,13 +328,11 @@ export class Track {
         const bin = this.cachedBinormals[idx];
         const tan = this.cachedTangents[idx];
 
-        const gateGroup = new THREE.Group();
-
         // Glowing material for all gate elements
         const gateMat = new THREE.MeshBasicMaterial({
             color: 0xffffff,
             transparent: true,
-            opacity: 0.95,
+            opacity: 1.0, // Full opacity for better visibility
             blending: THREE.AdditiveBlending,
             depthWrite: false,
             toneMapped: false
@@ -342,41 +340,48 @@ export class Track {
 
         // Gate dimensions
         const gateHeight = 12;
-        const postRadius = 0.3;
-        const postOffset = this.width * 0.5 + 0.5; // slightly outside track edges
+        const postRadius = 0.4; // Make poles thicker for better visibility
         const crossbarHeight = 0.4;
         const crossbarWidth = 0.3;
 
-        // Create vertical posts (left and right)
+        // Create vertical posts (left and right) - position them directly at start line
         const postGeom = new THREE.CylinderGeometry(postRadius, postRadius, gateHeight, 12);
 
-        // Left post
+        // Left post - position at track edge at start line
         const leftPost = new THREE.Mesh(postGeom, gateMat);
         const leftPostPos = new THREE.Vector3()
             .copy(center)
-            .addScaledVector(bin, -postOffset)
+            .addScaledVector(bin, -this.width * 0.5 - 0.1) // Just outside left track edge
             .addScaledVector(up, gateHeight * 0.5);
         leftPost.position.copy(leftPostPos);
-        gateGroup.add(leftPost);
+        this.root.add(leftPost); // Add directly to root, not gate group
 
-        // Right post
+        // Right post - position at track edge at start line
         const rightPost = new THREE.Mesh(postGeom, gateMat);
         const rightPostPos = new THREE.Vector3()
             .copy(center)
-            .addScaledVector(bin, postOffset)
+            .addScaledVector(bin, this.width * 0.5 + 0.1) // Just outside right track edge
             .addScaledVector(up, gateHeight * 0.5);
         rightPost.position.copy(rightPostPos);
-        gateGroup.add(rightPost);
+        this.root.add(rightPost); // Add directly to root, not gate group
 
-        // Horizontal crossbar connecting the posts
-        const crossbarLength = postOffset * 2;
+        // Add some debug info to ensure poles are being created
+        console.log('Created starting gate with poles at positions:', leftPostPos, rightPostPos);
+        console.log('Track width:', this.width, 'Center position:', center);
+        console.log('Track vectors - up:', up, 'bin:', bin, 'tan:', tan);
+
+        // Create gate group for text only
+        const gateGroup = new THREE.Group();
+
+        // Horizontal crossbar connecting the posts - position directly at start line
+        const crossbarLength = this.width + 0.2; // Span the track width plus small margin
         const crossbarGeom = new THREE.BoxGeometry(crossbarLength, crossbarHeight, crossbarWidth);
         const crossbar = new THREE.Mesh(crossbarGeom, gateMat);
         const crossbarPos = new THREE.Vector3()
             .copy(center)
             .addScaledVector(up, gateHeight);
         crossbar.position.copy(crossbarPos);
-        gateGroup.add(crossbar);
+        this.root.add(crossbar); // Add directly to root, not gate group
 
         // Create "START" text using simple box geometry letters
         const textMat = new THREE.MeshBasicMaterial({
@@ -457,11 +462,13 @@ export class Track {
         gateGroup.add(t2Group);
 
         // Orient the entire gate group to align with track
-        // Make text readable left-to-right along the track direction
-        const z = new THREE.Vector3().copy(up).normalize(); // up becomes forward for text
-        const x = new THREE.Vector3().copy(tan).normalize(); // tangent becomes right for text  
-        const y = new THREE.Vector3().copy(bin).normalize(); // binormal becomes up for text
-        const m = new THREE.Matrix4().makeBasis(x, y, z);
+        // Make text parallel to track and readable left-to-right
+        const forward = new THREE.Vector3().copy(tan).normalize(); // track direction
+        const right = new THREE.Vector3().copy(bin).normalize(); // track right side
+        const upVec = new THREE.Vector3().copy(up).normalize(); // track up
+
+        // Create rotation matrix where text reads left-to-right along track
+        const m = new THREE.Matrix4().makeBasis(right, upVec, forward);
         const q = new THREE.Quaternion().setFromRotationMatrix(m);
 
         gateGroup.quaternion.copy(q);
