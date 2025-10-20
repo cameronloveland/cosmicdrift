@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CAMERA, COLORS, LAPS_TOTAL, PHYSICS, TUNNEL } from './constants';
+import { CAMERA, COLORS, FLIP, LAPS_TOTAL, PHYSICS, TUNNEL } from './constants';
 import { Track } from './Track';
 
 function kmhToMps(kmh: number) { return kmh / 3.6; }
@@ -8,7 +8,7 @@ export class Ship {
     public root = new THREE.Group();
     public state = {
         t: 0,
-        speedKmh: PHYSICS.baseSpeed,
+        speedKmh: 0, // Start completely stationary
         lateralOffset: 0,
         pitch: 0,
         flow: 0,
@@ -16,9 +16,11 @@ export class Ship {
         lapCurrent: 1,
         lapTotal: LAPS_TOTAL,
         boostLevel: 1,
-        currentColor: 'default' as 'cyan' | 'magenta' | 'default',
         inTunnel: false,
-        tunnelCenterBoost: 1.0 // multiplier from tunnel center alignment
+        tunnelCenterBoost: 1.0, // multiplier from tunnel center alignment
+        flipped: false,
+        flipProgress: 0,
+        topColor: 'cyan' as 'cyan' | 'magenta'
     };
 
     private track: Track;
@@ -27,7 +29,6 @@ export class Ship {
     private velocityPitch = 0;
     private boostTimer = 0; // visual intensity for camera/shake
     private boostEnergy = 1; // 0..1 manual boost resource
-    private boosterExpiry: number[] = [];
     private now = 0;
     // lap detection helpers
     private prevT = 0;
@@ -37,6 +38,7 @@ export class Ship {
     private mousePitchTarget = 0;
     private mouseYaw = 0;
     private mousePitch = 0;
+    private mouseButtonDown = false;
 
     private tunnelBoostAccumulator = 1.0; // tracks current tunnel boost multiplier
     private baseFov = CAMERA.fov;
@@ -44,6 +46,7 @@ export class Ship {
 
     private shipMaterial!: THREE.MeshStandardMaterial;
     private glowMaterial!: THREE.MeshBasicMaterial;
+    private targetFlipped = false; // flip animation target state
 
     private tmp = {
         pos: new THREE.Vector3(),
@@ -59,16 +62,22 @@ export class Ship {
         this.track = track;
         this.camera = camera;
 
-        // simple hover-ship mesh
+        // single hover-ship mesh that changes color
         const body = new THREE.Group();
         const geo = new THREE.ConeGeometry(0.45, 1.2, 16);
-        this.shipMaterial = new THREE.MeshStandardMaterial({ color: 0x99ddff, metalness: 0.3, roughness: 0.2, emissive: new THREE.Color(0x53d7ff) });
+        this.shipMaterial = new THREE.MeshStandardMaterial({
+            color: COLORS.neonCyan,
+            metalness: 0.3,
+            roughness: 0.2,
+            emissive: COLORS.neonCyan.clone().multiplyScalar(0.5)
+        });
         const mesh = new THREE.Mesh(geo, this.shipMaterial);
         mesh.rotation.x = Math.PI / 2;
         body.add(mesh);
 
+        // Glow starts as cyan (matches initial top color)
         this.glowMaterial = new THREE.MeshBasicMaterial({
-            color: 0x53d7ff,
+            color: COLORS.neonCyan,
             toneMapped: false,
             transparent: false,
             opacity: 1.0
@@ -82,10 +91,12 @@ export class Ship {
         window.addEventListener('keydown', (e) => this.onKey(e, true));
         window.addEventListener('keyup', (e) => this.onKey(e, false));
         window.addEventListener('mousemove', (e) => this.onMouseMove(e));
+        window.addEventListener('mousedown', (e) => this.onMouseButton(e, true));
+        window.addEventListener('mouseup', (e) => this.onMouseButton(e, false));
+        window.addEventListener('contextmenu', (e) => e.preventDefault());
 
-        // Start a short distance behind the start line at t=0
-        const behindMeters = 30;
-        this.state.t = THREE.MathUtils.euclideanModulo(1 - behindMeters / this.track.length, 1);
+        // Start near the first tunnel area
+        this.state.t = 0.0; // Start at 30% along the track (near tunnel area)
     }
 
     private input = { left: false, right: false, up: false, down: false, boost: false };
@@ -99,25 +110,36 @@ export class Ship {
     }
 
     private onMouseMove(e: MouseEvent) {
-        // Free mouse look - always active for cinematic camera exploration
+        // Click-to-look: only update camera when mouse button is held
+        if (!this.mouseButtonDown) return;
         const dx = e.movementX;
         const dy = e.movementY;
         if (dx === 0 && dy === 0) return;
+        console.log('Mouse move:', dx, dy, 'targets:', this.mouseYawTarget, this.mousePitchTarget);
         this.mouseYawTarget = THREE.MathUtils.clamp(this.mouseYawTarget - dx * 0.002, -0.6, 0.6);
         this.mousePitchTarget = THREE.MathUtils.clamp(this.mousePitchTarget + dy * 0.0015, -0.35, 0.35);
+    }
+
+    private onMouseButton(e: MouseEvent, down: boolean) {
+        // Any mouse button for free look
+        if (e.button === 0 || e.button === 1 || e.button === 2) {
+            e.preventDefault();
+            this.mouseButtonDown = down;
+            console.log('Mouse button:', down ? 'down' : 'up', 'button:', e.button);
+        }
+    }
+
+    clearInput() {
+        this.input.left = false;
+        this.input.right = false;
+        this.input.up = false;
+        this.input.down = false;
+        this.input.boost = false;
     }
 
     update(dt: number) {
         this.now += dt;
         // speed and boost
-        // Booster stacking: multiplicative with manual boost, capped at maxSpeed
-        // Count active stacks
-        let stacks = 0;
-        for (let i = this.boosterExpiry.length - 1; i >= 0; i--) {
-            if (this.boosterExpiry[i] <= this.now) this.boosterExpiry.splice(i, 1);
-        }
-        stacks = this.boosterExpiry.length;
-
         // Manual boost resource: drains while active, regens when not held
         let isBoosting = false;
         if (this.input.boost && this.boostEnergy > 0) {
@@ -128,7 +150,6 @@ export class Ship {
         }
 
         const manual = isBoosting ? PHYSICS.boostMultiplier : 1;
-        const boosterMul = Math.pow(PHYSICS.trackBoosterMultiplier, stacks);
 
         // Tunnel boost logic: progressive boost based on center alignment
         const tunnelInfo = this.track.getTunnelAtT(this.state.t, this.state.lateralOffset);
@@ -152,7 +173,12 @@ export class Ship {
         }
         this.state.tunnelCenterBoost = this.tunnelBoostAccumulator;
 
-        const targetSpeed = PHYSICS.baseSpeed * manual * boosterMul * this.tunnelBoostAccumulator;
+        // Only accelerate when player presses forward (W/Up)
+        let targetSpeed = 0; // Default to stationary
+        if (this.input.up) {
+            targetSpeed = PHYSICS.baseSpeed * manual * this.tunnelBoostAccumulator;
+        }
+
         const speedLerp = 1 - Math.pow(0.001, dt); // smooth
         // Maintain consistent speed across track width for uniform turning feel
         this.state.speedKmh = THREE.MathUtils.lerp(this.state.speedKmh, targetSpeed, speedLerp);
@@ -165,27 +191,6 @@ export class Ship {
         this.prevT = this.state.t;
         this.state.t += (mps * dt) / this.track.length; // normalize by length
         if (this.state.t > 1) this.state.t -= 1; if (this.state.t < 0) this.state.t += 1;
-
-        // Booster pickup detection: if crossing a booster T and near center lane
-        const boosterTs = this.track.getBoosterTs?.() ?? [];
-        if (boosterTs.length > 0) {
-            const minT = this.prevT;
-            const maxT = this.state.t;
-            const crossed = (t: number) => {
-                if (maxT >= minT) return t >= minT && t < maxT;
-                // wrap around
-                return t >= minT || t < maxT;
-            };
-            const lateralLimit = this.track.width * PHYSICS.boosterLateralRatio;
-            if (Math.abs(this.state.lateralOffset) <= lateralLimit) {
-                for (let i = 0; i < boosterTs.length; i++) {
-                    const bt = boosterTs[i];
-                    if (crossed(bt)) {
-                        this.boosterExpiry.push(this.now + PHYSICS.trackBoosterDuration);
-                    }
-                }
-            }
-        }
 
         // lap detection: crossing checkpoint at t=0
         const crossedCheckpoint = (a: number, b: number, tCheck: number) => {
@@ -204,45 +209,49 @@ export class Ship {
         const lateralLimit = half * 0.95;
         this.state.lateralOffset = THREE.MathUtils.clamp(this.state.lateralOffset + this.velocitySide * dt, -lateralLimit, lateralLimit);
 
-        // Rail collision detection and color change
-        // Ship hits the rails when at the lateral limit (fully touching)
-        const collisionThreshold = lateralLimit * 0.98; // trigger when 98% to the edge (almost fully touching)
+        // Flip detection: touching opposite-colored rail triggers flip
+        const collisionThreshold = lateralLimit * FLIP.collisionThreshold;
 
-        // Check collision with cyan rail (right side)
-        if (this.state.lateralOffset >= collisionThreshold && this.state.currentColor !== 'cyan') {
-            this.state.currentColor = 'cyan';
-            this.shipMaterial.color.copy(COLORS.neonCyan);
-            this.shipMaterial.emissive.copy(COLORS.neonCyan).multiplyScalar(0.5);
-            this.shipMaterial.needsUpdate = true;
-
-            // Force glow material update
-            this.glowMaterial.color.copy(COLORS.neonCyan);
-            this.glowMaterial.needsUpdate = true;
-            console.log('Ship changed to cyan, glow color set to:', this.glowMaterial.color.getHexString());
+        // Check collision with cyan rail (right side, positive offset)
+        if (this.state.lateralOffset >= collisionThreshold) {
+            // If top color is magenta, touching cyan rail flips back
+            if (this.state.topColor === 'magenta') {
+                this.targetFlipped = false;
+            }
         }
-        // Check collision with magenta rail (left side)
-        else if (this.state.lateralOffset <= -collisionThreshold && this.state.currentColor !== 'magenta') {
-            this.state.currentColor = 'magenta';
-            this.shipMaterial.color.copy(COLORS.neonMagenta);
-            this.shipMaterial.emissive.copy(COLORS.neonMagenta).multiplyScalar(0.5);
-            this.shipMaterial.needsUpdate = true;
-
-            // Force glow material update
-            this.glowMaterial.color.copy(COLORS.neonMagenta);
-            this.glowMaterial.needsUpdate = true;
-            console.log('Ship changed to magenta, glow color set to:', this.glowMaterial.color.getHexString());
+        // Check collision with magenta rail (left side, negative offset)
+        else if (this.state.lateralOffset <= -collisionThreshold) {
+            // If top color is cyan, touching magenta rail triggers flip
+            if (this.state.topColor === 'cyan') {
+                this.targetFlipped = true;
+            }
         }
-        // Reset to default when in center
-        else if (Math.abs(this.state.lateralOffset) < collisionThreshold * 0.5 && this.state.currentColor !== 'default') {
-            this.state.currentColor = 'default';
-            this.shipMaterial.color.setHex(0x99ddff);
-            this.shipMaterial.emissive.copy(COLORS.neonCyan);
+
+        // Flip animation: smooth transition of flipProgress
+        const targetProgress = this.targetFlipped ? 1 : 0;
+        const progressDelta = FLIP.animationSpeed * dt;
+        if (this.state.flipProgress < targetProgress) {
+            this.state.flipProgress = Math.min(this.state.flipProgress + progressDelta, targetProgress);
+        } else if (this.state.flipProgress > targetProgress) {
+            this.state.flipProgress = Math.max(this.state.flipProgress - progressDelta, targetProgress);
+        }
+
+        // Update flipped state and topColor when passing halfway point
+        const wasFlipped = this.state.flipped;
+        this.state.flipped = this.state.flipProgress > 0.5;
+        if (wasFlipped !== this.state.flipped) {
+            // Crossed the halfway point - swap top color
+            this.state.topColor = this.state.topColor === 'cyan' ? 'magenta' : 'cyan';
+
+            // Update ship material color to match new top color
+            const shipColor = this.state.topColor === 'cyan' ? COLORS.neonCyan : COLORS.neonMagenta;
+            this.shipMaterial.color.copy(shipColor);
+            this.shipMaterial.emissive.copy(shipColor).multiplyScalar(0.5);
             this.shipMaterial.needsUpdate = true;
 
-            // Reset glow to cyan
-            this.glowMaterial.color.copy(COLORS.neonCyan);
+            // Update glow color to match new top color
+            this.glowMaterial.color.copy(shipColor);
             this.glowMaterial.needsUpdate = true;
-            console.log('Ship reset to default cyan, glow color set to:', this.glowMaterial.color.getHexString());
         }
 
         // pitch control
@@ -270,7 +279,10 @@ export class Ship {
         // apply lateral offset (side to side across the ribbon) and hover height
         const hoverHeight = 0.3;
         pos.addScaledVector(right, this.state.lateralOffset);
-        pos.addScaledVector(up, hoverHeight);
+
+        // When flipped, drive on underside of track (invert vertical offset)
+        const verticalOffset = this.state.flipped ? -hoverHeight : hoverHeight;
+        pos.addScaledVector(up, verticalOffset);
 
         // compute quaternion from basis vectors (forward, up)
         const m = new THREE.Matrix4();
@@ -281,20 +293,24 @@ export class Ship {
         const q = new THREE.Quaternion().setFromRotationMatrix(m);
         const pitchQ = new THREE.Quaternion().setFromAxisAngle(x, this.state.pitch);
         // Bank visually with sideways velocity
-        const bankAngle = THREE.MathUtils.degToRad(12) * THREE.MathUtils.clamp(this.velocitySide / PHYSICS.lateralAccel, -1, 1);
+        const bankAngle = THREE.MathUtils.degToRad(22) * THREE.MathUtils.clamp(this.velocitySide / PHYSICS.lateralAccel, -1, 1);
         const bankQ = new THREE.Quaternion().setFromAxisAngle(z, -bankAngle);
-        q.multiply(pitchQ).multiply(bankQ);
+
+        // Apply flip rotation (roll around forward axis)
+        const flipAngle = Math.PI * this.state.flipProgress;
+        const flipQ = new THREE.Quaternion().setFromAxisAngle(z, flipAngle);
+
+        q.multiply(pitchQ).multiply(bankQ).multiply(flipQ);
         this.root.position.copy(pos);
         this.root.quaternion.copy(q);
 
-        // chase camera anchored to track Frenet frame (keeps camera perpendicular to spline)
+        // chase camera locked directly behind ship (racing game style)
         const camDistance = CAMERA.chaseDistance * (1 + this.boostTimer * 0.6);
         const camPos = new THREE.Vector3()
             .copy(pos)
-            .addScaledVector(right, this.state.lateralOffset * 0.6)
             .addScaledVector(up, CAMERA.chaseHeight)
             .addScaledVector(forward, -camDistance);
-        this.camera.position.lerp(camPos, 1 - Math.pow(0.001, dt));
+        this.camera.position.lerp(camPos, 1 - Math.pow(0.0001, dt));
 
         // Look ahead down the track in Frenet frame, then apply smoothed mouse look deltas
         const lookAhead = CAMERA.lookAheadDistance;
@@ -305,6 +321,12 @@ export class Ship {
 
         // Align camera up with track normal so roll matches banking
         this.camera.up.copy(up);
+
+        // Reset mouse look targets when button is not held
+        if (!this.mouseButtonDown) {
+            this.mouseYawTarget = 0;
+            this.mousePitchTarget = 0;
+        }
 
         // Smooth mouse deltas
         this.mouseYaw = THREE.MathUtils.damp(this.mouseYaw, this.mouseYawTarget, 6, dt);

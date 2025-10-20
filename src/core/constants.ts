@@ -13,11 +13,11 @@ export const CAMERA = {
     fov: 80,
     near: 0.1,
     far: 20000,
-    chaseDistance: 4.8,
-    chaseHeight: 1.5,
+    chaseDistance: 5.5,
+    chaseHeight: 3.0,
     shakeMax: 0.02,
     // Additional camera tuning for Mario Kart-style presentation
-    lookAheadDistance: 6.0,
+    lookAheadDistance: 8.0,
     downPitchDeg: 12
 };
 
@@ -28,12 +28,9 @@ export const PHYSICS = {
     // Manual boost resource
     boostDurationSec: 3.0, // full-to-empty hold duration
     boostRegenPerSec: 0.25, // refills in ~4s when not boosting and not holding
-    trackBoosterMultiplier: 1.3,
-    trackBoosterDuration: 10, // seconds
-    boosterLateralRatio: 0.35, // fraction of track width allowed to pick up booster (center lane)
     lateralMax: 1.6,
-    lateralAccel: 9.0,
-    lateralDamping: 8.0,
+    lateralAccel: 16.0,
+    lateralDamping: 13.0,
     pitchMax: 0.2,
     pitchAccel: 1.8,
     pitchDamping: 3.0,
@@ -82,10 +79,6 @@ export const TRACK_OPTS: Readonly<TrackOptions> = {
 
 export const STARFIELD_MIN_RADIUS = 6000;
 
-// Booster visual/spacing
-export const BOOSTER_SPACING_METERS = 600;
-export const BOOSTER_COLOR = 0xfff066;
-
 export const CUSTOM_TRACK_POINTS: Vector3[] = [];
 
 // Tunnel configuration
@@ -108,6 +101,12 @@ export const TUNNEL = {
     colorEnd: new Color(0xff2bd6), // magenta
     glowIntensity: 1.2,
     ringSpacing: 25 // meters between decorative rings
+};
+
+// Track flip mechanic
+export const FLIP = {
+    animationSpeed: 3.0, // radians per second for flip rotation
+    collisionThreshold: 0.98 // lateral limit ratio to trigger flip (same as rail collision)
 };
 
 

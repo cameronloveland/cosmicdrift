@@ -6,6 +6,7 @@ export class UI {
     private flowBar = document.getElementById('flowBar')! as HTMLDivElement;
     private boostBar = document.getElementById('boostBar')! as HTMLDivElement;
     private startEl = document.getElementById('start')!;
+    private pauseText = document.getElementById('pauseText')!;
     private radioRoot = document.getElementById('radio')!;
     private radioToggle = document.getElementById('radioToggle')! as HTMLButtonElement;
     private radioStation = document.getElementById('radioStation')! as HTMLDivElement;
@@ -59,6 +60,16 @@ export class UI {
 
     setRadioVolumeSlider(v: number) {
         this.radioVol.value = String(v);
+    }
+
+    setPaused(paused: boolean) {
+        if (paused) {
+            this.pauseText.classList.remove('hidden');
+            this.pauseText.classList.add('visible');
+        } else {
+            this.pauseText.classList.remove('visible');
+            this.pauseText.classList.add('hidden');
+        }
     }
 }
 

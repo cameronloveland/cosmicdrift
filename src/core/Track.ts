@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { COLORS, TRACK_OPTS, TRACK_SOURCE, CUSTOM_TRACK_POINTS, BOOSTER_SPACING_METERS, BOOSTER_COLOR, TUNNEL } from './constants';
+import { COLORS, TRACK_OPTS, TRACK_SOURCE, CUSTOM_TRACK_POINTS, TUNNEL } from './constants';
 import type { TrackOptions, TrackSample, TunnelSegment, TunnelInfo } from './types';
 
 function mulberry32(seed: number) {
@@ -18,9 +18,6 @@ export class Track {
     public length = 0;
     public width = TRACK_OPTS.width;
     public boundingRadius = 2000;
-
-    private boosterTs: number[] = [];
-    private boosters?: THREE.InstancedMesh;
 
     private tunnelSegments: TunnelSegment[] = [];
     private tunnels = new THREE.Group();
@@ -59,9 +56,8 @@ export class Track {
         this.buildGeometry();
         this.buildRails();
         this.buildMarkers();
-        this.buildStartLine();
-        this.buildBoosters(BOOSTER_SPACING_METERS);
         this.buildTunnels();
+        this.buildStartLine(); // Build after tunnels so we can position relative to first tunnel
         this.updateTrackAlphaForTunnels();
     }
 
@@ -320,73 +316,179 @@ export class Track {
         this.root.add(group);
     }
 
-    private buildBoosters(spacingMeters: number) {
-        // clear old boosters
-        if (this.boosters && this.boosters.parent) this.root.remove(this.boosters);
-        this.boosterTs = [];
 
-        const count = Math.max(1, Math.floor(this.length / spacingMeters));
-        if (count <= 0) return;
+    private buildStartLine() {
+        // Create an imposing starting gate with vertical posts, crossbar, and glowing "START" text
+        // Position at the ship's starting location
+        const startT = 0.0; // 0% along the track - where the ship starts
 
-        // Glowing square pads flush with the track surface at center lane
-        const quad = new THREE.PlaneGeometry(1, 1);
-        const size = this.width * 0.25; // pad spans ~25% of track width (increased from 22%)
-        const len = Math.max(2.5, spacingMeters * 0.12); // longer and more visible
-        const mat = new THREE.MeshBasicMaterial({
-            color: BOOSTER_COLOR,
+        const idx = Math.floor(startT * this.samples) % this.samples;
+        const center = this.cachedPositions[idx];
+        const up = this.cachedNormals[idx];
+        const bin = this.cachedBinormals[idx];
+        const tan = this.cachedTangents[idx];
+
+        const gateGroup = new THREE.Group();
+
+        // Glowing material for all gate elements
+        const gateMat = new THREE.MeshBasicMaterial({
+            color: 0xffffff,
             transparent: true,
-            opacity: 1.0, // fully opaque for maximum visibility
+            opacity: 0.95,
             blending: THREE.AdditiveBlending,
             depthWrite: false,
             toneMapped: false
         });
-        const imesh = new THREE.InstancedMesh(quad, mat, count);
-        const tmpObj = new THREE.Object3D();
 
-        for (let i = 0; i < count; i++) {
-            const t = i / count;
-            const idx = Math.floor(t * this.samples) % this.samples;
-            const pos = this.cachedPositions[idx];
-            const up = this.cachedNormals[idx];
-            const bin = this.cachedBinormals[idx];
-            // Build basis with z=up (quad normal), x across track (binormal), y forward (derived)
-            const z = new THREE.Vector3().copy(up).normalize();
-            const x = new THREE.Vector3().copy(bin).normalize();
-            const y = new THREE.Vector3().crossVectors(z, x).normalize();
-            const m = new THREE.Matrix4().makeBasis(x, y, z);
-            const q = new THREE.Quaternion().setFromRotationMatrix(m);
-            tmpObj.position.copy(pos).addScaledVector(up, 0.015); // slight lift to avoid z-fighting
-            tmpObj.quaternion.copy(q);
-            // scale quad to desired size (x across track, y along track)
-            tmpObj.scale.set(size, len, 1);
-            tmpObj.updateMatrix();
-            imesh.setMatrixAt(i, tmpObj.matrix);
-            this.boosterTs.push(t);
-        }
-        imesh.instanceMatrix.needsUpdate = true;
-        this.boosters = imesh;
-        this.root.add(imesh);
-    }
+        // Gate dimensions
+        const gateHeight = 12;
+        const postRadius = 0.3;
+        const postOffset = this.width * 0.5 + 0.5; // slightly outside track edges
+        const crossbarHeight = 0.4;
+        const crossbarWidth = 0.3;
 
-    private buildStartLine() {
-        // A glowing stripe across the full width at t=0, flush on the ribbon
-        const idx = 0;
-        const center = this.cachedPositions[idx];
-        const up = this.cachedNormals[idx];
-        const bin = this.cachedBinormals[idx];
-        const stripe = new THREE.PlaneGeometry(1, 1);
-        const mat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false });
-        const mesh = new THREE.Mesh(stripe, mat);
-        // Orient plane so normal==up and x across width
-        const z = new THREE.Vector3().copy(up).normalize();
-        const x = new THREE.Vector3().copy(bin).normalize();
-        const y = new THREE.Vector3().crossVectors(z, x).normalize();
+        // Create vertical posts (left and right)
+        const postGeom = new THREE.CylinderGeometry(postRadius, postRadius, gateHeight, 12);
+
+        // Left post
+        const leftPost = new THREE.Mesh(postGeom, gateMat);
+        const leftPostPos = new THREE.Vector3()
+            .copy(center)
+            .addScaledVector(bin, -postOffset)
+            .addScaledVector(up, gateHeight * 0.5);
+        leftPost.position.copy(leftPostPos);
+        gateGroup.add(leftPost);
+
+        // Right post
+        const rightPost = new THREE.Mesh(postGeom, gateMat);
+        const rightPostPos = new THREE.Vector3()
+            .copy(center)
+            .addScaledVector(bin, postOffset)
+            .addScaledVector(up, gateHeight * 0.5);
+        rightPost.position.copy(rightPostPos);
+        gateGroup.add(rightPost);
+
+        // Horizontal crossbar connecting the posts
+        const crossbarLength = postOffset * 2;
+        const crossbarGeom = new THREE.BoxGeometry(crossbarLength, crossbarHeight, crossbarWidth);
+        const crossbar = new THREE.Mesh(crossbarGeom, gateMat);
+        const crossbarPos = new THREE.Vector3()
+            .copy(center)
+            .addScaledVector(up, gateHeight);
+        crossbar.position.copy(crossbarPos);
+        gateGroup.add(crossbar);
+
+        // Create "START" text using simple box geometry letters
+        const textMat = new THREE.MeshBasicMaterial({
+            color: 0x53d7ff, // cyan glow
+            transparent: true,
+            opacity: 1.0,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+            toneMapped: false
+        });
+
+        // Letter dimensions - make text bigger and readable left-to-right
+        const letterHeight = 3.0; // Much bigger
+        const letterThickness = 0.4; // Thicker letters
+        const letterSpacing = 0.6; // More spacing
+        const textYOffset = 5.0; // Higher above starting line
+
+        // Helper to create letter segments
+        const createLetterSegment = (width: number, height: number, xOffset: number, yOffset: number) => {
+            const seg = new THREE.Mesh(
+                new THREE.BoxGeometry(width, height, letterThickness),
+                textMat
+            );
+            seg.position.set(xOffset, yOffset, 0);
+            return seg;
+        };
+
+        // Create letters for "START"
+        const letterWidth = 1.0;
+        const barWidth = 0.25;
+        let xPos = -(letterWidth * 5 + letterSpacing * 4) * 0.5; // center the word
+
+        // S
+        const sGroup = new THREE.Group();
+        sGroup.add(createLetterSegment(letterWidth, barWidth, 0, letterHeight * 0.5)); // top
+        sGroup.add(createLetterSegment(letterWidth, barWidth, 0, 0)); // middle
+        sGroup.add(createLetterSegment(letterWidth, barWidth, 0, -letterHeight * 0.5)); // bottom
+        sGroup.add(createLetterSegment(barWidth, letterHeight * 0.5, -letterWidth * 0.5 + barWidth * 0.5, letterHeight * 0.25)); // top left
+        sGroup.add(createLetterSegment(barWidth, letterHeight * 0.5, letterWidth * 0.5 - barWidth * 0.5, -letterHeight * 0.25)); // bottom right
+        sGroup.position.set(xPos, 0, 0);
+        gateGroup.add(sGroup);
+        xPos += letterWidth + letterSpacing;
+
+        // T
+        const tGroup = new THREE.Group();
+        tGroup.add(createLetterSegment(letterWidth, barWidth, 0, letterHeight * 0.5)); // top
+        tGroup.add(createLetterSegment(barWidth, letterHeight, 0, 0)); // vertical
+        tGroup.position.set(xPos, 0, 0);
+        gateGroup.add(tGroup);
+        xPos += letterWidth + letterSpacing;
+
+        // A
+        const aGroup = new THREE.Group();
+        aGroup.add(createLetterSegment(letterWidth, barWidth, 0, letterHeight * 0.5)); // top
+        aGroup.add(createLetterSegment(letterWidth, barWidth, 0, 0)); // middle
+        aGroup.add(createLetterSegment(barWidth, letterHeight, -letterWidth * 0.5 + barWidth * 0.5, 0)); // left vertical
+        aGroup.add(createLetterSegment(barWidth, letterHeight, letterWidth * 0.5 - barWidth * 0.5, 0)); // right vertical
+        aGroup.position.set(xPos, 0, 0);
+        gateGroup.add(aGroup);
+        xPos += letterWidth + letterSpacing;
+
+        // R
+        const rGroup = new THREE.Group();
+        rGroup.add(createLetterSegment(letterWidth, barWidth, 0, letterHeight * 0.5)); // top
+        rGroup.add(createLetterSegment(letterWidth, barWidth, 0, 0)); // middle
+        rGroup.add(createLetterSegment(barWidth, letterHeight, -letterWidth * 0.5 + barWidth * 0.5, 0)); // left vertical
+        rGroup.add(createLetterSegment(barWidth, letterHeight * 0.5, letterWidth * 0.5 - barWidth * 0.5, letterHeight * 0.25)); // top right
+        rGroup.add(createLetterSegment(barWidth, letterHeight * 0.5, letterWidth * 0.5 - barWidth * 0.5, -letterHeight * 0.25)); // bottom right diagonal (simplified)
+        rGroup.position.set(xPos, 0, 0);
+        gateGroup.add(rGroup);
+        xPos += letterWidth + letterSpacing;
+
+        // T (second)
+        const t2Group = new THREE.Group();
+        t2Group.add(createLetterSegment(letterWidth, barWidth, 0, letterHeight * 0.5)); // top
+        t2Group.add(createLetterSegment(barWidth, letterHeight, 0, 0)); // vertical
+        t2Group.position.set(xPos, 0, 0);
+        gateGroup.add(t2Group);
+
+        // Orient the entire gate group to align with track
+        // Make text readable left-to-right along the track direction
+        const z = new THREE.Vector3().copy(up).normalize(); // up becomes forward for text
+        const x = new THREE.Vector3().copy(tan).normalize(); // tangent becomes right for text  
+        const y = new THREE.Vector3().copy(bin).normalize(); // binormal becomes up for text
         const m = new THREE.Matrix4().makeBasis(x, y, z);
         const q = new THREE.Quaternion().setFromRotationMatrix(m);
-        mesh.quaternion.copy(q);
-        mesh.position.copy(center).addScaledVector(up, 0.016);
-        mesh.scale.set(this.width, 1.4, 1); // thin stripe
-        this.root.add(mesh);
+
+        gateGroup.quaternion.copy(q);
+        gateGroup.position.copy(center).addScaledVector(up, textYOffset);
+
+        this.root.add(gateGroup);
+
+        // Create a better-looking starting line stripe
+        const stripe = new THREE.PlaneGeometry(1, 1);
+        const stripeMat = new THREE.MeshBasicMaterial({
+            color: 0xffffff, // Clean white
+            transparent: true,
+            opacity: 0.95,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+            toneMapped: false
+        });
+        const stripeMesh = new THREE.Mesh(stripe, stripeMat);
+        const stripeZ = new THREE.Vector3().copy(up).normalize();
+        const stripeX = new THREE.Vector3().copy(bin).normalize();
+        const stripeY = new THREE.Vector3().crossVectors(stripeZ, stripeX).normalize();
+        const stripeM = new THREE.Matrix4().makeBasis(stripeX, stripeY, stripeZ);
+        const stripeQ = new THREE.Quaternion().setFromRotationMatrix(stripeM);
+        stripeMesh.quaternion.copy(stripeQ);
+        stripeMesh.position.copy(center).addScaledVector(up, 0.5);
+        stripeMesh.scale.set(this.width, 2.0, 1); // Make it thicker
+        this.root.add(stripeMesh);
     }
 
     private buildTunnels() {
@@ -697,8 +799,6 @@ export class Track {
         }
         return best / this.samples;
     }
-
-    public getBoosterTs(): readonly number[] { return this.boosterTs; }
 
     public getTunnelAtT(t: number, lateralOffset: number): TunnelInfo {
         const normalizedT = THREE.MathUtils.euclideanModulo(t, 1);

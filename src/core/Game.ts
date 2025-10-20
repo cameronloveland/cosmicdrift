@@ -23,6 +23,15 @@ export class Game {
     private pixelRatio = Math.min(window.devicePixelRatio, RENDER.maxPixelRatio);
     private prevBoost = false;
     private started = false;
+    private paused = false;
+
+    // Free camera state for debug mode
+    private freeCamPos = new THREE.Vector3();
+    private freeCamYaw = 0;
+    private freeCamPitch = 0;
+    private freeCamInput = { forward: false, back: false, left: false, right: false, up: false, down: false };
+    private savedCamPos = new THREE.Vector3();
+    private savedCamQuat = new THREE.Quaternion();
 
     private track!: Track;
     private ship!: Ship;
@@ -67,6 +76,12 @@ export class Game {
         this.setup();
         this.onResize();
         window.addEventListener('resize', () => this.onResize());
+
+        // Pause and free camera controls
+        window.addEventListener('keydown', (e) => this.onPauseKey(e, true));
+        window.addEventListener('keyup', (e) => this.onPauseKey(e, false));
+        window.addEventListener('mousemove', (e) => this.onFreeCamMouseMove(e));
+
         this.loop();
     }
 
@@ -213,6 +228,90 @@ export class Game {
         this.track?.updateResolution(w, h);
     }
 
+    private onPauseKey(e: KeyboardEvent, down: boolean) {
+        if (e.code === 'KeyP' && down && this.started) {
+            this.togglePause();
+        }
+
+        // Free camera movement (only when paused)
+        if (!this.paused) return;
+        if (e.code === 'KeyW') this.freeCamInput.forward = down;
+        if (e.code === 'KeyS') this.freeCamInput.back = down;
+        if (e.code === 'KeyA') this.freeCamInput.left = down;
+        if (e.code === 'KeyD') this.freeCamInput.right = down;
+        if (e.code === 'Space') this.freeCamInput.up = down;
+        if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') this.freeCamInput.down = down;
+    }
+
+    private onFreeCamMouseMove(e: MouseEvent) {
+        if (!this.paused) return;
+        const dx = e.movementX;
+        const dy = e.movementY;
+        if (dx === 0 && dy === 0) return;
+
+        // Full 360 mouse look
+        this.freeCamYaw -= dx * 0.003;
+        this.freeCamPitch = THREE.MathUtils.clamp(this.freeCamPitch - dy * 0.003, -Math.PI / 2, Math.PI / 2);
+    }
+
+    private togglePause() {
+        this.paused = !this.paused;
+        this.ui.setPaused(this.paused);
+
+        if (this.paused) {
+            // Entering pause: save camera state and init free cam
+            this.savedCamPos.copy(this.camera.position);
+            this.savedCamQuat.copy(this.camera.quaternion);
+            this.freeCamPos.copy(this.camera.position);
+
+            // Extract yaw/pitch from current camera rotation
+            const euler = new THREE.Euler().setFromQuaternion(this.camera.quaternion, 'YXZ');
+            this.freeCamYaw = euler.y;
+            this.freeCamPitch = euler.x;
+
+            // Clear ship input to avoid stuck keys
+            this.ship.clearInput();
+
+            // Show cursor for debug
+            this.renderer.domElement.style.cursor = 'default';
+        } else {
+            // Exiting pause: restore camera state
+            this.camera.position.copy(this.savedCamPos);
+            this.camera.quaternion.copy(this.savedCamQuat);
+
+            // Hide cursor
+            this.renderer.domElement.style.cursor = 'none';
+        }
+    }
+
+    private updateFreeCamera(dt: number) {
+        const speed = 20; // units per second
+        const forward = new THREE.Vector3(0, 0, -1);
+        const right = new THREE.Vector3(1, 0, 0);
+        const up = new THREE.Vector3(0, 1, 0);
+
+        // Build rotation from yaw/pitch
+        const qYaw = new THREE.Quaternion().setFromAxisAngle(up, this.freeCamYaw);
+        const qPitch = new THREE.Quaternion().setFromAxisAngle(right, this.freeCamPitch);
+        const rotation = qYaw.multiply(qPitch);
+
+        // Apply rotation to direction vectors
+        forward.applyQuaternion(rotation);
+        right.applyQuaternion(rotation);
+
+        // Move camera based on input
+        if (this.freeCamInput.forward) this.freeCamPos.addScaledVector(forward, speed * dt);
+        if (this.freeCamInput.back) this.freeCamPos.addScaledVector(forward, -speed * dt);
+        if (this.freeCamInput.right) this.freeCamPos.addScaledVector(right, speed * dt);
+        if (this.freeCamInput.left) this.freeCamPos.addScaledVector(right, -speed * dt);
+        if (this.freeCamInput.up) this.freeCamPos.addScaledVector(up, speed * dt);
+        if (this.freeCamInput.down) this.freeCamPos.addScaledVector(up, -speed * dt);
+
+        // Apply to camera
+        this.camera.position.copy(this.freeCamPos);
+        this.camera.quaternion.copy(rotation);
+    }
+
     private loop = () => {
         requestAnimationFrame(this.loop);
         this.stats.begin();
@@ -234,6 +333,11 @@ export class Game {
     private update(dt: number) {
         if (!this.started) {
             this.ui.update(this.ship.state);
+            return;
+        }
+
+        if (this.paused) {
+            this.updateFreeCamera(dt);
             return;
         }
 
