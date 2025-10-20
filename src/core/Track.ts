@@ -381,6 +381,16 @@ export class Track {
             .copy(center)
             .addScaledVector(up, gateHeight);
         crossbar.position.copy(crossbarPos);
+
+        // Orient crossbar to be perpendicular to track direction
+        // Crossbar should span across the track width (perpendicular to track direction)
+        const crossbarForward = new THREE.Vector3().copy(tan).normalize(); // track direction
+        const crossbarRight = new THREE.Vector3().copy(bin).normalize(); // track right side
+        const crossbarUp = new THREE.Vector3().copy(up).normalize(); // track up
+        const crossbarM = new THREE.Matrix4().makeBasis(crossbarForward, crossbarUp, crossbarRight);
+        const crossbarQ = new THREE.Quaternion().setFromRotationMatrix(crossbarM);
+        crossbar.quaternion.copy(crossbarQ);
+
         this.root.add(crossbar); // Add directly to root, not gate group
 
         // Create "START" text using simple box geometry letters
@@ -462,13 +472,14 @@ export class Track {
         gateGroup.add(t2Group);
 
         // Orient the entire gate group to align with track
-        // Make text parallel to track and readable left-to-right
-        const forward = new THREE.Vector3().copy(tan).normalize(); // track direction
-        const right = new THREE.Vector3().copy(bin).normalize(); // track right side
-        const upVec = new THREE.Vector3().copy(up).normalize(); // track up
+        // Make text perpendicular to track and readable left-to-right
+        const trackForward = new THREE.Vector3().copy(tan).normalize(); // track direction
+        const trackRight = new THREE.Vector3().copy(bin).normalize(); // track right side
+        const trackUp = new THREE.Vector3().copy(up).normalize(); // track up
 
-        // Create rotation matrix where text reads left-to-right along track
-        const m = new THREE.Matrix4().makeBasis(right, upVec, forward);
+        // Create rotation matrix where text is perpendicular to track direction
+        // Text should read left-to-right across the track width
+        const m = new THREE.Matrix4().makeBasis(trackForward, trackUp, trackRight.clone().negate());
         const q = new THREE.Quaternion().setFromRotationMatrix(m);
 
         gateGroup.quaternion.copy(q);
