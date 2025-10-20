@@ -381,16 +381,6 @@ export class Track {
             .copy(center)
             .addScaledVector(up, gateHeight);
         crossbar.position.copy(crossbarPos);
-
-        // Orient crossbar to be perpendicular to track direction
-        // Crossbar should span across the track width (perpendicular to track direction)
-        const crossbarForward = new THREE.Vector3().copy(tan).normalize(); // track direction
-        const crossbarRight = new THREE.Vector3().copy(bin).normalize(); // track right side
-        const crossbarUp = new THREE.Vector3().copy(up).normalize(); // track up
-        const crossbarM = new THREE.Matrix4().makeBasis(crossbarForward, crossbarUp, crossbarRight);
-        const crossbarQ = new THREE.Quaternion().setFromRotationMatrix(crossbarM);
-        crossbar.quaternion.copy(crossbarQ);
-
         this.root.add(crossbar); // Add directly to root, not gate group
 
         // Create "START" text using simple box geometry letters
