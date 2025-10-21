@@ -60,7 +60,7 @@ export const TRACK_SEED = 1337;
 export const TRACK_OPTS: Readonly<TrackOptions> = {
     seed: TRACK_SEED,
     controlPointCount: 72,
-    samples: 2400,
+    samples: 6000, // 2400 is the original
     width: 24,
     lengthMeters: 8000,
     radiusMin: 500,
@@ -71,10 +71,10 @@ export const TRACK_OPTS: Readonly<TrackOptions> = {
     bankMaxDeg: 36,
     markerSpacing: 50,
     // New tunables for smoothing/quality
-    controlPointSmoothPasses: 2,
-    minChord: 40,
+    controlPointSmoothPasses: 10,
+    minChord: 60,
     // radians; max angular change between rail segments before subdivision
-    railMaxAngle: 0.08
+    railMaxAngle: 0.05
 };
 
 export const STARFIELD_MIN_RADIUS = 6000;

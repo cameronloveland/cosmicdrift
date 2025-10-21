@@ -49,7 +49,7 @@ export class Track {
         // Use centripetal Catmull-Rom to avoid overshooting/self-intersections
         this.curve = new THREE.CatmullRomCurve3(controls, true, 'centripetal');
         // Increase arc length precision to remove quantization artifacts
-        this.curve.arcLengthDivisions = Math.max(200, this.samples * 8);
+        this.curve.arcLengthDivisions = Math.max(200, this.samples * 16);
         this.length = this.curve.getLength();
 
         this.precomputeFramesAndBank();
@@ -70,7 +70,7 @@ export class Track {
         const n = opts.controlPointCount;
         for (let i = 0; i < n; i++) {
             const a = (i / n) * Math.PI * 2;
-            const jitter = (rnd() - 0.5) * 0.3; // reduce jitter to limit sharp pivots
+            const jitter = (rnd() - 0.5) * 0.1; // significantly reduce jitter for smoother curves
             const r = THREE.MathUtils.lerp(opts.radiusMin, opts.radiusMax, rnd());
             const x = Math.cos(a + jitter) * r;
             const z = Math.sin(a + jitter) * r;
@@ -105,6 +105,27 @@ export class Track {
             }
             out = next;
         }
+
+        // Additional Laplacian smoothing pass for extra smoothness
+        const laplacianPasses = 2;
+        for (let pass = 0; pass < laplacianPasses; pass++) {
+            const smoothed: THREE.Vector3[] = [];
+            for (let i = 0; i < out.length; i++) {
+                const prev = out[(i - 1 + out.length) % out.length];
+                const curr = out[i];
+                const next = out[(i + 1) % out.length];
+
+                // Laplacian smoothing: new = current + 0.5 * (neighbors - current)
+                const smoothedPoint = new THREE.Vector3(
+                    curr.x + 0.5 * ((prev.x + next.x) * 0.5 - curr.x),
+                    curr.y + 0.5 * ((prev.y + next.y) * 0.5 - curr.y),
+                    curr.z + 0.5 * ((prev.z + next.z) * 0.5 - curr.z)
+                );
+                smoothed.push(smoothedPoint);
+            }
+            out = smoothed;
+        }
+
         return out;
     }
 
@@ -697,10 +718,10 @@ export class Track {
         // Create offset curve by transforming the main curve
         const offsetCurve = this.createOffsetCurve(sideOffset);
 
-        // Create TubeGeometry for smooth rails
-        const tubularSegments = this.samples;
-        const radius = width * 0.1; // Convert line width to tube radius
-        const radialSegments = 8;
+        // Create TubeGeometry for smooth rails with higher quality
+        const tubularSegments = Math.floor(this.samples * 1.5); // 50% more segments for smoother path
+        const radius = width * 0.15; // Slightly larger radius for more prominent presence
+        const radialSegments = 16; // Double the segments for perfectly round cross-section
 
         const tubeGeom = new THREE.TubeGeometry(
             offsetCurve,
@@ -710,13 +731,15 @@ export class Track {
             true // closed
         );
 
+        // Enhanced material with better glow properties
         const mat = new THREE.MeshBasicMaterial({
             color: color,
             transparent: true,
-            opacity: 0.9,
+            opacity: 0.95, // Slightly higher opacity for better visibility
             blending: THREE.AdditiveBlending,
             depthWrite: false,
-            toneMapped: false
+            toneMapped: false,
+            side: THREE.DoubleSide // Ensure both sides are rendered for smooth appearance
         });
 
         const tubeMesh = new THREE.Mesh(tubeGeom, mat);
@@ -749,25 +772,28 @@ export class Track {
         // Create offset curve for the edge glow
         const offsetCurve = this.createOffsetCurve(sideOffset);
 
-        // Create thin TubeGeometry for soft edge glow
-        const tubularSegments = this.samples;
-        const radialSegments = 6; // fewer segments for softer look
+        // Create thin TubeGeometry for soft edge glow with higher quality
+        const tubularSegments = Math.floor(this.samples * 1.2); // 20% more segments for smoother path
+        const radialSegments = 12; // Double the segments for smoother cross-section
+        const glowRadius = radius * 1.5; // Slightly wider glow for better blending
 
         const tubeGeom = new THREE.TubeGeometry(
             offsetCurve,
             tubularSegments,
-            radius,
+            glowRadius,
             radialSegments,
             true // closed
         );
 
+        // Enhanced glow material with smooth falloff
         const mat = new THREE.MeshBasicMaterial({
             color: color,
             transparent: true,
-            opacity: 0.3, // subtle glow
+            opacity: 0.4, // Slightly higher opacity for better visibility
             blending: THREE.AdditiveBlending,
             depthWrite: false,
-            toneMapped: false
+            toneMapped: false,
+            side: THREE.DoubleSide // Ensure both sides are rendered for seamless blending
         });
 
         const glowMesh = new THREE.Mesh(tubeGeom, mat);
