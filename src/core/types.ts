@@ -66,4 +66,15 @@ export type TunnelInfo = {
     centerAlignment: number; // 0..1 how centered the ship is
 };
 
+export type BoostPadSegment = {
+    t: number; // position on track [0..1]
+    lengthT: number; // length in t units
+};
+
+export type BoostPadInfo = {
+    onPad: boolean; // currently driving over a boost pad
+    boostActive: boolean; // boost effect is currently active (includes duration after leaving pad)
+    boostTimer: number; // remaining boost duration in seconds
+};
+
 

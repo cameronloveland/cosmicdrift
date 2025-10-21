@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CAMERA, COLORS, LAPS_TOTAL, PHYSICS, TUNNEL } from './constants';
+import { CAMERA, COLORS, LAPS_TOTAL, PHYSICS, TUNNEL, BOOST_PAD } from './constants';
 import { Track } from './Track';
 
 function kmhToMps(kmh: number) { return kmh / 3.6; }
@@ -38,11 +38,16 @@ export class Ship {
     private mouseButtonDown = false;
 
     private tunnelBoostAccumulator = 1.0; // tracks current tunnel boost multiplier
+    private boostPadMultiplier = 1.0; // tracks current boost pad multiplier
+    private boostPadTimer = 0; // remaining boost pad duration
     private baseFov = CAMERA.fov;
     private currentFov = CAMERA.fov;
 
     private shipMaterial!: THREE.MeshStandardMaterial;
     private glowMaterial!: THREE.MeshBasicMaterial;
+    private rocketTail!: THREE.Group;
+    private rocketTailMaterials: THREE.MeshBasicMaterial[] = [];
+    private rocketTailBaseOpacities: number[] = [];
 
     private tmp = {
         pos: new THREE.Vector3(),
@@ -84,6 +89,12 @@ export class Ship {
         body.add(glow);
 
         this.root.add(body);
+
+        // Create rocket tail boost effect (initially hidden)
+        this.rocketTail = new THREE.Group();
+        this.createRocketTail();
+        this.root.add(this.rocketTail);
+        this.rocketTail.visible = false;
 
         window.addEventListener('keydown', (e) => this.onKey(e, true));
         window.addEventListener('keyup', (e) => this.onKey(e, false));
@@ -134,6 +145,57 @@ export class Ship {
         this.input.boost = false;
     }
 
+    private createRocketTail() {
+        // Create a glowing rocket tail effect with multiple cone segments
+        const particleCount = BOOST_PAD.tailParticleCount;
+        const tailLength = BOOST_PAD.tailLength;
+
+        for (let i = 0; i < particleCount; i++) {
+            const progress = i / particleCount;
+            const size = 0.4 * (1 - progress); // taper from wide to narrow
+            const length = tailLength / particleCount;
+
+            // Create cone geometry for each particle
+            const geometry = new THREE.ConeGeometry(size, length, 8);
+            const baseOpacity = 0.8 * (1 - progress * 0.5); // fade toward the back
+            const material = new THREE.MeshBasicMaterial({
+                color: new THREE.Color().lerpColors(BOOST_PAD.colorStart, BOOST_PAD.colorEnd, progress),
+                transparent: true,
+                opacity: baseOpacity,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false,
+                toneMapped: false
+            });
+
+            const cone = new THREE.Mesh(geometry, material);
+            // Position along the tail, pointing backward
+            cone.position.set(0, 0, -(progress * tailLength + length * 0.5));
+            cone.rotation.x = Math.PI * 0.5; // point backward
+
+            this.rocketTail.add(cone);
+            this.rocketTailMaterials.push(material);
+            this.rocketTailBaseOpacities.push(baseOpacity);
+        }
+
+        // Add central glow core
+        const coreGeometry = new THREE.CylinderGeometry(0.15, 0.05, tailLength, 8);
+        const coreOpacity = 0.9;
+        const coreMaterial = new THREE.MeshBasicMaterial({
+            color: BOOST_PAD.colorStart,
+            transparent: true,
+            opacity: coreOpacity,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+            toneMapped: false
+        });
+        const core = new THREE.Mesh(coreGeometry, coreMaterial);
+        core.position.set(0, 0, -tailLength * 0.5);
+        core.rotation.x = Math.PI * 0.5;
+        this.rocketTail.add(core);
+        this.rocketTailMaterials.push(coreMaterial);
+        this.rocketTailBaseOpacities.push(coreOpacity);
+    }
+
     update(dt: number) {
         this.now += dt;
         // speed and boost
@@ -170,11 +232,30 @@ export class Ship {
         }
         this.state.tunnelCenterBoost = this.tunnelBoostAccumulator;
 
-        // Only accelerate when player presses forward (W/Up)
-        let targetSpeed = 0; // Default to stationary
-        if (this.input.up) {
-            targetSpeed = PHYSICS.baseSpeed * manual * this.tunnelBoostAccumulator;
+        // Boost pad logic: temporary speed boost when driving over pads
+        const boostPadInfo = this.track.getBoostPadAtT(this.state.t);
+        if (boostPadInfo.onPad) {
+            // On a boost pad - activate boost and reset timer
+            this.boostPadTimer = BOOST_PAD.boostDuration;
+            this.boostPadMultiplier = BOOST_PAD.boostMultiplier;
+        } else if (this.boostPadTimer > 0) {
+            // Boost pad effect is still active after leaving pad
+            this.boostPadTimer = Math.max(0, this.boostPadTimer - dt);
+            // Maintain boost multiplier while timer is active
+            if (this.boostPadTimer <= 0) {
+                this.boostPadMultiplier = 1.0;
+            }
+        } else {
+            // No boost pad effect - decay multiplier smoothly
+            this.boostPadMultiplier = THREE.MathUtils.lerp(
+                this.boostPadMultiplier,
+                1.0,
+                BOOST_PAD.boostDecaySpeed * dt
+            );
         }
+
+        // Auto-cruise: always move forward at base speed with all active multipliers
+        const targetSpeed = PHYSICS.baseSpeed * manual * this.tunnelBoostAccumulator * this.boostPadMultiplier;
 
         const speedLerp = 1 - Math.pow(0.001, dt); // smooth
         // Maintain consistent speed across track width for uniform turning feel
@@ -297,6 +378,21 @@ export class Ship {
         const shake = CAMERA.shakeMax * (this.state.speedKmh / PHYSICS.maxSpeed) * (0.4 + 0.6 * this.boostTimer);
         this.camera.position.x += (Math.random() - 0.5) * shake;
         this.camera.position.y += (Math.random() - 0.5) * shake;
+
+        // Update rocket tail effect based on boost pad state
+        const hasBoostPadEffect = this.boostPadTimer > 0;
+        this.rocketTail.visible = hasBoostPadEffect;
+
+        if (hasBoostPadEffect) {
+            // Animate tail intensity based on remaining boost time
+            const tailIntensity = Math.min(1, this.boostPadTimer / BOOST_PAD.boostDuration);
+            const pulseEffect = 0.9 + 0.1 * Math.sin(this.now * 15); // fast pulse
+
+            for (let i = 0; i < this.rocketTailMaterials.length; i++) {
+                const baseOpacity = this.rocketTailBaseOpacities[i];
+                this.rocketTailMaterials[i].opacity = baseOpacity * tailIntensity * pulseEffect * BOOST_PAD.tailIntensity;
+            }
+        }
     }
 }
 

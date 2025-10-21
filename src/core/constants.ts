@@ -103,5 +103,24 @@ export const TUNNEL = {
     ringSpacing: 25 // meters between decorative rings
 };
 
+// Boost pad configuration
+export const BOOST_PAD = {
+    spacing: 600, // meters between boost pads
+    lengthMeters: 40, // length of each boost pad zone
+    boostMultiplier: 1.6, // speed multiplier when on pad (more noticeable)
+    boostDuration: 2.5, // seconds boost effect lasts after leaving pad
+    boostDecaySpeed: 1.2, // how fast boost decays after leaving pad
+    thickness: 0.2, // visual height above track
+    // Neon colors for boost pads
+    colorStart: new Color(0xffff00), // yellow
+    colorEnd: new Color(0xff8800), // orange
+    pulseSpeed: 2.0, // animation pulse frequency
+    glowIntensity: 1.5,
+    // Rocket tail effect
+    tailLength: 4.0, // length of rocket tail
+    tailIntensity: 1.2, // brightness of tail effect
+    tailParticleCount: 20 // number of particles in tail
+};
+
 
 

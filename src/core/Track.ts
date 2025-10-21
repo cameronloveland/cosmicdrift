@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import { COLORS, TRACK_OPTS, TRACK_SOURCE, CUSTOM_TRACK_POINTS, TUNNEL } from './constants';
-import type { TrackOptions, TrackSample, TunnelSegment, TunnelInfo } from './types';
+import { COLORS, TRACK_OPTS, TRACK_SOURCE, CUSTOM_TRACK_POINTS, TUNNEL, BOOST_PAD } from './constants';
+import type { TrackOptions, TrackSample, TunnelSegment, TunnelInfo, BoostPadSegment, BoostPadInfo } from './types';
 
 function mulberry32(seed: number) {
     let t = seed >>> 0;
@@ -21,6 +21,8 @@ export class Track {
 
     private tunnelSegments: TunnelSegment[] = [];
     private tunnels = new THREE.Group();
+    private boostPads: BoostPadSegment[] = [];
+    private boostPadGroup = new THREE.Group();
 
     private opts: TrackOptions = TRACK_OPTS;
 
@@ -57,6 +59,7 @@ export class Track {
         this.buildRails();
         this.buildMarkers();
         this.buildTunnels();
+        this.buildBoostPads();
         this.buildStartLine(); // Build after tunnels so we can position relative to first tunnel
         this.updateTrackAlphaForTunnels();
     }
@@ -850,6 +853,178 @@ export class Track {
 
     public getCheckpointCount(): number {
         return 16;
+    }
+
+    private buildBoostPads() {
+        // Clear old boost pads
+        if (this.boostPadGroup.parent) this.root.remove(this.boostPadGroup);
+        this.boostPadGroup = new THREE.Group();
+        this.boostPads = [];
+
+        // Calculate number of boost pads based on track length and spacing
+        const count = Math.floor(this.length / BOOST_PAD.spacing);
+        const actualSpacing = this.length / count; // evenly distribute
+
+        for (let i = 0; i < count; i++) {
+            const startMeters = i * actualSpacing;
+            const startT = startMeters / this.length;
+            const lengthT = BOOST_PAD.lengthMeters / this.length;
+
+            this.boostPads.push({ t: startT, lengthT });
+
+            // Create visual boost pad stripe across the track
+            this.createBoostPadVisual(startT, lengthT);
+        }
+
+        this.root.add(this.boostPadGroup);
+    }
+
+    private createBoostPadVisual(startT: number, lengthT: number) {
+        // Create chevron arrows pointing in the direction of travel
+        const chevronCount = Math.max(3, Math.floor(BOOST_PAD.lengthMeters / 12));
+
+        for (let i = 0; i < chevronCount; i++) {
+            const progress = i / chevronCount;
+            const t = startT + progress * lengthT;
+            const idx = Math.floor(THREE.MathUtils.euclideanModulo(t, 1) * this.samples) % this.samples;
+            const center = this.cachedPositions[idx];
+            const binormal = this.cachedBinormals[idx];
+            const up = this.cachedNormals[idx];
+            const tangent = this.cachedTangents[idx];
+
+            // Create a chevron shape (arrow pointing forward)
+            const chevronWidth = this.width * 0.8;
+            const chevronLength = 6; // length along track direction
+            const chevronThickness = 1.2; // thickness of the arrow lines
+
+            // Chevron geometry: V shape pointing forward
+            // We'll create two diagonal bars forming a > shape
+            const positions: number[] = [];
+            const colors: number[] = [];
+            const indices: number[] = [];
+
+            // Color based on position
+            const color = new THREE.Color().lerpColors(BOOST_PAD.colorStart, BOOST_PAD.colorEnd, progress);
+
+            // Create the two diagonal bars of the chevron
+            // Right bar: from center-front to right-back
+            // Left bar: from center-front to left-back
+
+            const tipOffset = chevronLength * 0.5; // tip of arrow
+            const backOffset = -chevronLength * 0.5; // back of arrow
+            const sideOffset = chevronWidth * 0.5;
+
+            // Tip point (center front)
+            const tip = new THREE.Vector3()
+                .copy(center)
+                .addScaledVector(tangent, tipOffset)
+                .addScaledVector(up, BOOST_PAD.thickness);
+
+            // Right back point
+            const rightBack = new THREE.Vector3()
+                .copy(center)
+                .addScaledVector(tangent, backOffset)
+                .addScaledVector(binormal, sideOffset)
+                .addScaledVector(up, BOOST_PAD.thickness);
+
+            // Left back point
+            const leftBack = new THREE.Vector3()
+                .copy(center)
+                .addScaledVector(tangent, backOffset)
+                .addScaledVector(binormal, -sideOffset)
+                .addScaledVector(up, BOOST_PAD.thickness);
+
+            // Build right bar (thick line from tip to right back)
+            this.addChevronBar(tip, rightBack, chevronThickness, up, binormal, color, this.boostPadGroup);
+
+            // Build left bar (thick line from tip to left back)
+            this.addChevronBar(tip, leftBack, chevronThickness, up, binormal, color, this.boostPadGroup);
+
+            // Add glow sphere at the tip
+            const glowGeom = new THREE.SphereGeometry(0.8, 12, 12);
+            const glowMat = new THREE.MeshBasicMaterial({
+                color: BOOST_PAD.colorStart,
+                transparent: true,
+                opacity: 0.7,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false,
+                toneMapped: false
+            });
+            const glowSphere = new THREE.Mesh(glowGeom, glowMat);
+            glowSphere.position.copy(tip);
+            this.boostPadGroup.add(glowSphere);
+        }
+    }
+
+    private addChevronBar(
+        start: THREE.Vector3,
+        end: THREE.Vector3,
+        thickness: number,
+        up: THREE.Vector3,
+        binormal: THREE.Vector3,
+        color: THREE.Color,
+        group: THREE.Group
+    ) {
+        // Create a thick line segment using box geometry
+        const direction = new THREE.Vector3().subVectors(end, start);
+        const length = direction.length();
+        const center = new THREE.Vector3().addVectors(start, end).multiplyScalar(0.5);
+
+        const barGeom = new THREE.BoxGeometry(thickness, thickness * 0.5, length);
+        const barMat = new THREE.MeshBasicMaterial({
+            color: color,
+            transparent: true,
+            opacity: 0.9,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+            toneMapped: false
+        });
+
+        const bar = new THREE.Mesh(barGeom, barMat);
+        bar.position.copy(center);
+
+        // Orient the bar along the direction
+        const forward = direction.clone().normalize();
+        const right = new THREE.Vector3().crossVectors(up, forward).normalize();
+        const upNorm = new THREE.Vector3().crossVectors(forward, right).normalize();
+        const m = new THREE.Matrix4().makeBasis(right, upNorm, forward);
+        const q = new THREE.Quaternion().setFromRotationMatrix(m);
+        bar.quaternion.copy(q);
+
+        group.add(bar);
+    }
+
+    public getBoostPadAtT(t: number): BoostPadInfo {
+        const normalizedT = THREE.MathUtils.euclideanModulo(t, 1);
+
+        for (const pad of this.boostPads) {
+            const endT = pad.t + pad.lengthT;
+            let onPad = false;
+
+            // Handle wrap-around case
+            if (endT <= 1.0) {
+                // Normal case: pad doesn't wrap around t=0/1
+                onPad = normalizedT >= pad.t && normalizedT <= endT;
+            } else {
+                // Wrap case: pad crosses t=0/1 boundary
+                const wrappedEndT = endT - 1.0;
+                onPad = normalizedT >= pad.t || normalizedT <= wrappedEndT;
+            }
+
+            if (onPad) {
+                return {
+                    onPad: true,
+                    boostActive: true,
+                    boostTimer: BOOST_PAD.boostDuration
+                };
+            }
+        }
+
+        return {
+            onPad: false,
+            boostActive: false,
+            boostTimer: 0
+        };
     }
 }
 
