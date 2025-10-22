@@ -122,5 +122,21 @@ export const BOOST_PAD = {
     tailParticleCount: 20 // number of particles in tail
 };
 
+// Wormhole tunnel configuration
+export const WORMHOLE = {
+    dotsPerMeter: 8.0, // dot density along tunnel length (increased for more flow)
+    dotsPerRing: 16, // dots around circumference at each position (reduced)
+    dotSize: 0.18, // radius of each dot sphere
+    radiusMin: 8, // minimum distance from tunnel center axis
+    radiusMax: 15, // maximum distance from tunnel center axis (varying depths)
+    spiralTwist: 0.12, // radians of rotation per meter along tunnel
+    randomness: 0.4, // position randomness factor (0-1)
+    hueSpeed: 0.2, // hue rotation speed
+    saturation: 0.9, // HSL saturation
+    lightness: 0.7, // HSL lightness
+    opacity: 0.75, // dot transparency
+    glowIntensity: 2.2 // brightness multiplier for glow effect
+};
+
 
 

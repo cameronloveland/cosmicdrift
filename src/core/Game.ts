@@ -9,6 +9,7 @@ import { Environment } from './Environment';
 import { Particles } from './Particles';
 import { SpeedStars } from './SpeedStars';
 import { AudioSystem } from './Audio';
+import { WormholeTunnel } from './WormholeTunnel';
 
 export class Game {
     private container: HTMLElement;
@@ -38,6 +39,7 @@ export class Game {
     private env!: Environment;
     private particles!: Particles;
     private speedStars!: SpeedStars;
+    private wormholeTunnel!: WormholeTunnel;
     private ui!: UI;
     private audio!: AudioSystem;
     private radio = {
@@ -110,6 +112,10 @@ export class Game {
         // Speed stars
         this.speedStars = new SpeedStars(this.ship, this.track);
         this.scene.add(this.speedStars.root);
+
+        // Wormhole tunnels
+        this.wormholeTunnel = new WormholeTunnel(this.track);
+        this.scene.add(this.wormholeTunnel.root);
 
         this.ui = new UI();
 
@@ -344,6 +350,7 @@ export class Game {
         this.ship.update(dt);
         this.particles.update(dt);
         this.speedStars.update(dt);
+        this.wormholeTunnel.update(dt);
         this.env.update(dt);
         this.ui.update(this.ship.state);
         this.audio.setSpeed(this.ship.state.speedKmh);

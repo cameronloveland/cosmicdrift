@@ -15,6 +15,8 @@ export interface ShipState {
     lapCurrent: number;
     lapTotal: number;
     boostLevel: number; // 0..1 visual intensity of manual boost
+    inTunnel: boolean;
+    tunnelCenterBoost: number; // multiplier from tunnel center alignment
 }
 
 export interface TrackSystem {
@@ -54,10 +56,13 @@ export type TrackSample = {
     up: Vector3;
 };
 
+export type TunnelType = 'rings' | 'wormhole';
+
 export type TunnelSegment = {
     startT: number;
     endT: number;
     lengthMeters: number;
+    tunnelType: TunnelType;
 };
 
 export type TunnelInfo = {

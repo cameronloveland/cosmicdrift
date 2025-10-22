@@ -26,12 +26,12 @@ export class Track {
 
     private opts: TrackOptions = TRACK_OPTS;
 
-    // sampled frames cache
-    private samples = this.opts.samples;
-    private cachedPositions: THREE.Vector3[] = [];
-    private cachedTangents: THREE.Vector3[] = [];
-    private cachedNormals: THREE.Vector3[] = [];
-    private cachedBinormals: THREE.Vector3[] = [];
+    // sampled frames cache (exposed for wormhole tunnel generation)
+    public samples = this.opts.samples;
+    public cachedPositions: THREE.Vector3[] = [];
+    public cachedTangents: THREE.Vector3[] = [];
+    public cachedNormals: THREE.Vector3[] = [];
+    public cachedBinormals: THREE.Vector3[] = [];
     private cachedBank: number[] = [];
 
     constructor() {
@@ -564,26 +564,45 @@ export class Track {
         }
 
         // Build tunnel geometry for each placement
-        for (const startT of placements) {
+        let wormholeCount = 0;
+        for (let i = 0; i < placements.length; i++) {
+            const startT = placements[i];
             const lengthMeters = TUNNEL.lengthMin + rnd() * (TUNNEL.lengthMax - TUNNEL.lengthMin);
             const endT = THREE.MathUtils.euclideanModulo(startT + lengthMeters / this.length, 1);
 
-            this.tunnelSegments.push({ startT, endT, lengthMeters });
-
-            // Create tunnel tube geometry
-            const tunnelPoints: THREE.Vector3[] = [];
-            const segmentCount = Math.floor((lengthMeters / this.length) * this.samples);
-
-            for (let i = 0; i <= segmentCount; i++) {
-                const t = startT + (i / segmentCount) * (lengthMeters / this.length);
-                const idx = Math.floor(THREE.MathUtils.euclideanModulo(t, 1) * this.samples) % this.samples;
-                tunnelPoints.push(this.cachedPositions[idx].clone());
+            // Randomly assign tunnel type (60% chance wormhole, 40% rings)
+            // Also ensure at least one wormhole exists
+            let tunnelType: 'rings' | 'wormhole';
+            if (i === placements.length - 1 && wormholeCount === 0) {
+                // Force last tunnel to be wormhole if we haven't created any yet
+                tunnelType = 'wormhole';
+            } else {
+                tunnelType = rnd() > 0.4 ? 'wormhole' : 'rings';
             }
 
-            const tunnelCurve = new THREE.CatmullRomCurve3(tunnelPoints, false, 'centripetal');
+            if (tunnelType === 'wormhole') wormholeCount++;
 
-            // Add decorative neon rings along the tunnel (no tube walls)
-            this.addTunnelRings(tunnelCurve, lengthMeters, startT);
+            console.log(`[Track] Creating tunnel ${this.tunnelSegments.length + 1}: type=${tunnelType}, length=${lengthMeters.toFixed(0)}m, startT=${startT.toFixed(3)}, endT=${endT.toFixed(3)}`);
+
+            this.tunnelSegments.push({ startT, endT, lengthMeters, tunnelType });
+
+            // Only create ring geometry for 'rings' type tunnels
+            if (tunnelType === 'rings') {
+                // Create tunnel tube geometry
+                const tunnelPoints: THREE.Vector3[] = [];
+                const segmentCount = Math.floor((lengthMeters / this.length) * this.samples);
+
+                for (let i = 0; i <= segmentCount; i++) {
+                    const t = startT + (i / segmentCount) * (lengthMeters / this.length);
+                    const idx = Math.floor(THREE.MathUtils.euclideanModulo(t, 1) * this.samples) % this.samples;
+                    tunnelPoints.push(this.cachedPositions[idx].clone());
+                }
+
+                const tunnelCurve = new THREE.CatmullRomCurve3(tunnelPoints, false, 'centripetal');
+
+                // Add decorative neon rings along the tunnel (no tube walls)
+                this.addTunnelRings(tunnelCurve, lengthMeters, startT);
+            }
         }
 
         this.root.add(this.tunnels);
@@ -879,6 +898,10 @@ export class Track {
 
     public getCheckpointCount(): number {
         return 16;
+    }
+
+    public getTunnelSegments(): TunnelSegment[] {
+        return this.tunnelSegments;
     }
 
     private buildBoostPads() {
