@@ -97,179 +97,16 @@ export class Environment {
         this.eventHorizonGlow = new THREE.Mesh(horizonGeometry, horizonMaterial);
         this.blackHole.add(this.eventHorizonGlow);
 
-        // 3. Create flattened vortex layers (event horizon simulation)
-        this.createVortexLayer(0, 1000, 600, 600, 1.5, 2.5, 0.5, 20); // Outer cloud - star-sized particles
-        this.createVortexLayer(1, 600, 500, 400, 1.2, 2, 0.7, 15);  // Mid vortex - smaller particles
-        this.createVortexLayer(2, 500, 480, 250, 1, 1.8, 0.9, 10);   // Inner accretion - smallest particles
+        // 3. Clean black hole - no rings or particles
 
-        // 4. Create glowing rings in event horizon plane (like track rings)
-        this.createGlowingRing(550, 200, 0x53d7ff, 0.8); // Inner ring - intense cyan glow
-        this.createGlowingRing(650, 180, 0xff2bd6, 0.7); // Middle ring - intense pink glow
-        this.createGlowingRing(750, 160, 0xff44aa, 0.6); // Outer ring - intense purple glow
+        // 6. No additional effects - clean black hole
 
-        // 5. Add two-tone glow rings around the vortex
-        this.createGlowRing(550, 0x53d7ff, 0.3); // Cyan glow ring
-        this.createGlowRing(600, 0xff2bd6, 0.25); // Pink glow ring
-
-        // 5. Add rotating point lights around vortex
+        // 7. Add rotating point lights around vortex
         this.addVortexLights();
     }
 
-    private createVortexLayer(layerIndex: number, maxRadius: number, minRadius: number, particleCount: number, minSize: number, maxSize: number, opacity: number, maxHeight: number = 80) {
-        const geometry = new THREE.BufferGeometry();
-        const positions = new Float32Array(particleCount * 3);
-        const colors = new Float32Array(particleCount * 3);
-        const sizes = new Float32Array(particleCount);
-        const velocities = new Float32Array(particleCount * 3); // Store velocity for animation
 
-        for (let i = 0; i < particleCount; i++) {
-            // Distribute particles in spiral pattern
-            const angle = (i / particleCount) * Math.PI * 12; // Multiple spirals
-            const radius = minRadius + Math.random() * (maxRadius - minRadius);
-            const height = (Math.random() - 0.5) * maxHeight; // Flattened vertical spread
 
-            positions[i * 3 + 0] = Math.cos(angle) * radius;
-            positions[i * 3 + 1] = height;
-            positions[i * 3 + 2] = Math.sin(angle) * radius;
-
-            // Color based on layer and position
-            let colorR, colorG, colorB;
-            if (layerIndex === 0) {
-                // Outer: mix of pink/cyan/purple
-                const colorChoice = Math.random();
-                if (colorChoice < 0.33) {
-                    colorR = 1.0; colorG = 0.17; colorB = 0.84; // Pink
-                } else if (colorChoice < 0.66) {
-                    colorR = 0.33; colorG = 0.84; colorB = 1.0; // Cyan
-                } else {
-                    colorR = 1.0; colorG = 0.27; colorB = 0.67; // Purple
-                }
-            } else if (layerIndex === 1) {
-                // Mid: brighter pink/cyan
-                const isPink = Math.random() > 0.5;
-                colorR = isPink ? 1.0 : 0.5;
-                colorG = isPink ? 0.2 : 0.8;
-                colorB = isPink ? 0.8 : 1.0;
-            } else {
-                // Inner: bright white/pink
-                colorR = 1.0;
-                colorG = 0.8;
-                colorB = 1.0;
-            }
-
-            colors[i * 3 + 0] = colorR;
-            colors[i * 3 + 1] = colorG;
-            colors[i * 3 + 2] = colorB;
-
-            sizes[i] = minSize + Math.random() * (maxSize - minSize);
-
-            // Store initial velocity for spiral motion
-            velocities[i * 3 + 0] = 0;
-            velocities[i * 3 + 1] = 0;
-            velocities[i * 3 + 2] = 0;
-        }
-
-        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-        geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-        geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
-        geometry.setAttribute('velocity', new THREE.BufferAttribute(velocities, 3));
-
-        const material = new THREE.PointsMaterial({
-            size: maxSize * 1.2, // Star-sized particles with subtle glow
-            transparent: true,
-            opacity: opacity,
-            blending: THREE.AdditiveBlending,
-            vertexColors: true,
-            sizeAttenuation: true,
-            depthWrite: false,
-            toneMapped: false
-        });
-
-        const vortexLayer = new THREE.Points(geometry, material);
-        vortexLayer.userData = {
-            layerIndex,
-            maxRadius,
-            minRadius,
-            particleCount,
-            spiralSpeed: 0.1 + layerIndex * 0.05,
-            inwardSpeed: 15 + layerIndex * 10
-        };
-
-        this.blackHole.add(vortexLayer);
-        this.vortexLayers.push(vortexLayer);
-    }
-
-    private createGlowingRing(radius: number, particleCount: number, color: number, opacity: number) {
-        const geometry = new THREE.BufferGeometry();
-        const positions = new Float32Array(particleCount * 3);
-        const colors = new Float32Array(particleCount * 3);
-        const sizes = new Float32Array(particleCount);
-
-        for (let i = 0; i < particleCount; i++) {
-            const angle = (i / particleCount) * Math.PI * 2;
-            const ringRadius = radius + (Math.random() - 0.5) * 15; // Small radius variation
-            const height = (Math.random() - 0.5) * 5; // Extremely flat ring - event horizon plane
-
-            positions[i * 3 + 0] = Math.cos(angle) * ringRadius;
-            positions[i * 3 + 1] = height;
-            positions[i * 3 + 2] = Math.sin(angle) * ringRadius;
-
-            // Convert hex color to RGB
-            colors[i * 3 + 0] = ((color >> 16) & 255) / 255;
-            colors[i * 3 + 1] = ((color >> 8) & 255) / 255;
-            colors[i * 3 + 2] = (color & 255) / 255;
-
-            sizes[i] = 2.5 + Math.random() * 1.5; // Larger particles for track-like glow
-        }
-
-        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-        geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-        geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
-
-        // Enhanced glowing material to match track intensity
-        const material = new THREE.PointsMaterial({
-            size: 3.5, // Larger for more volumetric glow
-            transparent: true,
-            opacity: opacity * 1.5, // Boost opacity for track-like intensity
-            blending: THREE.AdditiveBlending,
-            vertexColors: true,
-            sizeAttenuation: true,
-            depthWrite: false,
-            toneMapped: false
-        });
-
-        const ring = new THREE.Points(geometry, material);
-        ring.userData = {
-            radius,
-            rotationSpeed: 0.05 + Math.random() * 0.03,
-            precessionSpeed: 0.01 + Math.random() * 0.01
-        };
-
-        this.blackHole.add(ring);
-        this.jupiterRings.push(ring);
-    }
-
-    private createGlowRing(radius: number, color: number, opacity: number) {
-        const geometry = new THREE.RingGeometry(radius - 5, radius + 5, 32);
-        const material = new THREE.MeshBasicMaterial({
-            color: color,
-            transparent: true,
-            opacity: opacity,
-            blending: THREE.AdditiveBlending,
-            side: THREE.DoubleSide,
-            depthWrite: false,
-            toneMapped: false
-        });
-
-        const glowRing = new THREE.Mesh(geometry, material);
-        glowRing.rotation.x = Math.PI / 2; // Horizontal
-        glowRing.userData = {
-            radius,
-            rotationSpeed: 0.02 + Math.random() * 0.01
-        };
-
-        this.blackHole.add(glowRing);
-    }
 
     private addVortexLights() {
         const lightCount = 6;
@@ -290,6 +127,8 @@ export class Environment {
             this.diskLights.push(light);
         }
     }
+
+
 
     private addPlanets() {
         // Planet 1: Massive Magenta/Pink glowing planet - North-West quadrant
@@ -445,70 +284,13 @@ export class Environment {
 
         this.stars.rotation.z += dt * 0.005;
 
-        // Animate vortex layers with spiral motion
-        if (this.vortexLayers) {
-            this.vortexLayers.forEach((layer) => {
-                const userData = layer.userData;
-                const positions = layer.geometry.attributes.position.array as Float32Array;
-                const velocities = layer.geometry.attributes.velocity.array as Float32Array;
+        // No vortex layer animations - clean black hole
 
-                for (let i = 0; i < userData.particleCount; i++) {
-                    const idx = i * 3;
-                    const x = positions[idx];
-                    const y = positions[idx + 1];
-                    const z = positions[idx + 2];
+        // No Jupiter rings animations - clean black hole
 
-                    // Calculate current radius and angle
-                    let radius = Math.sqrt(x * x + z * z);
-                    let angle = Math.atan2(z, x);
+        // No ring animations - clean black hole
 
-                    // Spiral inward
-                    radius -= dt * userData.inwardSpeed;
-                    angle += dt * userData.spiralSpeed;
-
-                    // Add turbulence
-                    const turbulence = Math.sin(this.time * 2 + i * 0.1) * 5;
-                    radius += turbulence * dt;
-
-                    // Reset particle if it gets too close
-                    if (radius < userData.minRadius) {
-                        radius = userData.maxRadius;
-                        angle = Math.random() * Math.PI * 2;
-                    }
-
-                    // Update position - keep in flattened event horizon plane
-                    positions[idx] = Math.cos(angle) * radius;
-                    positions[idx + 1] = y + Math.sin(this.time * 3 + i * 0.05) * 1; // Minimal vertical wobble
-                    positions[idx + 2] = Math.sin(angle) * radius;
-                }
-
-                layer.geometry.attributes.position.needsUpdate = true;
-            });
-        }
-
-        // Animate Jupiter rings
-        if (this.jupiterRings) {
-            this.jupiterRings.forEach((ring) => {
-                const userData = ring.userData;
-                // Rotate around Y axis
-                ring.rotation.y += dt * userData.rotationSpeed;
-                // Add precession (tilt change)
-                ring.rotation.x = Math.sin(this.time * userData.precessionSpeed) * 0.1;
-            });
-        }
-
-        // Animate glow rings
-        this.blackHole.children.forEach((child) => {
-            if (child.userData && child.userData.rotationSpeed) {
-                child.rotation.y += dt * child.userData.rotationSpeed;
-            }
-        });
-
-        // Pulse event horizon glow
-        if (this.eventHorizonGlow) {
-            const pulseFactor = 0.15 + Math.sin(this.time * 1.2) * 0.08;
-            (this.eventHorizonGlow.material as THREE.MeshBasicMaterial).opacity = pulseFactor;
-        }
+        // Static event horizon glow - no pulsing
 
     }
 
@@ -521,5 +303,3 @@ export class Environment {
         this.addStars();
     }
 }
-
-
