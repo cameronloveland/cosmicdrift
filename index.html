@@ -407,12 +407,14 @@
 
         .hidden {
             opacity: 0;
-            transition: opacity .4s ease;
+            visibility: hidden;
+            transition: opacity .4s ease, visibility 0s linear .4s;
             pointer-events: none;
         }
 
         .visible {
             opacity: 1;
+            visibility: visible;
             transition: opacity .6s ease;
         }
     </style>
@@ -443,19 +445,44 @@
                 <div class="bar" id="flowBar"></div>
             </div>
         </div>
-        <div id="pauseText" class="hidden"
-            style="position: absolute; top: 20px; left: 50%; transform: translateX(-50%); font-size: 32px; font-weight: 800; letter-spacing: 4px; color: #53d7ff; text-shadow: 0 0 20px rgba(83, 215, 255, 0.8), 0 0 40px rgba(255, 43, 214, 0.4); pointer-events: none;">
-            PAUSED</div>
     </div>
-    <div class="title visible" id="start">
+    <div class="title visible" id="start" style="z-index: 1000;">
         <div class="panel">
             <span class="panel-stars" aria-hidden="true"></span>
             <h1>COSMIC <span class="accent">DRIFT</span></h1>
             <h2 class="logo-jp">コズミック・ドリフト</h2>
-            <div class="instructions">WASD/Arrow keys to steer • Hold Space to Boost</div>
+            <div class="instructions">A/D or Arrow keys to steer • Hold Space to Boost</div>
             <div class="cta">
                 <button class="btn" id="beginBtn">START</button>
                 <div class="hint">Press Space to Start</div>
+            </div>
+        </div>
+    </div>
+    <div class="title hidden" id="pauseMenu" style="z-index: 1001;">
+        <div class="panel">
+            <span class="panel-stars" aria-hidden="true"></span>
+            <h1>PAUSED</h1>
+            <div class="cta">
+                <button class="btn" id="restartBtn">RESTART RACE</button>
+                <button class="btn" id="controlsBtn">CONTROLS</button>
+                <button class="btn" id="quitBtn">QUIT GAME</button>
+                <div class="hint">Press Escape to Resume</div>
+            </div>
+        </div>
+    </div>
+    <div class="title hidden" id="controlsMenu" style="z-index: 1001;">
+        <div class="panel">
+            <span class="panel-stars" aria-hidden="true"></span>
+            <h1>CONTROLS</h1>
+            <div class="instructions">
+                <div><strong>Steer:</strong> A/D or Left/Right Arrow Keys</div>
+                <div><strong>Boost:</strong> Hold Space</div>
+                <div><strong>Pause:</strong> Escape</div>
+                <div><strong>Free Camera:</strong> F (when paused)</div>
+                <div><strong>Mouse Look:</strong> Hold Right Mouse Button</div>
+            </div>
+            <div class="cta">
+                <button class="btn" id="backToPauseBtn">BACK</button>
             </div>
         </div>
     </div>

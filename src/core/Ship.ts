@@ -108,7 +108,7 @@ export class Ship {
         this.state.t = -0.0001 // Start behind the starting line (t=0.0)
     }
 
-    private input = { left: false, right: false, up: false, down: false, boost: false };
+    public input = { left: false, right: false, up: false, down: false, boost: false };
 
     private onKey(e: KeyboardEvent, down: boolean) {
         if (e.code === 'ArrowLeft' || e.code === 'KeyA') this.input.left = down;
@@ -130,11 +130,23 @@ export class Ship {
     }
 
     private onMouseButton(e: MouseEvent, down: boolean) {
-        // Any mouse button for free look
-        if (e.button === 0 || e.button === 1 || e.button === 2) {
+        // Temporarily disable all mouse handling to test UI
+        console.log('Mouse click on:', e.target, 'button:', e.button);
+        return; // Disable all mouse handling for now
+
+        // Check if the click is on a UI element
+        const target = e.target as HTMLElement;
+        const isUIElement = target.closest('.planet-fx, .radio, .hud .control, input, button, label');
+
+        console.log('Mouse click on:', target, 'isUIElement:', !!isUIElement);
+
+        // Only prevent default for non-UI elements
+        if (!isUIElement && (e.button === 0 || e.button === 1 || e.button === 2)) {
             e.preventDefault();
             this.mouseButtonDown = down;
             console.log('Mouse button:', down ? 'down' : 'up', 'button:', e.button);
+        } else if (isUIElement) {
+            console.log('UI element clicked, allowing default behavior');
         }
     }
 
@@ -148,6 +160,45 @@ export class Ship {
 
     setCameraControl(enabled: boolean) {
         this.cameraControlEnabled = enabled;
+    }
+
+    reset() {
+        // Reset ship to starting position and state
+        this.state.t = -0.0001; // Start behind the starting line
+        this.state.speedKmh = 0;
+        this.state.lateralOffset = 0;
+        this.state.pitch = 0;
+        this.state.flow = 0;
+        this.state.boosting = false;
+        this.state.lapCurrent = 1;
+        this.state.boostLevel = 1;
+        this.state.inTunnel = false;
+        this.state.tunnelCenterBoost = 1.0;
+
+        // Reset internal state
+        this.velocitySide = 0;
+        this.velocityPitch = 0;
+        this.boostTimer = 0;
+        this.boostEnergy = 1;
+        this.now = 0;
+        this.prevT = 0;
+        this.checkpointT = 0.0;
+        this.mouseYawTarget = 0;
+        this.mousePitchTarget = 0;
+        this.mouseYaw = 0;
+        this.mousePitch = 0;
+        this.mouseButtonDown = false;
+        this.tunnelBoostAccumulator = 1.0;
+        this.boostPadMultiplier = 1.0;
+        this.boostPadTimer = 0;
+        this.currentFov = this.baseFov;
+
+        // Clear input
+        this.clearInput();
+
+        // Reset camera FOV
+        this.camera.fov = this.baseFov;
+        this.camera.updateProjectionMatrix();
     }
 
     private createRocketTail() {
@@ -209,7 +260,10 @@ export class Ship {
         if (this.input.boost && this.boostEnergy > 0) {
             isBoosting = true;
             this.boostEnergy = Math.max(0, this.boostEnergy - dt / PHYSICS.boostDurationSec);
-        } else if (!this.input.boost) {
+        }
+
+        // Always regenerate boost energy when not actively boosting
+        if (!isBoosting) {
             this.boostEnergy = Math.min(1, this.boostEnergy + PHYSICS.boostRegenPerSec * dt);
         }
 
@@ -268,6 +322,18 @@ export class Ship {
         this.state.boosting = isBoosting;
         if (isBoosting) this.boostTimer = Math.min(this.boostTimer + dt, 1); else this.boostTimer = Math.max(this.boostTimer - dt * 2, 0);
         this.state.boostLevel = this.boostEnergy;
+
+        // Debug: log boost state
+        if (isBoosting) {
+            console.log('Boosting active - energy:', this.boostEnergy.toFixed(2), 'input.boost:', this.input.boost);
+        } else if (this.input.boost && this.boostEnergy <= 0) {
+            console.log('Boost input detected but no energy - energy:', this.boostEnergy.toFixed(2));
+        }
+
+        // Debug: log when boost state changes
+        if (this.state.boosting !== isBoosting) {
+            console.log('Boost state changed:', this.state.boosting, '->', isBoosting, 'energy:', this.boostEnergy.toFixed(2));
+        }
 
         // advance along curve
         const mps = kmhToMps(this.state.speedKmh);
@@ -387,12 +453,12 @@ export class Ship {
             this.camera.position.y += (Math.random() - 0.5) * shake;
         }
 
-        // Update rocket tail effect based on boost pad state
+        // Update rocket tail effect based on boost pad state only
         const hasBoostPadEffect = this.boostPadTimer > 0;
         this.rocketTail.visible = hasBoostPadEffect;
 
-        if (hasBoostPadEffect) {
-            // Animate tail intensity based on remaining boost time
+        if (this.rocketTail.visible) {
+            // Animate tail intensity based on boost pad effect
             const tailIntensity = Math.min(1, this.boostPadTimer / BOOST_PAD.boostDuration);
             const pulseEffect = 0.9 + 0.1 * Math.sin(this.now * 15); // fast pulse
 

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { STARFIELD_MIN_RADIUS } from './constants';
+import { STARFIELD_MIN_RADIUS, PLANET_EFFECTS } from './constants';
 
 export class Environment {
     public root = new THREE.Group();
@@ -149,20 +149,8 @@ export class Environment {
         const light1 = new THREE.PointLight(0xff2bd6, 800, 1200, 1.5);
         p1.add(light1);
 
-        // Add larger glow halo to planet 1
-        const halo1 = new THREE.Mesh(
-            new THREE.SphereGeometry(112, 48, 36),
-            new THREE.MeshBasicMaterial({
-                color: 0xff2bd6,
-                transparent: true,
-                opacity: 0.2,
-                blending: THREE.AdditiveBlending,
-                side: THREE.BackSide,
-                depthWrite: false,
-                toneMapped: false
-            })
-        );
-        p1.add(halo1);
+        // Add visual effects to planet 1
+        this.addPlanetEffects(p1, 88, 0xff2bd6);
 
         // Planet 2: Large Cyan glowing planet - South-East quadrant
         const g2 = new THREE.SphereGeometry(64, 64, 48);
@@ -182,20 +170,8 @@ export class Environment {
         const light2 = new THREE.PointLight(0x53d7ff, 600, 1100, 1.5);
         p2.add(light2);
 
-        // Add larger glow halo to planet 2
-        const halo2 = new THREE.Mesh(
-            new THREE.SphereGeometry(84, 48, 36),
-            new THREE.MeshBasicMaterial({
-                color: 0x53d7ff,
-                transparent: true,
-                opacity: 0.2,
-                blending: THREE.AdditiveBlending,
-                side: THREE.BackSide,
-                depthWrite: false,
-                toneMapped: false
-            })
-        );
-        p2.add(halo2);
+        // Add visual effects to planet 2
+        this.addPlanetEffects(p2, 64, 0x53d7ff);
 
         // Planet 3: Medium Magenta planet - North-East, elevated
         const g3 = new THREE.SphereGeometry(40, 48, 36);
@@ -215,20 +191,8 @@ export class Environment {
         const light3 = new THREE.PointLight(0xff2bd6, 400, 900, 1.5);
         p3.add(light3);
 
-        // Add larger glow halo to planet 3
-        const halo3 = new THREE.Mesh(
-            new THREE.SphereGeometry(56, 36, 28),
-            new THREE.MeshBasicMaterial({
-                color: 0xff2bd6,
-                transparent: true,
-                opacity: 0.18,
-                blending: THREE.AdditiveBlending,
-                side: THREE.BackSide,
-                depthWrite: false,
-                toneMapped: false
-            })
-        );
-        p3.add(halo3);
+        // Add visual effects to planet 3
+        this.addPlanetEffects(p3, 40, 0xff2bd6);
 
         // Planet 4: Large Cyan planet - South-West, lower
         const g4 = new THREE.SphereGeometry(56, 56, 40);
@@ -248,20 +212,21 @@ export class Environment {
         const light4 = new THREE.PointLight(0x53d7ff, 500, 1000, 1.5);
         p4.add(light4);
 
-        // Add larger glow halo to planet 4
-        const halo4 = new THREE.Mesh(
-            new THREE.SphereGeometry(72, 48, 36),
-            new THREE.MeshBasicMaterial({
-                color: 0x53d7ff,
-                transparent: true,
-                opacity: 0.19,
-                blending: THREE.AdditiveBlending,
-                side: THREE.BackSide,
-                depthWrite: false,
-                toneMapped: false
-            })
-        );
-        p4.add(halo4);
+        // Add visual effects to planet 4
+        this.addPlanetEffects(p4, 56, 0x53d7ff);
+    }
+
+    private addPlanetEffects(planet: THREE.Mesh, planetRadius: number, color: number) {
+        // Simple planets with no effects for now
+        // Effects can be added back later if needed
+    }
+
+
+
+
+
+    private animatePlanetEffects(planet: THREE.Mesh, dt: number) {
+        // No effects to animate for simple planets
     }
 
     update(dt: number) {
@@ -279,6 +244,8 @@ export class Environment {
 
                 // Keep original Y position for vertical variation
                 planet.position.set(x, planet.position.y, z);
+
+                // No planet effects to animate for simple planets
             }
         });
 
@@ -302,4 +269,22 @@ export class Environment {
         // rebuild stars with new radius
         this.addStars();
     }
+
+    // Get planet positions for track proximity calculations
+    public getPlanetPositions(): Array<{ position: THREE.Vector3, color: THREE.Color }> {
+        const planetData: Array<{ position: THREE.Vector3, color: THREE.Color }> = [];
+
+        this.planets.children.forEach((planet) => {
+            if (planet instanceof THREE.Mesh && planet.material instanceof THREE.MeshBasicMaterial) {
+                const color = planet.material.color.clone();
+                planetData.push({
+                    position: planet.position.clone(),
+                    color: color
+                });
+            }
+        });
+
+        return planetData;
+    }
+
 }

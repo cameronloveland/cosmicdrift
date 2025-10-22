@@ -32,9 +32,14 @@ export class SpeedStars {
     }
 
     update(dt: number) {
-        const show = this.ship.state.speedKmh >= (PHYSICS.maxSpeed * 0.9);
+        const show = this.ship.state.boosting;
         this.root.visible = show;
         if (!show) return;
+
+        // Debug: log when speed stars should be visible
+        if (show && !this.root.visible) {
+            console.log('Speed stars should be visible but root is not visible');
+        }
         const forward = new THREE.Vector3(0, 0, 1);
         this.ship.root.localToWorld(forward).sub(this.ship.root.position).normalize();
         const up = new THREE.Vector3(0, 1, 0).applyQuaternion(this.ship.root.quaternion);

@@ -138,5 +138,51 @@ export const WORMHOLE = {
     glowIntensity: 1.3 // brightness multiplier (reduced to avoid white glow)
 };
 
+// Planet visual effects configuration
+export const PLANET_EFFECTS = {
+    // Effect enable/disable flags
+    enableAtmospheric: false,
+    enableAurora: false,
+    enableRings: false,
+    enableTendrils: false,
+
+    // Saturn-like Ring System
+    rings: {
+        particleCount: 1500, // Higher density for more visible rings
+        innerRadius: 1.2, // multiplier of planet radius - closer to planet
+        outerRadius: 3.0, // multiplier of planet radius - extended rings
+        ringThickness: 0.15, // Slightly thicker rings for better visibility
+        particleSize: 1.2, // Larger debris particles for better visibility
+        opacity: 1.0, // Maximum opacity for visibility
+        rotationSpeed: 0.15, // Fast orbital rotation speed around planet
+        wobbleAmount: 0.05, // Slight wobble for realism
+        wobbleSpeed: 0.3,
+        spinSpeed: 0.08, // Additional spin speed for debris fields
+        // Sparkle and glow effects
+        sparkleIntensity: 2.0, // Base intensity for sparkle effects
+        sparkleVariation: 1.5, // Variation in sparkle intensity
+        sparkleSpeed: 3.0, // Speed of sparkle flickering
+        sparkleFrequency: 0.3, // How often sparkles occur (0-1)
+        glowPulseSpeed: 2.5, // Speed of glow pulsing
+        glowPulseIntensity: 0.8, // Intensity of glow pulsing
+        colorVariation: 0.2, // Reduced for more consistent colors
+        sizeVariation: 0.3, // Reduced for more consistent debris sizes
+        // Ring colors - alternating pink and teal
+        ringColors: [
+            { color: 0xff2bd6, glowIntensity: 1.5 }, // Vibrant pink
+            { color: 0x53d7ff, glowIntensity: 1.2 }, // Vibrant teal
+            { color: 0xff2bd6, glowIntensity: 1.0 }, // Medium pink
+            { color: 0x53d7ff, glowIntensity: 0.8 }, // Medium teal
+        ],
+        // Multiple ring bands with different densities and alternating colors
+        ringBands: [
+            { density: 1.0, radiusMin: 1.2, radiusMax: 1.8, colorIndex: 0 }, // Inner dense band - vibrant pink
+            { density: 0.4, radiusMin: 1.8, radiusMax: 2.2, colorIndex: 1 }, // Gap - vibrant teal (more visible)
+            { density: 0.9, radiusMin: 2.2, radiusMax: 2.6, colorIndex: 2 }, // Outer band - medium pink
+            { density: 0.5, radiusMin: 2.6, radiusMax: 3.0, colorIndex: 3 }  // Sparse outer edge - medium teal (more visible)
+        ]
+    }
+};
+
 
 

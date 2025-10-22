@@ -6,7 +6,7 @@ import { Ship } from './Ship';
 import { Track } from './Track';
 import { UI } from './UI';
 import { Environment } from './Environment';
-import { Particles } from './Particles';
+import { ShipBoost } from './ShipBoost';
 import { SpeedStars } from './SpeedStars';
 import { AudioSystem } from './Audio';
 import { WormholeTunnel } from './WormholeTunnel';
@@ -38,7 +38,7 @@ export class Game {
     private track!: Track;
     private ship!: Ship;
     private env!: Environment;
-    private particles!: Particles;
+    private shipBoost!: ShipBoost;
     private speedStars!: SpeedStars;
     private wormholeTunnel!: WormholeTunnel;
     private ui!: UI;
@@ -106,9 +106,9 @@ export class Game {
         // Ensure environment encloses the whole track
         this.env.setStarfieldRadius(this.track.boundingRadius * 1.6);
 
-        // Particles
-        this.particles = new Particles(this.ship);
-        this.scene.add(this.particles.root);
+        // Manual boost particle effect
+        this.shipBoost = new ShipBoost(this.ship);
+        this.scene.add(this.shipBoost.root);
 
         // Speed stars
         this.speedStars = new SpeedStars(this.ship, this.track);
@@ -119,6 +119,8 @@ export class Game {
         this.scene.add(this.wormholeTunnel.root);
 
         this.ui = new UI();
+        // Ensure pause menu is hidden on initialization
+        this.ui.setPaused(false);
 
         this.audio = new AudioSystem();
         this.audio.attach(this.camera);
@@ -171,6 +173,7 @@ export class Game {
         // Radio UI wiring
         this.ui.setRadioUi(this.radio.on, initial.name);
         this.ui.setRadioVolumeSlider(0.6);
+
         this.ui.onRadioToggle(async () => {
             const st = this.radio.stations[this.radio.stationIndex];
             if (!this.radio.on) {
@@ -198,6 +201,23 @@ export class Game {
             this.ui.setRadioUi(this.radio.on, st.name);
             if (this.radio.on) await this.playOrAdvance(2);
             this.ui.setRadioUi(this.radio.on, st.name);
+        });
+
+        // Pause menu button handlers
+        this.ui.onRestartClick(() => {
+            this.restart();
+        });
+
+        this.ui.onQuitClick(() => {
+            this.quitToMenu();
+        });
+
+        this.ui.onControlsClick(() => {
+            this.ui.showControlsMenu();
+        });
+
+        this.ui.onBackToPauseClick(() => {
+            this.ui.showPauseMenu();
         });
         // If current station errors, auto-advance
         this.audio.onRadioEvent('error', () => {
@@ -236,7 +256,7 @@ export class Game {
     }
 
     private onPauseKey(e: KeyboardEvent, down: boolean) {
-        if (e.code === 'KeyP' && down && this.started) {
+        if (e.code === 'Escape' && down && this.started) {
             this.togglePause();
         }
 
@@ -397,7 +417,7 @@ export class Game {
             // Free fly mode: update both free camera and game state
             this.updateFreeCamera(dt);
             this.ship.update(dt);
-            this.particles.update(dt);
+            this.shipBoost.update(dt);
             this.speedStars.update(dt);
             this.wormholeTunnel.update(dt);
             this.env.update(dt);
@@ -410,7 +430,7 @@ export class Game {
 
         // Normal game mode
         this.ship.update(dt);
-        this.particles.update(dt);
+        this.shipBoost.update(dt);
         this.speedStars.update(dt);
         this.wormholeTunnel.update(dt);
         this.env.update(dt);
@@ -441,6 +461,29 @@ export class Game {
         const st = this.radio.stations[this.radio.stationIndex];
         this.ui.setRadioUi(false, st.name);
         return false;
+    }
+
+
+    private restart() {
+        // Reset ship to starting position
+        this.ship.reset();
+
+        // Reset game state
+        this.paused = false;
+        this.ui.setPaused(false);
+
+        // Clear any free camera state
+        this.freeFlying = false;
+        this.ship.setCameraControl(true);
+
+        // Exit pointer lock and hide cursor
+        document.exitPointerLock();
+        this.renderer.domElement.style.cursor = 'none';
+    }
+
+    private quitToMenu() {
+        // Reload the page to reset everything to initial state
+        window.location.reload();
     }
 }
 

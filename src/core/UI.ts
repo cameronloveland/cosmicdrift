@@ -6,13 +6,19 @@ export class UI {
     private flowBar = document.getElementById('flowBar')! as HTMLDivElement;
     private boostBar = document.getElementById('boostBar')! as HTMLDivElement;
     private startEl = document.getElementById('start')!;
-    private pauseText = document.getElementById('pauseText')!;
+    private pauseMenuEl = document.getElementById('pauseMenu')!;
+    private controlsMenuEl = document.getElementById('controlsMenu')!;
     private radioRoot = document.getElementById('radio')!;
     private radioToggle = document.getElementById('radioToggle')! as HTMLButtonElement;
     private radioStation = document.getElementById('radioStation')! as HTMLDivElement;
     private radioVol = document.getElementById('radioVol')! as HTMLInputElement;
     private radioPrev = document.getElementById('radioPrev')! as HTMLButtonElement;
     private radioNext = document.getElementById('radioNext')! as HTMLButtonElement;
+
+    constructor() {
+        // UI initialization
+    }
+
     private started = false;
 
     setStarted(v: boolean) {
@@ -64,13 +70,48 @@ export class UI {
 
     setPaused(paused: boolean) {
         if (paused) {
-            this.pauseText.classList.remove('hidden');
-            this.pauseText.classList.add('visible');
+            this.pauseMenuEl.classList.remove('hidden');
+            this.pauseMenuEl.classList.add('visible');
         } else {
-            this.pauseText.classList.remove('visible');
-            this.pauseText.classList.add('hidden');
+            this.pauseMenuEl.classList.remove('visible');
+            this.pauseMenuEl.classList.add('hidden');
         }
     }
+
+    onRestartClick(handler: () => void) {
+        const restartBtn = document.getElementById('restartBtn')! as HTMLButtonElement;
+        restartBtn.addEventListener('click', handler);
+    }
+
+    onQuitClick(handler: () => void) {
+        const quitBtn = document.getElementById('quitBtn')! as HTMLButtonElement;
+        quitBtn.addEventListener('click', handler);
+    }
+
+    onControlsClick(handler: () => void) {
+        const controlsBtn = document.getElementById('controlsBtn')! as HTMLButtonElement;
+        controlsBtn.addEventListener('click', handler);
+    }
+
+    onBackToPauseClick(handler: () => void) {
+        const backBtn = document.getElementById('backToPauseBtn')! as HTMLButtonElement;
+        backBtn.addEventListener('click', handler);
+    }
+
+    showControlsMenu() {
+        this.pauseMenuEl.classList.remove('visible');
+        this.pauseMenuEl.classList.add('hidden');
+        this.controlsMenuEl.classList.remove('hidden');
+        this.controlsMenuEl.classList.add('visible');
+    }
+
+    showPauseMenu() {
+        this.controlsMenuEl.classList.remove('visible');
+        this.controlsMenuEl.classList.add('hidden');
+        this.pauseMenuEl.classList.remove('hidden');
+        this.pauseMenuEl.classList.add('visible');
+    }
+
 }
 
 
