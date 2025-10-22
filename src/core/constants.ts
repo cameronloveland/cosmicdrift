@@ -131,11 +131,11 @@ export const WORMHOLE = {
     radiusMax: 15, // maximum distance from tunnel center axis (varying depths)
     spiralTwist: 0.12, // radians of rotation per meter along tunnel
     randomness: 0.4, // position randomness factor (0-1)
-    hueSpeed: 0.2, // hue rotation speed
-    saturation: 0.9, // HSL saturation
-    lightness: 0.7, // HSL lightness
-    opacity: 0.75, // dot transparency
-    glowIntensity: 2.2 // brightness multiplier for glow effect
+    hueSpeed: 0.2, // hue rotation speed (cyan/pink cycle)
+    saturation: 1.0, // HSL saturation (full saturation for vibrant colors)
+    lightness: 0.5, // HSL lightness (reduced for less white, harder colors)
+    opacity: 0.85, // dot transparency (increased for visibility)
+    glowIntensity: 1.3 // brightness multiplier (reduced to avoid white glow)
 };
 
 

@@ -126,7 +126,9 @@ export class WormholeTunnel {
                     instancedMesh.setMatrixAt(dotIndex, tmpObj.matrix);
 
                     // Initialize color (will be animated in update)
-                    const hue = (j / WORMHOLE.dotsPerRing + progress * 0.3 + radiusVariation * 0.2) % 1.0;
+                    // Cycle between cyan (0.5) and pink/magenta (0.85)
+                    const colorMix = (j / WORMHOLE.dotsPerRing + progress * 0.3 + radiusVariation * 0.2) % 1.0;
+                    const hue = THREE.MathUtils.lerp(0.5, 0.85, colorMix); // cyan to pink
                     const color = new THREE.Color().setHSL(
                         hue,
                         WORMHOLE.saturation,
@@ -175,12 +177,13 @@ export class WormholeTunnel {
                 const progress = ringIdx / Math.max(1, dotsAlongLength);
 
                 // Create varied, flowing colors based on position and time
+                // Cycle between cyan (0.5) and pink/magenta (0.85)
                 const depthVariation = (i % 7) / 7; // pseudo-random depth variation
-                const baseHue = (dotIdx / WORMHOLE.dotsPerRing + progress * 0.3 + depthVariation * 0.2) % 1.0;
-                const animatedHue = (baseHue + this.time * WORMHOLE.hueSpeed) % 1.0;
+                const colorMix = (dotIdx / WORMHOLE.dotsPerRing + progress * 0.3 + depthVariation * 0.2 + this.time * WORMHOLE.hueSpeed) % 1.0;
+                const hue = THREE.MathUtils.lerp(0.5, 0.85, colorMix); // cyan to pink
 
                 const color = new THREE.Color().setHSL(
-                    animatedHue,
+                    hue,
                     WORMHOLE.saturation,
                     WORMHOLE.lightness
                 );

@@ -30,7 +30,7 @@ export class Game {
     private freeCamPos = new THREE.Vector3();
     private freeCamYaw = 0;
     private freeCamPitch = 0;
-    private freeCamInput = { forward: false, back: false, left: false, right: false, up: false, down: false };
+    private freeCamInput = { forward: false, back: false, left: false, right: false, up: false, down: false, sprint: false };
     private savedCamPos = new THREE.Vector3();
     private savedCamQuat = new THREE.Quaternion();
 
@@ -246,7 +246,8 @@ export class Game {
         if (e.code === 'KeyA') this.freeCamInput.left = down;
         if (e.code === 'KeyD') this.freeCamInput.right = down;
         if (e.code === 'Space') this.freeCamInput.up = down;
-        if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') this.freeCamInput.down = down;
+        if (e.code === 'ControlLeft' || e.code === 'ControlRight') this.freeCamInput.down = down;
+        if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') this.freeCamInput.sprint = down;
     }
 
     private onFreeCamMouseMove(e: MouseEvent) {
@@ -278,20 +279,24 @@ export class Game {
             // Clear ship input to avoid stuck keys
             this.ship.clearInput();
 
-            // Show cursor for debug
-            this.renderer.domElement.style.cursor = 'default';
+            // Request pointer lock for unlimited mouse movement
+            this.renderer.domElement.requestPointerLock();
         } else {
             // Exiting pause: restore camera state
             this.camera.position.copy(this.savedCamPos);
             this.camera.quaternion.copy(this.savedCamQuat);
 
-            // Hide cursor
+            // Exit pointer lock and hide cursor
+            document.exitPointerLock();
             this.renderer.domElement.style.cursor = 'none';
         }
     }
 
     private updateFreeCamera(dt: number) {
-        const speed = 20; // units per second
+        const baseSpeed = 20; // units per second
+        const sprintMultiplier = 3; // 3x faster when sprinting
+        const speed = baseSpeed * (this.freeCamInput.sprint ? sprintMultiplier : 1);
+
         const forward = new THREE.Vector3(0, 0, -1);
         const right = new THREE.Vector3(1, 0, 0);
         const up = new THREE.Vector3(0, 1, 0);
