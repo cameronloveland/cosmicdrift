@@ -25,6 +25,7 @@ export class Game {
     private prevBoost = false;
     private started = false;
     private paused = false;
+    private freeFlying = false;
 
     // Free camera state for debug mode
     private freeCamPos = new THREE.Vector3();
@@ -239,8 +240,12 @@ export class Game {
             this.togglePause();
         }
 
-        // Free camera movement (only when paused)
-        if (!this.paused) return;
+        if (e.code === 'KeyF' && down && this.started) {
+            this.toggleFreeFlying();
+        }
+
+        // Free camera movement (only when paused or free flying)
+        if (!this.paused && !this.freeFlying) return;
         if (e.code === 'KeyW') this.freeCamInput.forward = down;
         if (e.code === 'KeyS') this.freeCamInput.back = down;
         if (e.code === 'KeyA') this.freeCamInput.left = down;
@@ -251,7 +256,7 @@ export class Game {
     }
 
     private onFreeCamMouseMove(e: MouseEvent) {
-        if (!this.paused) return;
+        if (!this.paused && !this.freeFlying) return;
         const dx = e.movementX;
         const dy = e.movementY;
         if (dx === 0 && dy === 0) return;
@@ -285,6 +290,42 @@ export class Game {
             // Exiting pause: restore camera state
             this.camera.position.copy(this.savedCamPos);
             this.camera.quaternion.copy(this.savedCamQuat);
+
+            // Exit pointer lock and hide cursor
+            document.exitPointerLock();
+            this.renderer.domElement.style.cursor = 'none';
+        }
+    }
+
+    private toggleFreeFlying() {
+        this.freeFlying = !this.freeFlying;
+
+        if (this.freeFlying) {
+            // Entering free fly: save camera state and init free cam
+            this.savedCamPos.copy(this.camera.position);
+            this.savedCamQuat.copy(this.camera.quaternion);
+            this.freeCamPos.copy(this.camera.position);
+
+            // Extract yaw/pitch from current camera rotation
+            const euler = new THREE.Euler().setFromQuaternion(this.camera.quaternion, 'YXZ');
+            this.freeCamYaw = euler.y;
+            this.freeCamPitch = euler.x;
+
+            // Clear ship input to avoid stuck keys
+            this.ship.clearInput();
+
+            // Disable ship camera control
+            this.ship.setCameraControl(false);
+
+            // Request pointer lock for unlimited mouse movement
+            this.renderer.domElement.requestPointerLock();
+        } else {
+            // Exiting free fly: restore camera state
+            this.camera.position.copy(this.savedCamPos);
+            this.camera.quaternion.copy(this.savedCamQuat);
+
+            // Re-enable ship camera control
+            this.ship.setCameraControl(true);
 
             // Exit pointer lock and hide cursor
             document.exitPointerLock();
@@ -352,6 +393,22 @@ export class Game {
             return;
         }
 
+        if (this.freeFlying) {
+            // Free fly mode: update both free camera and game state
+            this.updateFreeCamera(dt);
+            this.ship.update(dt);
+            this.particles.update(dt);
+            this.speedStars.update(dt);
+            this.wormholeTunnel.update(dt);
+            this.env.update(dt);
+            this.ui.update(this.ship.state);
+            this.audio.setSpeed(this.ship.state.speedKmh);
+            if (this.ship.state.boosting && !this.prevBoost) this.audio.triggerBoost();
+            this.prevBoost = this.ship.state.boosting;
+            return;
+        }
+
+        // Normal game mode
         this.ship.update(dt);
         this.particles.update(dt);
         this.speedStars.update(dt);

@@ -22,6 +22,7 @@ export class Ship {
 
     private track: Track;
     private camera: THREE.PerspectiveCamera;
+    private cameraControlEnabled = true; // can be disabled for free fly mode
     private velocitySide = 0;
     private velocityPitch = 0;
     private boostTimer = 0; // visual intensity for camera/shake
@@ -143,6 +144,10 @@ export class Ship {
         this.input.up = false;
         this.input.down = false;
         this.input.boost = false;
+    }
+
+    setCameraControl(enabled: boolean) {
+        this.cameraControlEnabled = enabled;
     }
 
     private createRocketTail() {
@@ -332,52 +337,55 @@ export class Ship {
         this.root.position.copy(pos);
         this.root.quaternion.copy(q);
 
-        // chase camera locked directly behind ship (racing game style)
-        const camDistance = CAMERA.chaseDistance * (1 + this.boostTimer * 0.6);
-        const camPos = new THREE.Vector3()
-            .copy(pos)
-            .addScaledVector(up, CAMERA.chaseHeight)
-            .addScaledVector(forward, -camDistance);
-        this.camera.position.lerp(camPos, 1 - Math.pow(0.0001, dt));
+        // Only update camera if camera control is enabled (disabled in free fly mode)
+        if (this.cameraControlEnabled) {
+            // chase camera locked directly behind ship (racing game style)
+            const camDistance = CAMERA.chaseDistance * (1 + this.boostTimer * 0.6);
+            const camPos = new THREE.Vector3()
+                .copy(pos)
+                .addScaledVector(up, CAMERA.chaseHeight)
+                .addScaledVector(forward, -camDistance);
+            this.camera.position.lerp(camPos, 1 - Math.pow(0.0001, dt));
 
-        // Look ahead down the track in Frenet frame, then apply smoothed mouse look deltas
-        const lookAhead = CAMERA.lookAheadDistance;
-        const baseLookPoint = new THREE.Vector3()
-            .copy(pos)
-            .addScaledVector(forward, lookAhead)
-            .addScaledVector(up, 0.2);
+            // Look ahead down the track in Frenet frame, then apply smoothed mouse look deltas
+            const lookAhead = CAMERA.lookAheadDistance;
+            const baseLookPoint = new THREE.Vector3()
+                .copy(pos)
+                .addScaledVector(forward, lookAhead)
+                .addScaledVector(up, 0.2);
 
-        // Align camera up with track normal so roll matches banking
-        this.camera.up.copy(up);
+            // Align camera up with track normal so roll matches banking
+            this.camera.up.copy(up);
 
-        // Reset mouse look targets when button is not held
-        if (!this.mouseButtonDown) {
-            this.mouseYawTarget = 0;
-            this.mousePitchTarget = 0;
+            // Reset mouse look targets when button is not held
+            if (!this.mouseButtonDown) {
+                this.mouseYawTarget = 0;
+                this.mousePitchTarget = 0;
+            }
+
+            // Smooth mouse deltas
+            this.mouseYaw = THREE.MathUtils.damp(this.mouseYaw, this.mouseYawTarget, 6, dt);
+            this.mousePitch = THREE.MathUtils.damp(this.mousePitch, this.mousePitchTarget, 6, dt);
+
+            // Build direction from camera to target and rotate by yaw/pitch around track up/right axes
+            const toTarget = new THREE.Vector3().subVectors(baseLookPoint, this.camera.position);
+            const qYaw = new THREE.Quaternion().setFromAxisAngle(up, this.mouseYaw);
+            const qPitch = new THREE.Quaternion().setFromAxisAngle(right, -this.mousePitch);
+            toTarget.applyQuaternion(qYaw).applyQuaternion(qPitch);
+            const finalLook = new THREE.Vector3().addVectors(this.camera.position, toTarget);
+            this.camera.lookAt(finalLook);
+
+            // Dynamic FOV in tunnels
+            const targetFov = this.state.inTunnel ? this.baseFov + TUNNEL.fovBoost : this.baseFov;
+            this.currentFov = THREE.MathUtils.lerp(this.currentFov, targetFov, 1 - Math.pow(0.01, dt));
+            this.camera.fov = this.currentFov;
+            this.camera.updateProjectionMatrix();
+
+            // subtle speed shake
+            const shake = CAMERA.shakeMax * (this.state.speedKmh / PHYSICS.maxSpeed) * (0.4 + 0.6 * this.boostTimer);
+            this.camera.position.x += (Math.random() - 0.5) * shake;
+            this.camera.position.y += (Math.random() - 0.5) * shake;
         }
-
-        // Smooth mouse deltas
-        this.mouseYaw = THREE.MathUtils.damp(this.mouseYaw, this.mouseYawTarget, 6, dt);
-        this.mousePitch = THREE.MathUtils.damp(this.mousePitch, this.mousePitchTarget, 6, dt);
-
-        // Build direction from camera to target and rotate by yaw/pitch around track up/right axes
-        const toTarget = new THREE.Vector3().subVectors(baseLookPoint, this.camera.position);
-        const qYaw = new THREE.Quaternion().setFromAxisAngle(up, this.mouseYaw);
-        const qPitch = new THREE.Quaternion().setFromAxisAngle(right, -this.mousePitch);
-        toTarget.applyQuaternion(qYaw).applyQuaternion(qPitch);
-        const finalLook = new THREE.Vector3().addVectors(this.camera.position, toTarget);
-        this.camera.lookAt(finalLook);
-
-        // Dynamic FOV in tunnels
-        const targetFov = this.state.inTunnel ? this.baseFov + TUNNEL.fovBoost : this.baseFov;
-        this.currentFov = THREE.MathUtils.lerp(this.currentFov, targetFov, 1 - Math.pow(0.01, dt));
-        this.camera.fov = this.currentFov;
-        this.camera.updateProjectionMatrix();
-
-        // subtle speed shake
-        const shake = CAMERA.shakeMax * (this.state.speedKmh / PHYSICS.maxSpeed) * (0.4 + 0.6 * this.boostTimer);
-        this.camera.position.x += (Math.random() - 0.5) * shake;
-        this.camera.position.y += (Math.random() - 0.5) * shake;
 
         // Update rocket tail effect based on boost pad state
         const hasBoostPadEffect = this.boostPadTimer > 0;
