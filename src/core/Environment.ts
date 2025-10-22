@@ -6,11 +6,20 @@ export class Environment {
     private stars = new THREE.Group();
     private starfieldRadius = STARFIELD_MIN_RADIUS;
     private planets = new THREE.Group();
+    private blackHole = new THREE.Group();
+    private accretionDisk1!: THREE.Mesh;
+    private accretionDisk2!: THREE.Mesh;
+    private eventHorizonGlow!: THREE.Mesh;
+    private blackHoleParticles!: THREE.Points;
+    private diskLights: THREE.PointLight[] = [];
+    private time = 0;
 
     constructor() {
         this.addStars();
+        this.addBlackHole();
         this.addPlanets();
         this.root.add(this.planets);
+        this.root.add(this.blackHole);
     }
 
     private addStars() {
@@ -60,8 +69,131 @@ export class Environment {
         this.root.add(this.stars);
     }
 
+    private addBlackHole() {
+        // Position at center of world
+        this.blackHole.position.set(0, 0, 0);
+
+        // 1. Black hole core - dark void sphere
+        const coreGeometry = new THREE.SphereGeometry(480, 64, 64);
+        const coreMaterial = new THREE.MeshBasicMaterial({
+            color: 0x0a0015,
+            transparent: true,
+            opacity: 0.95,
+            toneMapped: false
+        });
+        const core = new THREE.Mesh(coreGeometry, coreMaterial);
+        this.blackHole.add(core);
+
+        // 2. Event horizon glow ring
+        const horizonGeometry = new THREE.SphereGeometry(500, 64, 64);
+        const horizonMaterial = new THREE.MeshBasicMaterial({
+            color: 0x8844ff,
+            transparent: true,
+            opacity: 0.15,
+            blending: THREE.AdditiveBlending,
+            side: THREE.BackSide,
+            depthWrite: false,
+            toneMapped: false
+        });
+        this.eventHorizonGlow = new THREE.Mesh(horizonGeometry, horizonMaterial);
+        this.blackHole.add(this.eventHorizonGlow);
+
+        // 3. Inner accretion disk layer (main visible disk)
+        const diskGeometry1 = new THREE.TorusGeometry(550, 150, 32, 128);
+        const diskMaterial1 = new THREE.MeshBasicMaterial({
+            color: 0xff2bd6, // Start with magenta
+            transparent: true,
+            opacity: 0.7,
+            blending: THREE.AdditiveBlending,
+            side: THREE.DoubleSide,
+            depthWrite: false,
+            toneMapped: false
+        });
+        this.accretionDisk1 = new THREE.Mesh(diskGeometry1, diskMaterial1);
+        this.accretionDisk1.rotation.x = Math.PI / 2; // Horizontal disk
+        this.blackHole.add(this.accretionDisk1);
+
+        // 4. Outer accretion disk layer (larger, more transparent)
+        const diskGeometry2 = new THREE.TorusGeometry(700, 80, 24, 128);
+        const diskMaterial2 = new THREE.MeshBasicMaterial({
+            color: 0x53d7ff, // Cyan outer edge
+            transparent: true,
+            opacity: 0.4,
+            blending: THREE.AdditiveBlending,
+            side: THREE.DoubleSide,
+            depthWrite: false,
+            toneMapped: false
+        });
+        this.accretionDisk2 = new THREE.Mesh(diskGeometry2, diskMaterial2);
+        this.accretionDisk2.rotation.x = Math.PI / 2;
+        this.blackHole.add(this.accretionDisk2);
+
+        // 5. Particle system - swirling into black hole
+        const particleCount = 150;
+        const particleGeometry = new THREE.BufferGeometry();
+        const positions = new Float32Array(particleCount * 3);
+        const colors = new Float32Array(particleCount * 3);
+        const sizes = new Float32Array(particleCount);
+
+        for (let i = 0; i < particleCount; i++) {
+            // Distribute particles in spiral around disk plane
+            const angle = (i / particleCount) * Math.PI * 8; // Multiple spirals
+            const radius = 400 + Math.random() * 400;
+            const height = (Math.random() - 0.5) * 100; // Near disk plane
+
+            positions[i * 3 + 0] = Math.cos(angle) * radius;
+            positions[i * 3 + 1] = height;
+            positions[i * 3 + 2] = Math.sin(angle) * radius;
+
+            // Alternate pink/cyan colors
+            const isPink = Math.random() > 0.5;
+            colors[i * 3 + 0] = isPink ? 1.0 : 0.33;
+            colors[i * 3 + 1] = isPink ? 0.17 : 0.84;
+            colors[i * 3 + 2] = isPink ? 0.84 : 1.0;
+
+            sizes[i] = 3 + Math.random() * 4;
+        }
+
+        particleGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        particleGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+        particleGeometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+
+        const particleMaterial = new THREE.PointsMaterial({
+            size: 5,
+            transparent: true,
+            opacity: 0.8,
+            blending: THREE.AdditiveBlending,
+            vertexColors: true,
+            sizeAttenuation: true,
+            depthWrite: false,
+            toneMapped: false
+        });
+
+        this.blackHoleParticles = new THREE.Points(particleGeometry, particleMaterial);
+        this.blackHole.add(this.blackHoleParticles);
+
+        // 6. Add rotating point lights around accretion disk
+        const lightCount = 8;
+        for (let i = 0; i < lightCount; i++) {
+            const angle = (i / lightCount) * Math.PI * 2;
+            const radius = 550;
+            const isPink = i % 2 === 0;
+            const color = isPink ? 0xff2bd6 : 0x53d7ff;
+
+            const light = new THREE.PointLight(color, 300, 800, 1.8);
+            light.position.set(
+                Math.cos(angle) * radius,
+                0,
+                Math.sin(angle) * radius
+            );
+
+            this.accretionDisk1.add(light);
+            this.diskLights.push(light);
+        }
+    }
+
     private addPlanets() {
-        // Planet 1: Massive Magenta/Pink glowing planet (4x larger)
+        // Planet 1: Massive Magenta/Pink glowing planet - North-West quadrant
         const g1 = new THREE.SphereGeometry(88, 64, 48);
         const m1 = new THREE.MeshBasicMaterial({
             color: 0xff2bd6, // neon magenta
@@ -71,7 +203,7 @@ export class Environment {
             toneMapped: false
         });
         const p1 = new THREE.Mesh(g1, m1);
-        p1.position.set(-120, 40, -180); // Closer to track for better lighting
+        p1.position.set(-900, 120, -600); // More dispersed, further from center
         this.planets.add(p1);
 
         // Add dramatic point light to planet 1
@@ -93,7 +225,7 @@ export class Environment {
         );
         p1.add(halo1);
 
-        // Planet 2: Large Cyan glowing planet (4x larger)
+        // Planet 2: Large Cyan glowing planet - South-East quadrant
         const g2 = new THREE.SphereGeometry(64, 64, 48);
         const m2 = new THREE.MeshBasicMaterial({
             color: 0x53d7ff, // neon cyan
@@ -103,7 +235,7 @@ export class Environment {
             toneMapped: false
         });
         const p2 = new THREE.Mesh(g2, m2);
-        p2.position.set(140, -20, -250); // Closer to track
+        p2.position.set(950, -80, -850); // Spread out on opposite side
         this.planets.add(p2);
 
         // Add dramatic point light to planet 2
@@ -125,7 +257,7 @@ export class Environment {
         );
         p2.add(halo2);
 
-        // Planet 3: Medium Magenta planet (4x larger)
+        // Planet 3: Medium Magenta planet - North-East, elevated
         const g3 = new THREE.SphereGeometry(40, 48, 36);
         const m3 = new THREE.MeshBasicMaterial({
             color: 0xff2bd6,
@@ -135,7 +267,7 @@ export class Environment {
             toneMapped: false
         });
         const p3 = new THREE.Mesh(g3, m3);
-        p3.position.set(80, 60, 200); // Different side of track
+        p3.position.set(700, 250, 800); // Higher up, different area
         this.planets.add(p3);
 
         // Add dramatic point light to planet 3
@@ -157,7 +289,7 @@ export class Environment {
         );
         p3.add(halo3);
 
-        // Planet 4: Large Cyan planet (4x larger)
+        // Planet 4: Large Cyan planet - South-West, lower
         const g4 = new THREE.SphereGeometry(56, 56, 40);
         const m4 = new THREE.MeshBasicMaterial({
             color: 0x53d7ff,
@@ -167,7 +299,7 @@ export class Environment {
             toneMapped: false
         });
         const p4 = new THREE.Mesh(g4, m4);
-        p4.position.set(-100, -35, 220); // Different quadrant
+        p4.position.set(-750, -120, 900); // Lower, spread to far side
         this.planets.add(p4);
 
         // Add dramatic point light to planet 4
@@ -191,8 +323,59 @@ export class Environment {
     }
 
     update(dt: number) {
+        this.time += dt;
+
+        // Rotate planets slowly
         this.planets.rotation.y += dt * 0.02;
         this.stars.rotation.z += dt * 0.005;
+
+        // Animate black hole components
+        if (this.accretionDisk1 && this.accretionDisk2) {
+            // Rotate accretion disks at different speeds
+            this.accretionDisk1.rotation.z += dt * 0.15; // Inner disk rotates faster
+            this.accretionDisk2.rotation.z -= dt * 0.08; // Outer disk rotates slower, opposite direction
+
+            // Add subtle wobble to disks
+            this.accretionDisk1.rotation.y = Math.sin(this.time * 0.3) * 0.1;
+            this.accretionDisk2.rotation.y = Math.cos(this.time * 0.25) * 0.08;
+        }
+
+        // Pulse event horizon glow
+        if (this.eventHorizonGlow) {
+            const pulseFactor = 0.15 + Math.sin(this.time * 1.2) * 0.08;
+            (this.eventHorizonGlow.material as THREE.MeshBasicMaterial).opacity = pulseFactor;
+        }
+
+        // Animate particles spiraling into black hole
+        if (this.blackHoleParticles) {
+            const positions = this.blackHoleParticles.geometry.attributes.position.array as Float32Array;
+
+            for (let i = 0; i < positions.length / 3; i++) {
+                const idx = i * 3;
+                const x = positions[idx];
+                const z = positions[idx + 2];
+
+                // Calculate current radius and angle
+                let radius = Math.sqrt(x * x + z * z);
+                let angle = Math.atan2(z, x);
+
+                // Spiral inward and rotate
+                radius -= dt * 20; // Move inward
+                angle += dt * 0.5; // Rotate
+
+                // Reset particle if it gets too close to center
+                if (radius < 400) {
+                    radius = 800;
+                    positions[idx + 1] = (Math.random() - 0.5) * 100; // Random height
+                }
+
+                // Update position
+                positions[idx] = Math.cos(angle) * radius;
+                positions[idx + 2] = Math.sin(angle) * radius;
+            }
+
+            this.blackHoleParticles.geometry.attributes.position.needsUpdate = true;
+        }
     }
 
     // Allow the game to expand starfield to enclose the track fully
