@@ -1,10 +1,8 @@
 import { ShipState } from './types';
+import { SpeedometerGauge } from './SpeedometerGauge';
 
 export class UI {
-    private speedEl = document.getElementById('speed')!;
-    private lapEl = document.getElementById('lap')!;
-    private flowBar = document.getElementById('flowBar')! as HTMLDivElement;
-    private boostBar = document.getElementById('boostBar')! as HTMLDivElement;
+    private speedometerGauge: SpeedometerGauge;
     private startEl = document.getElementById('start')!;
     private pauseMenuEl = document.getElementById('pauseMenu')!;
     private controlsMenuEl = document.getElementById('controlsMenu')!;
@@ -16,7 +14,8 @@ export class UI {
     private radioNext = document.getElementById('radioNext')! as HTMLButtonElement;
 
     constructor() {
-        // UI initialization
+        // Initialize speedometer gauge
+        this.speedometerGauge = new SpeedometerGauge('speedometerCanvas');
     }
 
     private started = false;
@@ -30,11 +29,9 @@ export class UI {
     }
 
     update(state: ShipState) {
-        const speed = Math.round(state.speedKmh);
-        this.speedEl.textContent = `${speed} KM/H`;
-        this.lapEl.textContent = `LAP ${state.lapCurrent}/${state.lapTotal}`;
-        this.flowBar.style.width = `${Math.round(state.flow * 100)}%`;
-        this.boostBar.style.width = `${Math.round(state.boostLevel * 100)}%`;
+        // Update speedometer gauge with all values including lap info
+        this.speedometerGauge.setValues(state.speedKmh, state.boostLevel, state.flow, state.lapCurrent, state.lapTotal);
+
         // keep splash text steady; no jiggle
         if (!this.started) {
             (this.startEl.firstElementChild as HTMLElement).style.transform = 'none';
