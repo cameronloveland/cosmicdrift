@@ -82,4 +82,21 @@ export type BoostPadInfo = {
     boostTimer: number; // remaining boost duration in seconds
 };
 
+export type RacePosition = {
+    racerId: string;
+    position: number;
+    lapCurrent: number;
+    lapTotal: number;
+    finished: boolean;
+    finishTime?: number;
+};
+
+export type RaceState = 'NOT_STARTED' | 'COUNTDOWN' | 'RACING' | 'FINISHED';
+
+export type RaceResults = {
+    positions: RacePosition[];
+    raceTime: number;
+    playerPosition: number;
+};
+
 

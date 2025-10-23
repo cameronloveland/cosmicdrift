@@ -6,6 +6,8 @@ export class UI {
     private startEl = document.getElementById('start')!;
     private pauseMenuEl = document.getElementById('pauseMenu')!;
     private controlsMenuEl = document.getElementById('controlsMenu')!;
+    private countdownEl = document.getElementById('countdown')!;
+    private countdownTextEl = document.getElementById('countdownText')!;
     private radioRoot = document.getElementById('radio')!;
     private radioToggle = document.getElementById('radioToggle')! as HTMLButtonElement;
     private radioStation = document.getElementById('radioStation')! as HTMLDivElement;
@@ -25,6 +27,19 @@ export class UI {
         if (v) {
             this.startEl.classList.remove('visible');
             this.startEl.classList.add('hidden');
+        }
+    }
+
+    setHudVisible(visible: boolean) {
+        const speedometerContainer = document.querySelector('.speedometer-container');
+        if (speedometerContainer) {
+            if (visible) {
+                speedometerContainer.classList.remove('hidden');
+                speedometerContainer.classList.add('visible');
+            } else {
+                speedometerContainer.classList.remove('visible');
+                speedometerContainer.classList.add('hidden');
+            }
         }
     }
 
@@ -107,6 +122,25 @@ export class UI {
         this.controlsMenuEl.classList.add('hidden');
         this.pauseMenuEl.classList.remove('hidden');
         this.pauseMenuEl.classList.add('visible');
+    }
+
+    showCountdown(number: number) {
+        this.countdownTextEl.textContent = number.toString();
+        this.countdownTextEl.classList.remove('go');
+        this.countdownEl.classList.remove('hidden');
+        this.countdownEl.classList.add('visible');
+    }
+
+    showGo() {
+        this.countdownTextEl.textContent = 'GO!';
+        this.countdownTextEl.classList.add('go');
+        this.countdownEl.classList.remove('hidden');
+        this.countdownEl.classList.add('visible');
+    }
+
+    hideCountdown() {
+        this.countdownEl.classList.remove('visible');
+        this.countdownEl.classList.add('hidden');
     }
 
 }

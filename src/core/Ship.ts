@@ -13,7 +13,7 @@ export class Ship {
         pitch: 0,
         flow: 0,
         boosting: false,
-        lapCurrent: 1,
+        lapCurrent: 0, // Start at lap 0 (pre-race)
         lapTotal: LAPS_TOTAL,
         boostLevel: 1,
         inTunnel: false,
@@ -23,6 +23,7 @@ export class Ship {
     private track: Track;
     private camera: THREE.PerspectiveCamera;
     private cameraControlEnabled = true; // can be disabled for free fly mode
+    private inputEnabled = false; // disabled during countdown
     private velocitySide = 0;
     private velocityPitch = 0;
     private boostTimer = 0; // visual intensity for camera/shake
@@ -105,12 +106,18 @@ export class Ship {
         window.addEventListener('contextmenu', (e) => e.preventDefault());
 
         // Start behind the starting line like a proper racing game
-        this.state.t = -0.0001 // Start behind the starting line (t=0.0)
+        this.state.t = -0.01 // Start further back for pre-race staging area
+
+        // Initially disable camera control (will be enabled after splash transition)
+        this.cameraControlEnabled = false;
     }
 
     public input = { left: false, right: false, up: false, down: false, boost: false };
 
     private onKey(e: KeyboardEvent, down: boolean) {
+        // Only process input if input is enabled (not during countdown)
+        if (!this.inputEnabled) return;
+
         if (e.code === 'ArrowLeft' || e.code === 'KeyA') this.input.left = down;
         if (e.code === 'ArrowRight' || e.code === 'KeyD') this.input.right = down;
         if (e.code === 'ArrowUp' || e.code === 'KeyW') this.input.up = down;
@@ -157,15 +164,28 @@ export class Ship {
         this.cameraControlEnabled = enabled;
     }
 
+    enableInput() {
+        this.inputEnabled = true;
+    }
+
+    disableInput() {
+        this.inputEnabled = false;
+    }
+
+    startRace() {
+        // Transition from pre-race (lap 0) to race start (lap 1)
+        this.state.lapCurrent = 1;
+    }
+
     reset() {
         // Reset ship to starting position and state
-        this.state.t = -0.0001; // Start behind the starting line
+        this.state.t = -0.01; // Start further back for pre-race staging
         this.state.speedKmh = 0;
         this.state.lateralOffset = 0;
         this.state.pitch = 0;
         this.state.flow = 0;
         this.state.boosting = false;
-        this.state.lapCurrent = 1;
+        this.state.lapCurrent = 0; // Reset to pre-race
         this.state.boostLevel = 1;
         this.state.inTunnel = false;
         this.state.tunnelCenterBoost = 1.0;

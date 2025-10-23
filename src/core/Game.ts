@@ -10,6 +10,10 @@ import { ShipBoost } from './ShipBoost';
 import { SpeedStars } from './SpeedStars';
 import { AudioSystem } from './Audio';
 import { WormholeTunnel } from './WormholeTunnel';
+import { NPCShip } from './NPCShip';
+import { RaceManager } from './RaceManager';
+import { COLORS } from './constants';
+import type { RaceState } from './types';
 
 export class Game {
     private container: HTMLElement;
@@ -43,6 +47,9 @@ export class Game {
     private wormholeTunnel!: WormholeTunnel;
     private ui!: UI;
     private audio!: AudioSystem;
+    private npcShips: NPCShip[] = [];
+    private raceManager!: RaceManager;
+    private raceState: RaceState = 'NOT_STARTED';
     private radio = {
         on: true,
         stationIndex: 0,
@@ -128,6 +135,11 @@ export class Game {
         const initial = this.radio.stations[this.radio.stationIndex];
         this.audio.initRadio(initial.url);
 
+        // Initialize race manager
+        this.raceManager = new RaceManager();
+
+        // NPCs will be created when game starts, not on initial load
+
         // Post FX
         this.composer = new EffectComposer(this.renderer);
         const renderPass = new RenderPass(this.scene, this.camera);
@@ -148,9 +160,42 @@ export class Game {
         const start = document.getElementById('start');
         const begin = () => {
             if (this.started) return;
+
+            // Hide splash screen
             start?.classList.remove('visible');
             start?.classList.add('hidden');
+
+            // Show HUD
             this.ui.setStarted(true);
+            this.ui.setHudVisible(true);
+
+            // Create NPC ships now that game is starting
+            const npc1 = new NPCShip(this.track, 'npc1', COLORS.neonCyan, 'aggressive', -6);
+            const npc2 = new NPCShip(this.track, 'npc2', COLORS.neonMagenta, 'conservative', 6);
+
+            this.npcShips = [npc1, npc2];
+            this.scene.add(npc1.root);
+            this.scene.add(npc2.root);
+
+            // Register NPCs with race manager
+            this.raceManager.addNPC('npc1');
+            this.raceManager.addNPC('npc2');
+
+            // Position all ships at starting line
+            this.ship.state.t = -0.01; // Player at center
+            this.npcShips[0].state.t = -0.011; // NPC1 behind and left
+            this.npcShips[1].state.t = -0.009; // NPC2 ahead and right
+
+            // Enable camera control so camera follows ship to staging area
+            this.ship.setCameraControl(true);
+
+            // Disable ship input during countdown
+            this.ship.disableInput();
+
+            // Start countdown sequence
+            this.raceState = 'COUNTDOWN';
+            this.startCountdownSequence();
+
             this.audio.start();
             // hide cursor only once the game actually starts
             this.renderer.domElement.style.cursor = 'none';
@@ -438,10 +483,47 @@ export class Game {
         this.audio.setSpeed(this.ship.state.speedKmh);
         if (this.ship.state.boosting && !this.prevBoost) this.audio.triggerBoost();
         this.prevBoost = this.ship.state.boosting;
+
+        // Update NPCs during countdown and racing
+        if (this.raceState === 'COUNTDOWN' || this.raceState === 'RACING') {
+            this.npcShips.forEach(npc => {
+                npc.update(dt, this.ship.state.t, this.ship.state.lapCurrent, this.ship.state.speedKmh);
+            });
+        }
     }
 
     private render() {
         this.composer.render();
+    }
+
+    private startCountdownSequence() {
+        // 3-2-1-GO countdown sequence
+        this.ui.showCountdown(3);
+
+        setTimeout(() => {
+            this.ui.showCountdown(2);
+        }, 1000);
+
+        setTimeout(() => {
+            this.ui.showCountdown(1);
+        }, 2000);
+
+        setTimeout(() => {
+            this.ui.showGo();
+            // Start the race
+            this.raceState = 'RACING';
+            this.ship.enableInput();
+            // Camera control already enabled in begin() function
+
+            // Start all ships
+            this.ship.startRace();
+            this.npcShips.forEach(npc => npc.startRace());
+
+            // Hide countdown after GO animation
+            setTimeout(() => {
+                this.ui.hideCountdown();
+            }, 500);
+        }, 3000);
     }
 
     private async playOrAdvance(maxTries = this.radio.stations.length) {
