@@ -124,29 +124,24 @@ export class Ship {
         const dx = e.movementX;
         const dy = e.movementY;
         if (dx === 0 && dy === 0) return;
-        console.log('Mouse move:', dx, dy, 'targets:', this.mouseYawTarget, this.mousePitchTarget);
         this.mouseYawTarget = THREE.MathUtils.clamp(this.mouseYawTarget - dx * 0.002, -0.6, 0.6);
         this.mousePitchTarget = THREE.MathUtils.clamp(this.mousePitchTarget + dy * 0.0015, -0.35, 0.35);
     }
 
     private onMouseButton(e: MouseEvent, down: boolean) {
         // Temporarily disable all mouse handling to test UI
-        console.log('Mouse click on:', e.target, 'button:', e.button);
         return; // Disable all mouse handling for now
 
         // Check if the click is on a UI element
         const target = e.target as HTMLElement;
         const isUIElement = target.closest('.planet-fx, .radio, .hud .control, input, button, label');
 
-        console.log('Mouse click on:', target, 'isUIElement:', !!isUIElement);
 
         // Only prevent default for non-UI elements
         if (!isUIElement && (e.button === 0 || e.button === 1 || e.button === 2)) {
             e.preventDefault();
             this.mouseButtonDown = down;
-            console.log('Mouse button:', down ? 'down' : 'up', 'button:', e.button);
         } else if (isUIElement) {
-            console.log('UI element clicked, allowing default behavior');
         }
     }
 
@@ -323,17 +318,6 @@ export class Ship {
         if (isBoosting) this.boostTimer = Math.min(this.boostTimer + dt, 1); else this.boostTimer = Math.max(this.boostTimer - dt * 2, 0);
         this.state.boostLevel = this.boostEnergy;
 
-        // Debug: log boost state
-        if (isBoosting) {
-            console.log('Boosting active - energy:', this.boostEnergy.toFixed(2), 'input.boost:', this.input.boost);
-        } else if (this.input.boost && this.boostEnergy <= 0) {
-            console.log('Boost input detected but no energy - energy:', this.boostEnergy.toFixed(2));
-        }
-
-        // Debug: log when boost state changes
-        if (this.state.boosting !== isBoosting) {
-            console.log('Boost state changed:', this.state.boosting, '->', isBoosting, 'energy:', this.boostEnergy.toFixed(2));
-        }
 
         // advance along curve
         const mps = kmhToMps(this.state.speedKmh);

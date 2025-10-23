@@ -33,7 +33,6 @@ export class ShipBoost {
         if (this.ship.state.inTunnel) {
             ratePerSec = Math.max(ratePerSec, baseRate * 2.5);
         }
-
         if (ratePerSec === 0) return;
 
         const count = Math.floor(ratePerSec * dt);

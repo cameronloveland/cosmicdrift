@@ -389,10 +389,6 @@ export class Track {
         rightPost.position.copy(rightPostPos);
         this.root.add(rightPost); // Add directly to root, not gate group
 
-        // Add some debug info to ensure poles are being created
-        console.log('Created starting gate with poles at positions:', leftPostPos, rightPostPos);
-        console.log('Track width:', this.width, 'Center position:', center);
-        console.log('Track vectors - up:', up, 'bin:', bin, 'tan:', tan);
 
         // Create gate group for text only
         const gateGroup = new THREE.Group();
@@ -582,7 +578,6 @@ export class Track {
 
             if (tunnelType === 'wormhole') wormholeCount++;
 
-            console.log(`[Track] Creating tunnel ${this.tunnelSegments.length + 1}: type=${tunnelType}, length=${lengthMeters.toFixed(0)}m, startT=${startT.toFixed(3)}, endT=${endT.toFixed(3)}`);
 
             this.tunnelSegments.push({ startT, endT, lengthMeters, tunnelType });
 

@@ -27,7 +27,7 @@ export class Game {
     private paused = false;
     private freeFlying = false;
 
-    // Free camera state for debug mode
+    // Free camera state
     private freeCamPos = new THREE.Vector3();
     private freeCamYaw = 0;
     private freeCamPitch = 0;
