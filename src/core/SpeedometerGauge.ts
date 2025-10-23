@@ -15,6 +15,7 @@ export class SpeedometerGauge {
     private centerX: number = 0;
     private centerY: number = 0;
     private animationId: number | null = null;
+    private pulseTime: number = 0;
 
     constructor(canvasId: string) {
         this.canvas = document.getElementById(canvasId) as HTMLCanvasElement;
@@ -65,6 +66,9 @@ export class SpeedometerGauge {
         this.boost = this.boost + (this.targetBoost - this.boost) * 0.15;
         this.flow = this.flow + (this.targetFlow - this.flow) * 0.15;
 
+        // Update pulse time for glow effect
+        this.pulseTime += 0.05;
+
         this.draw();
         this.animationId = requestAnimationFrame(() => this.animate());
     }
@@ -74,9 +78,9 @@ export class SpeedometerGauge {
         this.ctx.clearRect(0, 0, this.canvas.width / (window.devicePixelRatio || 1), this.canvas.height / (window.devicePixelRatio || 1));
 
         const baseRadius = Math.min(this.canvas.width, this.canvas.height) / (window.devicePixelRatio || 1) * 0.4;
-        const speedRadius = baseRadius;
-        const boostRadius = baseRadius * 0.85;
-        const flowRadius = baseRadius * 0.70;
+        const boostRadius = baseRadius;
+        const flowRadius = baseRadius * 0.85;
+        const speedRadius = baseRadius * 0.70;
 
         // Arc spans from bottom-left to bottom-right (speedometer style)
         const arcStart = Math.PI * 0.75;  // Bottom-left
@@ -84,14 +88,14 @@ export class SpeedometerGauge {
         const totalAngle = arcEnd - arcStart;
         const segmentAngle = totalAngle / this.segments;
 
-        // Draw speed arc (outermost, white) - represents actual speed
-        this.drawArc(speedRadius, this.speed, '#ffffff', 8, 1.0);
-
-        // Draw boost arc (middle layer, cyan)
+        // Draw boost arc (outermost, cyan)
         this.drawArc(boostRadius, this.boost, '#53d7ff', 12, 1.0);
 
-        // Draw flow arc (inner layer, magenta)
+        // Draw flow arc (middle layer, magenta)
         this.drawArc(flowRadius, this.flow, '#ff2bd6', 10, 1.0);
+
+        // Draw speed arc (innermost, white) - represents actual speed
+        this.drawArc(speedRadius, this.speed, '#ffffff', 8, 1.0);
 
         // Draw center speed text
         this.drawSpeedText();
@@ -102,14 +106,18 @@ export class SpeedometerGauge {
         const arcEnd = Math.PI * 2.25;
         const totalAngle = arcEnd - arcStart;
         const segmentAngle = totalAngle / this.segments;
-        const filledSegments = Math.floor(value * this.segments);
+        const filledSegments = Math.ceil(value * this.segments);
+
+        // Check if this arc is full (boost or flow at 100%)
+        const isFull = value >= 0.95; // Close to 100%
+        const pulseIntensity = isFull ? (Math.sin(this.pulseTime) * 0.3 + 0.7) : 1.0; // Pulse between 0.4 and 1.0
 
         for (let i = 0; i < this.segments; i++) {
             const segmentStartAngle = arcStart + (i * segmentAngle);
             const segmentEndAngle = segmentStartAngle + segmentAngle * 0.85; // Leave gap between segments
 
             const isFilled = i < filledSegments;
-            const alpha = isFilled ? baseAlpha : 0.15; // Dim unfilled segments
+            const alpha = isFilled ? baseAlpha * pulseIntensity : 0.15; // Apply pulse to filled segments
 
             // Draw segment
             this.ctx.beginPath();
@@ -119,21 +127,40 @@ export class SpeedometerGauge {
             this.ctx.globalAlpha = alpha;
             this.ctx.stroke();
 
-            // Add glow effect for filled segments
+            // Add enhanced glow effect for filled segments
             if (isFilled) {
+                // Inner glow
                 this.ctx.beginPath();
                 this.ctx.arc(this.centerX, this.centerY, radius, segmentStartAngle, segmentEndAngle);
                 this.ctx.lineWidth = lineWidth + 4;
                 this.ctx.strokeStyle = color;
-                this.ctx.globalAlpha = 0.3;
+                this.ctx.globalAlpha = 0.3 * pulseIntensity;
                 this.ctx.stroke();
 
+                // Middle glow
                 this.ctx.beginPath();
                 this.ctx.arc(this.centerX, this.centerY, radius, segmentStartAngle, segmentEndAngle);
                 this.ctx.lineWidth = lineWidth + 8;
                 this.ctx.strokeStyle = color;
-                this.ctx.globalAlpha = 0.1;
+                this.ctx.globalAlpha = 0.1 * pulseIntensity;
                 this.ctx.stroke();
+
+                // Extra glow layers when full
+                if (isFull) {
+                    this.ctx.beginPath();
+                    this.ctx.arc(this.centerX, this.centerY, radius, segmentStartAngle, segmentEndAngle);
+                    this.ctx.lineWidth = lineWidth + 12;
+                    this.ctx.strokeStyle = color;
+                    this.ctx.globalAlpha = 0.05 * pulseIntensity;
+                    this.ctx.stroke();
+
+                    this.ctx.beginPath();
+                    this.ctx.arc(this.centerX, this.centerY, radius, segmentStartAngle, segmentEndAngle);
+                    this.ctx.lineWidth = lineWidth + 16;
+                    this.ctx.strokeStyle = color;
+                    this.ctx.globalAlpha = 0.02 * pulseIntensity;
+                    this.ctx.stroke();
+                }
             }
         }
 
@@ -157,9 +184,9 @@ export class SpeedometerGauge {
         this.ctx.font = 'bold 16px Arial, sans-serif';
         this.ctx.fillText('KM/H', this.centerX, this.centerY + 20);
 
-        // Draw lap information at the bottom
+        // Draw lap information at the bottom of the circle
         this.ctx.font = 'bold 14px Arial, sans-serif';
-        this.ctx.fillText(`LAP ${this.lapCurrent}/${this.lapTotal}`, this.centerX, this.centerY + 50);
+        this.ctx.fillText(`LAP ${this.lapCurrent}/${this.lapTotal}`, this.centerX, this.centerY + 80);
 
         this.ctx.restore();
     }
