@@ -6,7 +6,10 @@ export const COLORS = {
     neonMagenta: new Color(0xff2bd6),
     neonCyan: new Color(0x53d7ff),
     deepBlue: new Color(0x0b1a5f),
-    violet: new Color(0xc33dff)
+    violet: new Color(0xc33dff),
+    neonYellow: new Color(0xffff00),
+    neonPurple: new Color(0xc33dff),
+    neonRed: new Color(0xff4444)
 };
 
 export const CAMERA = {

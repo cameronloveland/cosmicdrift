@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { COLORS, PHYSICS } from './constants';
+import { COLORS, PHYSICS, BOOST_PAD, TUNNEL } from './constants';
 import { Track } from './Track';
 import type { ShipState, RacePosition } from './types';
 
@@ -16,7 +16,6 @@ export class NPCShip {
     private lateralTarget = 0;
     private lateralVelocity = 0;
     private speedMultiplier = 1.0;
-    private rubberbandStrength = 0.3; // How much to adjust speed based on position
     private aiUpdateTimer = 0;
     private aiUpdateInterval = 0.1; // Update AI every 100ms
 
@@ -24,6 +23,26 @@ export class NPCShip {
     private targetLateralOffset = 0;
     private lateralSwayTimer = 0;
     private speedVariation = 0;
+
+    // Stuck detection
+    private stuckDetectionTimer = 0;
+    private lastPositionT = 0;
+    private stuckThreshold = 3.0; // seconds
+    private positionChangeThreshold = 0.001; // minimum track distance change
+
+    // NPC boost system
+    private boostEnergy = 1.0; // 0-1 boost resource like player
+    private boostCooldown = 0; // time until next boost can be used
+    private boostDuration = 0; // remaining boost time
+    private isBoosting = false;
+
+    // Tunnel boost system (like player ship)
+    private tunnelBoostAccumulator = 1.0; // tracks current tunnel boost multiplier
+
+    // Rocket tail effect (like player ship)
+    private rocketTail!: THREE.Group;
+    private rocketTailMaterials: THREE.MeshBasicMaterial[] = [];
+    private rocketTailBaseOpacities: number[] = [];
 
     constructor(track: Track, racerId: string, color: THREE.Color, behavior: 'aggressive' | 'conservative' = 'conservative', lateralOffset: number = 0) {
         this.track = track;
@@ -53,69 +72,119 @@ export class NPCShip {
     }
 
     private createShipModel() {
-        // Create ship geometry similar to player ship but with NPC color
+        // Create ship geometry exactly like player ship but with NPC color
         const body = new THREE.Group();
-        const geo = new THREE.ConeGeometry(1.0, 2.0, 16); // Make NPCs much larger for visibility
+        const geo = new THREE.ConeGeometry(0.45, 1.2, 16); // Same size as player ship
         const shipMaterial = new THREE.MeshStandardMaterial({
             color: this.color,
-            metalness: 0.1,
-            roughness: 0.1,
-            emissive: this.color.clone().multiplyScalar(1.5) // Brighter emissive
+            metalness: 0.3,
+            roughness: 0.2,
+            emissive: this.color.clone().multiplyScalar(0.8) // Same emissive as player
         });
         const mesh = new THREE.Mesh(geo, shipMaterial);
         mesh.rotation.x = Math.PI / 2;
         body.add(mesh);
 
-        // Add bright glow effect for maximum visibility
+        // Add glow effect exactly like player ship
         const glowMaterial = new THREE.MeshBasicMaterial({
             color: this.color,
             transparent: true,
-            opacity: 1.0,
+            opacity: 0.9,
             blending: THREE.AdditiveBlending,
             depthWrite: false,
             toneMapped: false
         });
-        const glow = new THREE.Mesh(new THREE.SphereGeometry(0.8, 16, 16), glowMaterial); // Much larger glow
+        const glow = new THREE.Mesh(new THREE.SphereGeometry(0.25, 16, 16), glowMaterial); // Same size as player
         glow.position.set(0, -0.15, -0.3);
         body.add(glow);
 
-        // Add a bright box for extra visibility
-        const boxGeo = new THREE.BoxGeometry(0.5, 0.5, 0.5);
-        const boxMat = new THREE.MeshBasicMaterial({
-            color: this.color,
-            transparent: true,
-            opacity: 0.8
-        });
-        const box = new THREE.Mesh(boxGeo, boxMat);
-        box.position.set(0, 0, 0);
-        body.add(box);
-
         this.root.add(body);
+
+        // Create rocket tail boost effect (initially hidden) - exactly like player
+        this.rocketTail = new THREE.Group();
+        this.createRocketTail();
+        this.root.add(this.rocketTail);
+        this.rocketTail.visible = false;
+
         console.log(`NPC ${this.racerId} ship model created with color:`, this.color);
+    }
+
+    private createRocketTail() {
+        // Create a glowing rocket tail effect with multiple cone segments (exactly like player)
+        const particleCount = BOOST_PAD.tailParticleCount;
+        const tailLength = BOOST_PAD.tailLength;
+
+        for (let i = 0; i < particleCount; i++) {
+            const progress = i / particleCount;
+            const size = 0.4 * (1 - progress); // taper from wide to narrow
+            const length = tailLength / particleCount;
+
+            // Create cone geometry for each particle
+            const geometry = new THREE.ConeGeometry(size, length, 8);
+            const baseOpacity = 0.8 * (1 - progress * 0.5); // fade toward the back
+            const material = new THREE.MeshBasicMaterial({
+                color: new THREE.Color().lerpColors(BOOST_PAD.colorStart, BOOST_PAD.colorEnd, progress),
+                transparent: true,
+                opacity: baseOpacity,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false,
+                toneMapped: false
+            });
+
+            const cone = new THREE.Mesh(geometry, material);
+            // Position along the tail, pointing backward
+            cone.position.set(0, 0, -(progress * tailLength + length * 0.5));
+            cone.rotation.x = Math.PI * 0.5; // point backward
+
+            this.rocketTail.add(cone);
+            this.rocketTailMaterials.push(material);
+            this.rocketTailBaseOpacities.push(baseOpacity);
+        }
+
+        // Add central glow core
+        const coreGeometry = new THREE.CylinderGeometry(0.15, 0.05, tailLength, 8);
+        const coreOpacity = 0.9;
+        const coreMaterial = new THREE.MeshBasicMaterial({
+            color: BOOST_PAD.colorStart,
+            transparent: true,
+            opacity: coreOpacity,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+            toneMapped: false
+        });
+        const core = new THREE.Mesh(coreGeometry, coreMaterial);
+        core.position.set(0, 0, -tailLength * 0.5);
+        core.rotation.x = Math.PI * 0.5;
+        this.rocketTail.add(core);
+        this.rocketTailMaterials.push(coreMaterial);
+        this.rocketTailBaseOpacities.push(coreOpacity);
     }
 
     private setupAIBehavior() {
         // Set up AI behavior parameters based on type
         if (this.aiBehavior === 'aggressive') {
-            this.rubberbandStrength = 0.4;
             this.speedVariation = 0.1;
         } else {
-            this.rubberbandStrength = 0.2;
             this.speedVariation = 0.05;
         }
     }
 
-    public update(dt: number, playerPosition: number, playerLap: number, playerSpeed: number) {
+    public update(dt: number, playerPosition: number, playerLap: number, playerSpeed: number, allNPCs: NPCShip[] = []) {
         this.aiUpdateTimer += dt;
+
+        // Check for stuck condition and reset if needed
+        if (this.checkIfStuck(dt)) {
+            this.resetIfStuck();
+        }
 
         // Update AI behavior periodically
         if (this.aiUpdateTimer >= this.aiUpdateInterval) {
             this.updateAI(playerPosition, playerLap, playerSpeed);
+            this.updateCollisionAvoidance(allNPCs);
+            this.updateBoostBehavior(dt);
+            this.updateTunnelBoost(dt);
             this.aiUpdateTimer = 0;
         }
-
-        // Apply rubberbanding based on position relative to player
-        this.applyRubberbanding(playerPosition, playerLap, playerSpeed);
 
         // Update ship physics
         this.updatePhysics(dt);
@@ -146,37 +215,102 @@ export class NPCShip {
         }
     }
 
-    private applyRubberbanding(playerPosition: number, playerLap: number, playerSpeed: number) {
-        const ourPosition = this.getTrackPosition();
-        const positionDiff = ourPosition - playerPosition;
-        const lapDiff = this.state.lapCurrent - playerLap;
+    private updateBoostBehavior(dt: number) {
+        // Update boost cooldown and duration
+        this.boostCooldown = Math.max(0, this.boostCooldown - dt);
+        this.boostDuration = Math.max(0, this.boostDuration - dt);
 
-        // Calculate rubberband multiplier
-        let rubberbandMultiplier = 1.0;
-
-        // If we're behind (position > player position or lap behind)
-        if (positionDiff > 0 || lapDiff < 0) {
-            // Speed up when behind
-            const behindAmount = Math.min(1, Math.abs(positionDiff) / 0.1); // Normalize to 0-1
-            rubberbandMultiplier = 1 + (this.rubberbandStrength * behindAmount);
-        } else if (positionDiff < -0.05 || lapDiff > 0) {
-            // Slow down when ahead
-            const aheadAmount = Math.min(1, Math.abs(positionDiff) / 0.1);
-            rubberbandMultiplier = 1 - (this.rubberbandStrength * 0.5 * aheadAmount);
+        // Regenerate boost energy when not boosting
+        if (!this.isBoosting) {
+            this.boostEnergy = Math.min(1, this.boostEnergy + PHYSICS.boostRegenPerSec * dt);
         }
 
-        // Apply speed variation for more interesting racing
-        const variation = (Math.random() - 0.5) * this.speedVariation;
-        this.speedMultiplier = Math.max(0.7, Math.min(1.3, rubberbandMultiplier + variation));
+        // Decide whether to boost based on AI behavior and conditions
+        const shouldBoost = this.shouldUseBoost();
+
+        if (shouldBoost && this.boostCooldown <= 0 && this.boostEnergy > 0.3) {
+            this.activateBoost();
+        }
+
+        // Update boost state
+        this.isBoosting = this.boostDuration > 0;
+        this.state.boosting = this.isBoosting;
+
+        // Update rocket tail effect based on boost state
+        this.rocketTail.visible = this.isBoosting;
+
+        if (this.rocketTail.visible) {
+            // Animate tail intensity based on boost state
+            const tailIntensity = Math.min(1, this.boostDuration / (PHYSICS.boostDurationSec * 0.8));
+            const pulseEffect = 0.9 + 0.1 * Math.sin(Date.now() * 0.015); // fast pulse
+
+            for (let i = 0; i < this.rocketTailMaterials.length; i++) {
+                const baseOpacity = this.rocketTailBaseOpacities[i];
+                this.rocketTailMaterials[i].opacity = baseOpacity * tailIntensity * pulseEffect * BOOST_PAD.tailIntensity;
+            }
+        }
+    }
+
+    private shouldUseBoost(): boolean {
+        // Random chance to boost based on behavior
+        const baseChance = this.aiBehavior === 'aggressive' ? 0.3 : 0.15;
+        const randomChance = Math.random();
+
+        // Boost more often when behind or in competitive situations
+        const boostChance = baseChance + (Math.random() * 0.2); // 0.15-0.5 for aggressive, 0.15-0.35 for conservative
+
+        return randomChance < boostChance;
+    }
+
+    private activateBoost() {
+        this.isBoosting = true;
+        this.boostDuration = PHYSICS.boostDurationSec * 0.8; // NPCs boost for 80% of player duration
+        this.boostEnergy = Math.max(0, this.boostEnergy - 0.4); // Use 40% of boost energy
+        this.boostCooldown = 2.0; // 2 second cooldown between boosts
+        console.log(`NPC ${this.racerId} activated boost!`);
+    }
+
+    private updateTunnelBoost(dt: number) {
+        // Tunnel boost logic: progressive boost based on center alignment (like player ship)
+        const tunnelInfo = this.track.getTunnelAtT(this.state.t, this.state.lateralOffset);
+        this.state.inTunnel = tunnelInfo.inTunnel;
+
+        if (tunnelInfo.inTunnel && tunnelInfo.centerAlignment >= TUNNEL.centerThreshold) {
+            // Accumulate boost when well-centered in tunnel
+            const targetBoost = 1 + (TUNNEL.centerBoostMultiplier - 1) * tunnelInfo.centerAlignment;
+            this.tunnelBoostAccumulator = THREE.MathUtils.lerp(
+                this.tunnelBoostAccumulator,
+                targetBoost,
+                TUNNEL.boostAccumulationSpeed * dt
+            );
+        } else {
+            // Decay boost when not in tunnel or not centered
+            this.tunnelBoostAccumulator = THREE.MathUtils.lerp(
+                this.tunnelBoostAccumulator,
+                1.0,
+                TUNNEL.boostDecaySpeed * dt
+            );
+        }
+        this.state.tunnelCenterBoost = this.tunnelBoostAccumulator;
     }
 
     private updatePhysics(dt: number) {
-        // Calculate target speed with AI multiplier
-        const baseSpeed = PHYSICS.baseSpeed * this.speedMultiplier;
+        // Calculate base speed with natural variation
+        const baseSpeed = PHYSICS.baseSpeed;
+
+        // Apply boost multiplier if boosting
+        const boostMultiplier = this.isBoosting ? PHYSICS.boostMultiplier : 1.0;
+
+        // Apply tunnel boost multiplier
+        const tunnelMultiplier = this.tunnelBoostAccumulator;
+
+        // Add natural speed variation for racing unpredictability
+        const variation = 1 + (Math.random() - 0.5) * this.speedVariation;
+        const targetSpeed = baseSpeed * boostMultiplier * tunnelMultiplier * variation;
 
         // Smooth speed transitions
         const speedLerp = 1 - Math.pow(0.01, dt);
-        this.state.speedKmh = THREE.MathUtils.lerp(this.state.speedKmh, baseSpeed, speedLerp);
+        this.state.speedKmh = THREE.MathUtils.lerp(this.state.speedKmh, targetSpeed, speedLerp);
 
         // Update lateral movement
         const lateralAccel = PHYSICS.lateralAccel * 0.8; // Slightly slower than player
@@ -301,5 +435,83 @@ export class NPCShip {
         this.finishTime = undefined;
         this.lateralVelocity = 0;
         this.speedMultiplier = 1.0;
+        this.stuckDetectionTimer = 0;
+        this.lastPositionT = this.state.t;
+
+        // Reset boost system
+        this.boostEnergy = 1.0;
+        this.boostCooldown = 0;
+        this.boostDuration = 0;
+        this.isBoosting = false;
+        this.state.boosting = false;
+
+        // Reset tunnel boost
+        this.tunnelBoostAccumulator = 1.0;
+        this.state.tunnelCenterBoost = 1.0;
+
+        // Hide rocket tail
+        this.rocketTail.visible = false;
+    }
+
+    private updateCollisionAvoidance(allNPCs: NPCShip[]) {
+        const minLateralDistance = 3.0; // minimum units apart
+        const trackDistanceThreshold = 0.05; // within 5% of track distance
+
+        for (const otherNPC of allNPCs) {
+            if (otherNPC === this) continue;
+
+            const ourT = this.state.t;
+            const theirT = otherNPC.state.t;
+
+            // Check if we're close on the track
+            const trackDistance = Math.abs(ourT - theirT);
+            const wrappedDistance = Math.min(trackDistance, 1 - trackDistance);
+
+            if (wrappedDistance < trackDistanceThreshold) {
+                // We're close on track, check lateral distance
+                const lateralDistance = Math.abs(this.state.lateralOffset - otherNPC.state.lateralOffset);
+
+                if (lateralDistance < minLateralDistance) {
+                    // Too close laterally, adjust our target
+                    const avoidDirection = this.state.lateralOffset > otherNPC.state.lateralOffset ? 1 : -1;
+                    this.targetLateralOffset += avoidDirection * (minLateralDistance - lateralDistance) * 0.5;
+
+                    // Clamp to track bounds
+                    const half = this.track.width * 0.5;
+                    const lateralLimit = half * 0.95;
+                    this.targetLateralOffset = THREE.MathUtils.clamp(this.targetLateralOffset, -lateralLimit, lateralLimit);
+                }
+            }
+        }
+    }
+
+    private checkIfStuck(dt: number): boolean {
+        const currentT = this.state.t;
+        const positionChange = Math.abs(currentT - this.lastPositionT);
+
+        if (positionChange < this.positionChangeThreshold) {
+            this.stuckDetectionTimer += dt;
+        } else {
+            this.stuckDetectionTimer = 0;
+            this.lastPositionT = currentT;
+        }
+
+        return this.stuckDetectionTimer >= this.stuckThreshold;
+    }
+
+    private resetIfStuck() {
+        console.log(`NPC ${this.racerId} was stuck, resetting position`);
+
+        // Teleport forward by a small amount
+        this.state.t += 0.02;
+        if (this.state.t > 1) this.state.t -= 1;
+
+        // Reset velocity to prevent immediate re-sticking
+        this.lateralVelocity = 0;
+        this.speedMultiplier = 1.2; // Give a small speed boost
+
+        // Reset stuck detection
+        this.stuckDetectionTimer = 0;
+        this.lastPositionT = this.state.t;
     }
 }

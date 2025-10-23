@@ -169,22 +169,30 @@ export class Game {
             this.ui.setStarted(true);
             this.ui.setHudVisible(true);
 
-            // Create NPC ships now that game is starting
-            const npc1 = new NPCShip(this.track, 'npc1', COLORS.neonCyan, 'aggressive', -6);
-            const npc2 = new NPCShip(this.track, 'npc2', COLORS.neonMagenta, 'conservative', 6);
+            // Create 4 competitive NPC ships with varied colors and behaviors
+            const npc1 = new NPCShip(this.track, 'npc1', COLORS.neonRed, 'aggressive', -8);
+            const npc2 = new NPCShip(this.track, 'npc2', COLORS.neonMagenta, 'aggressive', 8);
+            const npc3 = new NPCShip(this.track, 'npc3', COLORS.neonYellow, 'conservative', -4);
+            const npc4 = new NPCShip(this.track, 'npc4', COLORS.neonPurple, 'conservative', 4);
 
-            this.npcShips = [npc1, npc2];
+            this.npcShips = [npc1, npc2, npc3, npc4];
             this.scene.add(npc1.root);
             this.scene.add(npc2.root);
+            this.scene.add(npc3.root);
+            this.scene.add(npc4.root);
 
             // Register NPCs with race manager
             this.raceManager.addNPC('npc1');
             this.raceManager.addNPC('npc2');
+            this.raceManager.addNPC('npc3');
+            this.raceManager.addNPC('npc4');
 
-            // Position all ships at starting line
+            // Position all ships at starting line (staggered grid)
             this.ship.state.t = -0.01; // Player at center
-            this.npcShips[0].state.t = -0.011; // NPC1 behind and left
-            this.npcShips[1].state.t = -0.009; // NPC2 ahead and right
+            this.npcShips[0].state.t = -0.012; // NPC1 (Red) - behind and left
+            this.npcShips[1].state.t = -0.011; // NPC2 (Pink) - behind and right  
+            this.npcShips[2].state.t = -0.010; // NPC3 (Yellow) - slightly ahead left
+            this.npcShips[3].state.t = -0.009; // NPC4 (Purple) - slightly ahead right
 
             // Enable camera control so camera follows ship to staging area
             this.ship.setCameraControl(true);
@@ -487,7 +495,7 @@ export class Game {
         // Update NPCs during countdown and racing
         if (this.raceState === 'COUNTDOWN' || this.raceState === 'RACING') {
             this.npcShips.forEach(npc => {
-                npc.update(dt, this.ship.state.t, this.ship.state.lapCurrent, this.ship.state.speedKmh);
+                npc.update(dt, this.ship.state.t, this.ship.state.lapCurrent, this.ship.state.speedKmh, this.npcShips);
             });
         }
     }
