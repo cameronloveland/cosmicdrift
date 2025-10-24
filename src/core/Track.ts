@@ -46,11 +46,60 @@ export class Track {
             (source === 'custom' && CUSTOM_TRACK_POINTS.length > 3)
                 ? CUSTOM_TRACK_POINTS
                 : this.makeControlPoints(opts);
-        // Use centripetal Catmull-Rom to avoid overshooting/self-intersections
-        this.curve = new THREE.CatmullRomCurve3(controls, true, 'centripetal');
+
+        // Debug: Check if controls array is valid
+        if (!controls || controls.length < 4) {
+            console.error('Track generation failed: insufficient control points', controls?.length);
+            // Create a simple fallback track
+            const fallbackControls = [
+                new THREE.Vector3(0, 0, 0),
+                new THREE.Vector3(100, 0, 0),
+                new THREE.Vector3(100, 0, 100),
+                new THREE.Vector3(0, 0, 100)
+            ];
+            this.curve = new THREE.CatmullRomCurve3(fallbackControls, true, 'centripetal');
+        } else {
+            // Use centripetal Catmull-Rom to avoid overshooting/self-intersections
+            this.curve = new THREE.CatmullRomCurve3(controls, true, 'centripetal');
+        }
+
+        // Validate curve points
+        if (!this.curve.points || this.curve.points.length === 0) {
+            console.error('Curve points are invalid after creation');
+            return;
+        }
+
+        // Validate that all points are valid Vector3 objects
+        for (let i = 0; i < this.curve.points.length; i++) {
+            const point = this.curve.points[i];
+            if (!point || typeof point.x !== 'number' || typeof point.y !== 'number' || typeof point.z !== 'number') {
+                console.error('Invalid curve point at index', i, ':', point);
+                return;
+            }
+        }
         // Increase arc length precision to remove quantization artifacts
         this.curve.arcLengthDivisions = Math.max(200, this.samples * 16);
-        this.length = this.curve.getLength();
+
+        // Ensure curve is fully initialized before getting length
+        try {
+            // Test the curve with a simple point first
+            const testPoint = new THREE.Vector3();
+            this.curve.getPointAt(0, testPoint);
+            console.log('Curve test point at t=0:', testPoint);
+
+            // Test a few more points to ensure curve is working
+            for (let t = 0.1; t <= 1.0; t += 0.2) {
+                const testPoint2 = new THREE.Vector3();
+                this.curve.getPointAt(t, testPoint2);
+                console.log(`Curve test point at t=${t}:`, testPoint2);
+            }
+
+            this.length = this.curve.getLength();
+            console.log('Track curve length:', this.length);
+        } catch (error) {
+            console.error('Error getting curve length:', error);
+            this.length = 100; // fallback length
+        }
 
         this.precomputeFramesAndBank();
         this.boundingRadius = this.computeBoundingRadius();
@@ -68,7 +117,16 @@ export class Track {
         const rnd = mulberry32(opts.seed);
         const pts: THREE.Vector3[] = [];
         const n = opts.controlPointCount;
-        for (let i = 0; i < n; i++) {
+
+        // Always add the first point
+        const firstA = 0;
+        const firstR = THREE.MathUtils.lerp(opts.radiusMin, opts.radiusMax, rnd());
+        const firstX = Math.cos(firstA) * firstR;
+        const firstZ = Math.sin(firstA) * firstR;
+        const firstY = 0;
+        pts.push(new THREE.Vector3(firstX, firstY, firstZ));
+
+        for (let i = 1; i < n; i++) {
             const a = (i / n) * Math.PI * 2;
             const jitter = (rnd() - 0.5) * 0.1; // significantly reduce jitter for smoother curves
             const r = THREE.MathUtils.lerp(opts.radiusMin, opts.radiusMax, rnd());
@@ -78,8 +136,8 @@ export class Track {
             const y = elev;
             const p = new THREE.Vector3(x, y, z);
             // enforce minimum chord length to avoid nearly coincident points
-            const last = pts.length > 0 ? pts[pts.length - 1] : null;
-            if (!last || last.distanceToSquared(p) >= opts.minChord * opts.minChord) {
+            const last = pts[pts.length - 1];
+            if (last.distanceToSquared(p) >= opts.minChord * opts.minChord) {
                 pts.push(p);
             }
         }
@@ -819,10 +877,38 @@ export class Track {
     }
 
     public getPointAtT(t: number, target: THREE.Vector3): THREE.Vector3 {
-        return this.curve.getPointAt(t, target);
+        // Safety check: ensure curve exists and is valid
+        if (!this.curve || !this.curve.points || this.curve.points.length === 0) {
+            console.warn('Track curve not ready, returning default position');
+            return target.set(0, 0, 0);
+        }
+
+        // Additional safety check: ensure target is valid
+        if (!target) {
+            console.warn('Target vector is undefined, creating new one');
+            target = new THREE.Vector3();
+        }
+
+        // Ensure t is within valid range
+        t = Math.max(0, Math.min(1, t));
+
+        try {
+            return this.curve.getPointAt(t, target);
+        } catch (error) {
+            console.error('Error in getPointAt:', error, 't:', t, 'curve points:', this.curve.points.length);
+            return target.set(0, 0, 0);
+        }
     }
 
     public getFrenetFrame(t: number, normal: THREE.Vector3, binormal: THREE.Vector3, tangent: THREE.Vector3) {
+        // Safety check: ensure cached frames exist
+        if (!this.cachedTangents || this.cachedTangents.length === 0) {
+            console.warn('Track frames not ready, using default orientation');
+            tangent.set(0, 0, 1);
+            normal.set(0, 1, 0);
+            binormal.set(1, 0, 0);
+            return;
+        }
         const idx = Math.floor(THREE.MathUtils.euclideanModulo(t, 1) * this.samples) % this.samples;
         tangent.copy(this.cachedTangents[idx]);
         normal.copy(this.cachedNormals[idx]);

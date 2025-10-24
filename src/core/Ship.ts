@@ -39,6 +39,11 @@ export class Ship {
     private mousePitch = 0;
     private mouseButtonDown = false;
 
+    // Mario Kart-style camera tracking
+    private cameraYaw = 0;
+    private cameraYawVelocity = 0;
+    private targetCameraYaw = 0;
+
     private tunnelBoostAccumulator = 1.0; // tracks current tunnel boost multiplier
     private boostPadMultiplier = 1.0; // tracks current boost pad multiplier
     private boostPadTimer = 0; // remaining boost pad duration
@@ -105,8 +110,8 @@ export class Ship {
         window.addEventListener('mouseup', (e) => this.onMouseButton(e, false));
         window.addEventListener('contextmenu', (e) => e.preventDefault());
 
-        // Start behind the starting line like a proper racing game
-        this.state.t = -0.01 // Start further back for pre-race staging area
+        // Start at the starting line
+        this.state.t = 0.0 // Start at the start line
 
         // Initially disable camera control (will be enabled after splash transition)
         this.cameraControlEnabled = false;
@@ -203,6 +208,9 @@ export class Ship {
         this.mouseYaw = 0;
         this.mousePitch = 0;
         this.mouseButtonDown = false;
+        this.cameraYaw = 0;
+        this.cameraYawVelocity = 0;
+        this.targetCameraYaw = 0;
         this.tunnelBoostAccumulator = 1.0;
         this.boostPadMultiplier = 1.0;
         this.boostPadTimer = 0;
@@ -269,6 +277,15 @@ export class Ship {
 
     update(dt: number) {
         this.now += dt;
+
+        // Don't move during countdown (when input is disabled)
+        if (!this.inputEnabled) {
+            this.state.speedKmh = 0;
+            // Still update ship position and camera even when input is disabled
+            this.updatePositionAndCamera(dt);
+            return;
+        }
+
         // speed and boost
         // Manual boost resource: drains while active, regens when not held
         let isBoosting = false;
@@ -398,64 +415,25 @@ export class Ship {
         const y = new THREE.Vector3().crossVectors(z, x).normalize();
         m.makeBasis(x, y, z);
         const q = new THREE.Quaternion().setFromRotationMatrix(m);
+
+        // Add yaw rotation based on lateral input for Mario Kart-style turning
+        const shipYaw = -sideInput * CAMERA.shipYawFromInput;
+        const yawQ = new THREE.Quaternion().setFromAxisAngle(y, shipYaw);
+
         const pitchQ = new THREE.Quaternion().setFromAxisAngle(x, this.state.pitch);
         // Bank visually with sideways velocity
         const bankAngle = THREE.MathUtils.degToRad(22) * THREE.MathUtils.clamp(this.velocitySide / PHYSICS.lateralAccel, -1, 1);
         const bankQ = new THREE.Quaternion().setFromAxisAngle(z, -bankAngle);
 
-        q.multiply(pitchQ).multiply(bankQ);
+        q.multiply(yawQ).multiply(pitchQ).multiply(bankQ);
         this.root.position.copy(pos);
         this.root.quaternion.copy(q);
 
-        // Only update camera if camera control is enabled (disabled in free fly mode)
-        if (this.cameraControlEnabled) {
-            // chase camera locked directly behind ship (racing game style)
-            const camDistance = CAMERA.chaseDistance * (1 + this.boostTimer * 0.6);
-            const camPos = new THREE.Vector3()
-                .copy(pos)
-                .addScaledVector(up, CAMERA.chaseHeight)
-                .addScaledVector(forward, -camDistance);
-            this.camera.position.lerp(camPos, 1 - Math.pow(0.0001, dt));
+        // Update target camera yaw based on ship's yaw rotation
+        this.targetCameraYaw = -shipYaw * CAMERA.cameraYawScale;
 
-            // Look ahead down the track in Frenet frame, then apply smoothed mouse look deltas
-            const lookAhead = CAMERA.lookAheadDistance;
-            const baseLookPoint = new THREE.Vector3()
-                .copy(pos)
-                .addScaledVector(forward, lookAhead)
-                .addScaledVector(up, 0.2);
-
-            // Align camera up with track normal so roll matches banking
-            this.camera.up.copy(up);
-
-            // Reset mouse look targets when button is not held
-            if (!this.mouseButtonDown) {
-                this.mouseYawTarget = 0;
-                this.mousePitchTarget = 0;
-            }
-
-            // Smooth mouse deltas
-            this.mouseYaw = THREE.MathUtils.damp(this.mouseYaw, this.mouseYawTarget, 6, dt);
-            this.mousePitch = THREE.MathUtils.damp(this.mousePitch, this.mousePitchTarget, 6, dt);
-
-            // Build direction from camera to target and rotate by yaw/pitch around track up/right axes
-            const toTarget = new THREE.Vector3().subVectors(baseLookPoint, this.camera.position);
-            const qYaw = new THREE.Quaternion().setFromAxisAngle(up, this.mouseYaw);
-            const qPitch = new THREE.Quaternion().setFromAxisAngle(right, -this.mousePitch);
-            toTarget.applyQuaternion(qYaw).applyQuaternion(qPitch);
-            const finalLook = new THREE.Vector3().addVectors(this.camera.position, toTarget);
-            this.camera.lookAt(finalLook);
-
-            // Dynamic FOV in tunnels
-            const targetFov = this.state.inTunnel ? this.baseFov + TUNNEL.fovBoost : this.baseFov;
-            this.currentFov = THREE.MathUtils.lerp(this.currentFov, targetFov, 1 - Math.pow(0.01, dt));
-            this.camera.fov = this.currentFov;
-            this.camera.updateProjectionMatrix();
-
-            // subtle speed shake
-            const shake = CAMERA.shakeMax * (this.state.speedKmh / PHYSICS.maxSpeed) * (0.4 + 0.6 * this.boostTimer);
-            this.camera.position.x += (Math.random() - 0.5) * shake;
-            this.camera.position.y += (Math.random() - 0.5) * shake;
-        }
+        // Update camera position
+        this.updateCamera(dt);
 
         // Update rocket tail effect based on boost pad state only
         const hasBoostPadEffect = this.boostPadTimer > 0;
@@ -471,6 +449,138 @@ export class Ship {
                 this.rocketTailMaterials[i].opacity = baseOpacity * tailIntensity * pulseEffect * BOOST_PAD.tailIntensity;
             }
         }
+    }
+
+    public updatePositionAndCamera(dt: number) {
+        // Update ship position and orientation without input processing
+        this.updateShipPosition();
+        this.updateCamera(dt);
+    }
+
+    private updateShipPosition() {
+        // Check if track is ready
+        if (!this.track.curve || !this.track.curve.points || this.track.curve.points.length === 0) {
+            console.warn('Track not ready, skipping ship position update');
+            return;
+        }
+
+        // position and orientation from banked Frenet frame
+        const { pos, tangent, normal, binormal, right, up, forward } = this.tmp;
+
+        // Ensure tmp vectors are properly initialized
+        if (!pos || !tangent || !normal || !binormal || !right || !up || !forward) {
+            console.error('Ship tmp vectors not properly initialized');
+            return;
+        }
+
+        this.track.getPointAtT(this.state.t, pos);
+        this.track.getFrenetFrame(this.state.t, normal, binormal, tangent);
+
+        // Construct frame directly from cached normals/binormals for banking
+        forward.copy(tangent).normalize();
+        right.copy(binormal).normalize();
+        up.copy(normal).normalize();
+
+        // apply lateral offset (side to side across the ribbon) and hover height
+        const hoverHeight = 0.3;
+        pos.addScaledVector(right, this.state.lateralOffset);
+        pos.addScaledVector(up, hoverHeight);
+
+        // Debug: log ship position
+        if (this.state.t === 0.0) {
+            console.log('Ship positioned at:', pos, 't=', this.state.t, 'lateral=', this.state.lateralOffset);
+        }
+
+        // compute quaternion from basis vectors (forward, up)
+        const m = new THREE.Matrix4();
+        const z = forward.clone().normalize();
+        const x = new THREE.Vector3().crossVectors(up, z).normalize();
+        const y = new THREE.Vector3().crossVectors(z, x).normalize();
+        m.makeBasis(x, y, z);
+        const q = new THREE.Quaternion().setFromRotationMatrix(m);
+
+        // No input-based rotation during countdown
+        this.root.position.copy(pos);
+        this.root.quaternion.copy(q);
+    }
+
+    private updateCamera(dt: number) {
+        // Only update camera if camera control is enabled (disabled in free fly mode)
+        if (!this.cameraControlEnabled) return;
+
+        // Check if track is ready
+        if (!this.track.curve) {
+            console.warn('Track not ready, skipping camera update');
+            return;
+        }
+
+        // Get current ship position and orientation
+        const { pos, tangent, normal, binormal, right, up, forward } = this.tmp;
+        this.track.getPointAtT(this.state.t, pos);
+        this.track.getFrenetFrame(this.state.t, normal, binormal, tangent);
+
+        // Construct frame directly from cached normals/binormals for banking
+        forward.copy(tangent).normalize();
+        right.copy(binormal).normalize();
+        up.copy(normal).normalize();
+
+        // Create a local copy of position for camera calculations
+        const camPos = pos.clone();
+        const hoverHeight = 0.3;
+        camPos.addScaledVector(right, this.state.lateralOffset);
+        camPos.addScaledVector(up, hoverHeight);
+
+        // Mario Kart-style camera: independent smoothed yaw with heavy damping
+        this.cameraYawVelocity = THREE.MathUtils.damp(this.cameraYawVelocity, this.targetCameraYaw - this.cameraYaw, CAMERA.cameraYawDamping, dt);
+        this.cameraYaw += this.cameraYawVelocity * dt;
+
+        // chase camera locked directly behind ship (racing game style)
+        const camDistance = CAMERA.chaseDistance * (1 + this.boostTimer * 0.6);
+        const cameraPosition = new THREE.Vector3()
+            .copy(camPos)
+            .addScaledVector(up, CAMERA.chaseHeight)
+            .addScaledVector(forward, -camDistance);
+        this.camera.position.lerp(cameraPosition, 1 - Math.pow(0.0001, dt));
+
+        // Look ahead down the track in Frenet frame, then apply Mario Kart-style camera yaw
+        const lookAhead = CAMERA.lookAheadDistance;
+        const baseLookPoint = new THREE.Vector3()
+            .copy(camPos)
+            .addScaledVector(forward, lookAhead)
+            .addScaledVector(up, 0.2);
+
+        // Align camera up with track normal so roll matches banking
+        this.camera.up.copy(up);
+
+        // Reset mouse look targets when button is not held
+        if (!this.mouseButtonDown) {
+            this.mouseYawTarget = 0;
+            this.mousePitchTarget = 0;
+        }
+
+        // Smooth mouse deltas
+        this.mouseYaw = THREE.MathUtils.damp(this.mouseYaw, this.mouseYawTarget, 6, dt);
+        this.mousePitch = THREE.MathUtils.damp(this.mousePitch, this.mousePitchTarget, 6, dt);
+
+        // Build direction from camera to target and rotate by Mario Kart camera yaw + mouse deltas
+        const toTarget = new THREE.Vector3().subVectors(baseLookPoint, this.camera.position);
+        const qCameraYaw = new THREE.Quaternion().setFromAxisAngle(up, this.cameraYaw);
+        const qYaw = new THREE.Quaternion().setFromAxisAngle(up, this.mouseYaw);
+        const qPitch = new THREE.Quaternion().setFromAxisAngle(right, -this.mousePitch);
+        toTarget.applyQuaternion(qCameraYaw).applyQuaternion(qYaw).applyQuaternion(qPitch);
+        const finalLook = new THREE.Vector3().addVectors(this.camera.position, toTarget);
+        this.camera.lookAt(finalLook);
+
+        // Dynamic FOV in tunnels
+        const targetFov = this.state.inTunnel ? this.baseFov + TUNNEL.fovBoost : this.baseFov;
+        this.currentFov = THREE.MathUtils.lerp(this.currentFov, targetFov, 1 - Math.pow(0.01, dt));
+        this.camera.fov = this.currentFov;
+        this.camera.updateProjectionMatrix();
+
+        // subtle speed shake
+        const shake = CAMERA.shakeMax * (this.state.speedKmh / PHYSICS.maxSpeed) * (0.4 + 0.6 * this.boostTimer);
+        this.camera.position.x += (Math.random() - 0.5) * shake;
+        this.camera.position.y += (Math.random() - 0.5) * shake;
     }
 }
 

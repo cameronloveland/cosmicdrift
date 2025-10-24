@@ -104,6 +104,21 @@ export class Game {
         this.track = new Track();
         this.scene.add(this.track.root);
 
+        // Verify track initialization
+        if (this.track.curve && this.track.curve.points && this.track.curve.points.length > 0) {
+            console.log('Track initialized successfully with', this.track.curve.points.length, 'control points');
+        } else {
+            console.error('Track initialization failed - curve not ready');
+            // Wait a frame for track to fully initialize
+            setTimeout(() => {
+                if (this.track.curve && this.track.curve.points && this.track.curve.points.length > 0) {
+                    console.log('Track initialized on retry with', this.track.curve.points.length, 'control points');
+                } else {
+                    console.error('Track still not ready after retry');
+                }
+            }, 0);
+        }
+
         this.ship = new Ship(this.track, this.camera);
         this.scene.add(this.ship.root);
 
@@ -187,18 +202,59 @@ export class Game {
             this.raceManager.addNPC('npc3');
             this.raceManager.addNPC('npc4');
 
-            // Position all ships at starting line (staggered grid)
-            this.ship.state.t = -0.01; // Player at center
-            this.npcShips[0].state.t = -0.012; // NPC1 (Red) - behind and left
-            this.npcShips[1].state.t = -0.011; // NPC2 (Pink) - behind and right  
-            this.npcShips[2].state.t = -0.010; // NPC3 (Yellow) - slightly ahead left
-            this.npcShips[3].state.t = -0.009; // NPC4 (Purple) - slightly ahead right
+            // Position all ships slightly behind the start line to see the start sign
+            const startT = -0.01; // All ships start slightly behind the start line
+            this.ship.state.t = startT;
+            this.ship.state.lateralOffset = 0; // Player ship in center lane
+            this.npcShips[0].state.t = startT; // NPC1 (Red) - left lane
+            this.npcShips[1].state.t = startT; // NPC2 (Pink) - right lane  
+            this.npcShips[2].state.t = startT; // NPC3 (Yellow) - left lane
+            this.npcShips[3].state.t = startT; // NPC4 (Purple) - right lane
 
             // Enable camera control so camera follows ship to staging area
             this.ship.setCameraControl(true);
 
             // Disable ship input during countdown
             this.ship.disableInput();
+
+            // Set all NPCs to countdown mode (no movement)
+            this.npcShips.forEach(npc => npc.setCountdownMode(true));
+
+            // Position all ships immediately at the starting line
+            if (this.track.curve && this.track.curve.points && this.track.curve.points.length > 0) {
+                try {
+                    // Position player ship and camera at staging area
+                    this.ship.updatePositionAndCamera(0);
+                    console.log('Player ship positioned at t=', this.ship.state.t, 'lateral=', this.ship.state.lateralOffset);
+
+                    // Position NPCs side-by-side at starting line
+                    this.npcShips.forEach((npc, index) => {
+                        npc.update(0, this.ship.state.t, this.ship.state.lapCurrent, this.ship.state.speedKmh, this.npcShips);
+                        console.log(`NPC ${index} positioned at t=${npc.state.t}, lateral=${npc.state.lateralOffset}`);
+                    });
+
+                    console.log('All ships positioned at starting line');
+                } catch (error) {
+                    console.error('Error positioning ships:', error);
+                    // Try to continue anyway
+                }
+            } else {
+                console.error('Track not ready - ships cannot be positioned');
+                // Try to initialize track again
+                setTimeout(() => {
+                    if (this.track.curve && this.track.curve.points && this.track.curve.points.length > 0) {
+                        console.log('Track ready on retry, positioning ships');
+                        try {
+                            this.ship.updatePositionAndCamera(0);
+                            this.npcShips.forEach(npc => {
+                                npc.update(0, this.ship.state.t, this.ship.state.lapCurrent, this.ship.state.speedKmh, this.npcShips);
+                            });
+                        } catch (error) {
+                            console.error('Error positioning ships on retry:', error);
+                        }
+                    }
+                }, 100);
+            }
 
             // Start countdown sequence
             this.raceState = 'COUNTDOWN';
@@ -481,19 +537,19 @@ export class Game {
             return;
         }
 
-        // Normal game mode
-        this.ship.update(dt);
-        this.shipBoost.update(dt);
-        this.speedStars.update(dt);
-        this.wormholeTunnel.update(dt);
-        this.env.update(dt);
-        this.ui.update(this.ship.state);
-        this.audio.setSpeed(this.ship.state.speedKmh);
-        if (this.ship.state.boosting && !this.prevBoost) this.audio.triggerBoost();
-        this.prevBoost = this.ship.state.boosting;
-
-        // Update NPCs during countdown and racing
+        // Update player ship during countdown and racing
         if (this.raceState === 'COUNTDOWN' || this.raceState === 'RACING') {
+            this.ship.update(dt);
+            this.shipBoost.update(dt);
+            this.speedStars.update(dt);
+            this.wormholeTunnel.update(dt);
+            this.env.update(dt);
+            this.ui.update(this.ship.state);
+            this.audio.setSpeed(this.ship.state.speedKmh);
+            if (this.ship.state.boosting && !this.prevBoost) this.audio.triggerBoost();
+            this.prevBoost = this.ship.state.boosting;
+
+            // Update NPCs during countdown and racing
             this.npcShips.forEach(npc => {
                 npc.update(dt, this.ship.state.t, this.ship.state.lapCurrent, this.ship.state.speedKmh, this.npcShips);
             });

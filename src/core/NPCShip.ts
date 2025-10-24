@@ -39,10 +39,33 @@ export class NPCShip {
     // Tunnel boost system (like player ship)
     private tunnelBoostAccumulator = 1.0; // tracks current tunnel boost multiplier
 
+    // Boost pad system (like player ship)
+    private boostPadMultiplier = 1.0; // tracks current boost pad multiplier
+    private boostPadTimer = 0; // remaining boost pad duration
+
+    // Race state system
+    private countdownMode = false; // prevents movement during countdown
+
     // Rocket tail effect (like player ship)
     private rocketTail!: THREE.Group;
     private rocketTailMaterials: THREE.MeshBasicMaterial[] = [];
     private rocketTailBaseOpacities: number[] = [];
+
+    // Speed stars effect (like player ship)
+    private speedStars!: THREE.Group;
+    private speedStarsMesh!: THREE.InstancedMesh;
+    private speedStarsVelocities!: Float32Array;
+    private speedStarsOffsets!: Float32Array;
+    private speedStarsColors!: THREE.Color[];
+    private speedStarsMax = 80; // Fewer stars for NPCs
+    private tmpObj = new THREE.Object3D();
+
+    // Ship boost particle effect (like player ship)
+    private shipBoost!: THREE.Group;
+    private shipBoostMesh!: THREE.InstancedMesh;
+    private shipBoostColors!: Float32Array;
+    private shipBoostMax = 60; // Fewer particles for NPCs
+    private shipBoostCursor = 0;
 
     constructor(track: Track, racerId: string, color: THREE.Color, behavior: 'aggressive' | 'conservative' = 'conservative', lateralOffset: number = 0) {
         this.track = track;
@@ -51,7 +74,7 @@ export class NPCShip {
         this.aiBehavior = behavior;
 
         this.state = {
-            t: -0.011, // Start behind the start line (staggered grid)
+            t: -0.02, // Start well in front of the start line (staging area)
             speedKmh: 0,
             lateralOffset: lateralOffset, // Position NPCs at different lateral positions
             pitch: 0,
@@ -64,10 +87,13 @@ export class NPCShip {
             tunnelCenterBoost: 1.0,
         };
 
+        // NPCs start immediately when countdown ends (no random delay)
+
         this.createShipModel();
         this.setupAIBehavior();
 
-        // Don't update position immediately - wait for first update call
+        // Set initial position immediately so NPCs are visible
+        this.updateVisualPosition();
         console.log(`NPC ${this.racerId} created at lateral offset ${this.state.lateralOffset}`);
     }
 
@@ -105,6 +131,18 @@ export class NPCShip {
         this.createRocketTail();
         this.root.add(this.rocketTail);
         this.rocketTail.visible = false;
+
+        // Create speed stars effect (initially hidden) - like player
+        this.speedStars = new THREE.Group();
+        this.createSpeedStars();
+        this.root.add(this.speedStars);
+        this.speedStars.visible = false;
+
+        // Create ship boost particle effect (initially hidden) - like player
+        this.shipBoost = new THREE.Group();
+        this.createShipBoost();
+        this.root.add(this.shipBoost);
+        this.shipBoost.visible = false;
 
         console.log(`NPC ${this.racerId} ship model created with color:`, this.color);
     }
@@ -160,6 +198,30 @@ export class NPCShip {
         this.rocketTailBaseOpacities.push(coreOpacity);
     }
 
+    private createSpeedStars() {
+        // Create speed stars effect (like player ship but with NPC color)
+        const geo = new THREE.CylinderGeometry(0.01, 0.02, 1, 6, 1, true);
+        const mat = new THREE.MeshBasicMaterial({
+            color: this.color,
+            transparent: true,
+            opacity: 0.9,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+            toneMapped: false
+        });
+        this.speedStarsMesh = new THREE.InstancedMesh(geo, mat, this.speedStarsMax);
+        this.speedStarsVelocities = new Float32Array(this.speedStarsMax);
+        this.speedStarsOffsets = new Float32Array(this.speedStarsMax);
+        this.speedStarsColors = new Array(this.speedStarsMax);
+        this.speedStars.add(this.speedStarsMesh);
+
+        // Initialize all stars
+        for (let i = 0; i < this.speedStarsMax; i++) {
+            this.respawnSpeedStar(i, true);
+        }
+        this.speedStarsMesh.instanceMatrix.needsUpdate = true;
+    }
+
     private setupAIBehavior() {
         // Set up AI behavior parameters based on type
         if (this.aiBehavior === 'aggressive') {
@@ -170,6 +232,11 @@ export class NPCShip {
     }
 
     public update(dt: number, playerPosition: number, playerLap: number, playerSpeed: number, allNPCs: NPCShip[] = []) {
+        // Don't move during countdown
+        if (this.countdownMode) {
+            return; // Stay stationary during countdown
+        }
+
         this.aiUpdateTimer += dt;
 
         // Check for stuck condition and reset if needed
@@ -183,6 +250,7 @@ export class NPCShip {
             this.updateCollisionAvoidance(allNPCs);
             this.updateBoostBehavior(dt);
             this.updateTunnelBoost(dt);
+            this.updateBoostPad(dt);
             this.aiUpdateTimer = 0;
         }
 
@@ -236,12 +304,13 @@ export class NPCShip {
         this.isBoosting = this.boostDuration > 0;
         this.state.boosting = this.isBoosting;
 
-        // Update rocket tail effect based on boost state
-        this.rocketTail.visible = this.isBoosting;
+        // Update rocket tail effect based on boost pad timer (like player ship)
+        const hasBoostPadEffect = this.boostPadTimer > 0;
+        this.rocketTail.visible = hasBoostPadEffect;
 
         if (this.rocketTail.visible) {
-            // Animate tail intensity based on boost state
-            const tailIntensity = Math.min(1, this.boostDuration / (PHYSICS.boostDurationSec * 0.8));
+            // Animate tail intensity based on boost pad timer
+            const tailIntensity = Math.min(1, this.boostPadTimer / BOOST_PAD.boostDuration);
             const pulseEffect = 0.9 + 0.1 * Math.sin(Date.now() * 0.015); // fast pulse
 
             for (let i = 0; i < this.rocketTailMaterials.length; i++) {
@@ -249,15 +318,21 @@ export class NPCShip {
                 this.rocketTailMaterials[i].opacity = baseOpacity * tailIntensity * pulseEffect * BOOST_PAD.tailIntensity;
             }
         }
+
+        // Update speed stars effect based on boost state
+        this.updateSpeedStars(dt);
+
+        // Update ship boost particle effect
+        this.updateShipBoost(dt);
     }
 
     private shouldUseBoost(): boolean {
-        // Random chance to boost based on behavior
-        const baseChance = this.aiBehavior === 'aggressive' ? 0.3 : 0.15;
+        // Moderate boost frequency for competitive racing
+        const baseChance = this.aiBehavior === 'aggressive' ? 0.2 : 0.1; // Balanced boost frequency
         const randomChance = Math.random();
 
-        // Boost more often when behind or in competitive situations
-        const boostChance = baseChance + (Math.random() * 0.2); // 0.15-0.5 for aggressive, 0.15-0.35 for conservative
+        // Boost with moderate frequency for competitive racing
+        const boostChance = baseChance + (Math.random() * 0.15); // 0.1-0.35 for aggressive, 0.1-0.25 for conservative
 
         return randomChance < boostChance;
     }
@@ -294,19 +369,143 @@ export class NPCShip {
         this.state.tunnelCenterBoost = this.tunnelBoostAccumulator;
     }
 
-    private updatePhysics(dt: number) {
-        // Calculate base speed with natural variation
-        const baseSpeed = PHYSICS.baseSpeed;
+    private updateBoostPad(dt: number) {
+        // Boost pad logic: temporary speed boost when driving over pads (like player ship)
+        const boostPadInfo = this.track.getBoostPadAtT(this.state.t);
+        if (boostPadInfo.onPad) {
+            // On a boost pad - activate boost and reset timer
+            this.boostPadTimer = BOOST_PAD.boostDuration;
+            this.boostPadMultiplier = BOOST_PAD.boostMultiplier;
+        } else if (this.boostPadTimer > 0) {
+            // Boost pad effect is still active after leaving pad
+            this.boostPadTimer = Math.max(0, this.boostPadTimer - dt);
+            // Maintain boost multiplier while timer is active
+            if (this.boostPadTimer <= 0) {
+                this.boostPadMultiplier = 1.0;
+            }
+        } else {
+            // No boost pad effect - decay multiplier smoothly
+            this.boostPadMultiplier = THREE.MathUtils.lerp(
+                this.boostPadMultiplier,
+                1.0,
+                BOOST_PAD.boostDecaySpeed * dt
+            );
+        }
+    }
 
-        // Apply boost multiplier if boosting
+    private updateSpeedStars(dt: number) {
+        const show = this.isBoosting;
+        this.speedStars.visible = show;
+        if (!show) return;
+
+        const forward = new THREE.Vector3(0, 0, 1);
+        this.root.localToWorld(forward).sub(this.root.position).normalize();
+        const up = new THREE.Vector3(0, 1, 0).applyQuaternion(this.root.quaternion);
+        const right = new THREE.Vector3().crossVectors(up, forward).normalize();
+
+        const mps = this.state.speedKmh / 3.6;
+        const baseSpeed = Math.max(10, mps * 1.5);
+
+        for (let i = 0; i < this.speedStarsMax; i++) {
+            const speed = baseSpeed * this.speedStarsVelocities[i];
+            // move opposite to forward (towards camera)
+            const pos = new THREE.Vector3();
+            pos.copy(this.root.position);
+            pos.addScaledVector(forward, -speed * dt);
+            pos.addScaledVector(right, this.speedStarsOffsets[i] * 0.8);
+            pos.addScaledVector(up, (Math.random() - 0.5) * 0.4);
+
+            this.tmpObj.position.copy(pos);
+            this.tmpObj.scale.setScalar(0.3 + Math.random() * 0.4);
+            this.tmpObj.quaternion.setFromAxisAngle(forward, Math.random() * Math.PI * 2);
+            this.tmpObj.updateMatrix();
+            this.speedStarsMesh.setMatrixAt(i, this.tmpObj.matrix);
+
+            // Check if star is behind ship and respawn if needed
+            const dist = this.root.position.distanceTo(pos);
+            if (dist > 8) {
+                this.respawnSpeedStar(i, false);
+            }
+        }
+        this.speedStarsMesh.instanceMatrix.needsUpdate = true;
+    }
+
+    private respawnSpeedStar(i: number, init: boolean) {
+        const angle = Math.random() * Math.PI * 2;
+        const radius = 1.2 + Math.random() * 1.4; // radiusInner to radiusOuter
+        this.speedStarsOffsets[i] = Math.cos(angle) * radius;
+        this.speedStarsVelocities[i] = 0.3 + Math.random() * 0.7;
+        this.speedStarsColors[i] = this.color.clone();
+    }
+
+    private createShipBoost() {
+        // Create ship boost particle effect (like player ship but with NPC color)
+        const geo = new THREE.CylinderGeometry(2.12, 0.04, 0.5, 6, 1, true);
+        const mat = new THREE.MeshBasicMaterial({
+            color: this.color,
+            transparent: true,
+            opacity: 0.8,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+            toneMapped: false
+        });
+        this.shipBoostMesh = new THREE.InstancedMesh(geo, mat, this.shipBoostMax);
+        this.shipBoostColors = new Float32Array(this.shipBoostMax * 3);
+        this.shipBoost.add(this.shipBoostMesh);
+    }
+
+    private updateShipBoost(dt: number) {
+        // Ship boost particle effect - only emit when NPC is actively boosting
+        const baseRate = 90; // Half the player rate for performance
+        let ratePerSec = 0;
+
+        if (this.isBoosting) {
+            ratePerSec = baseRate;
+        }
+
+        // Increase particle rate when in tunnel
+        if (this.state.inTunnel) {
+            ratePerSec = Math.max(ratePerSec, baseRate * 2.5);
+        }
+        if (ratePerSec === 0) return;
+
+        const count = Math.floor(ratePerSec * dt);
+        for (let i = 0; i < count; i++) this.spawnShipBoost();
+    }
+
+    private spawnShipBoost() {
+        const i = this.shipBoostCursor++ % this.shipBoostMax;
+        const base = this.root.position;
+        const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(this.root.quaternion);
+        this.tmpObj.position.copy(base).addScaledVector(dir, -0.8);
+        this.tmpObj.quaternion.copy(this.root.quaternion);
+        this.tmpObj.scale.setScalar(0.6 + Math.random() * 0.8);
+        this.tmpObj.updateMatrix();
+        this.shipBoostMesh.setMatrixAt(i, this.tmpObj.matrix);
+
+        // Set color
+        const color = this.color.clone();
+        this.shipBoostColors[i * 3] = color.r;
+        this.shipBoostColors[i * 3 + 1] = color.g;
+        this.shipBoostColors[i * 3 + 2] = color.b;
+    }
+
+    private updatePhysics(dt: number) {
+        // Calculate base speed - slightly slower than player for competitive racing
+        const baseSpeed = PHYSICS.baseSpeed * 0.85; // 15% slower than player
+
+        // Apply boost multiplier if boosting - same as player
         const boostMultiplier = this.isBoosting ? PHYSICS.boostMultiplier : 1.0;
 
-        // Apply tunnel boost multiplier
+        // Apply tunnel boost multiplier - same as player
         const tunnelMultiplier = this.tunnelBoostAccumulator;
 
-        // Add natural speed variation for racing unpredictability
-        const variation = 1 + (Math.random() - 0.5) * this.speedVariation;
-        const targetSpeed = baseSpeed * boostMultiplier * tunnelMultiplier * variation;
+        // Apply boost pad multiplier - same as player
+        const boostPadMultiplier = this.boostPadMultiplier;
+
+        // Add small speed variation for racing unpredictability
+        const variation = 1 + (Math.random() - 0.5) * this.speedVariation * 0.05; // Very small variation
+        const targetSpeed = baseSpeed * boostMultiplier * tunnelMultiplier * boostPadMultiplier * variation;
 
         // Smooth speed transitions
         const speedLerp = 1 - Math.pow(0.01, dt);
@@ -421,9 +620,19 @@ export class NPCShip {
         console.log(`NPC ${this.racerId} finished at ${finishTime.toFixed(2)}s`);
     }
 
+    public setCountdownMode(enabled: boolean) {
+        this.countdownMode = enabled;
+        if (enabled) {
+            // Reset speed to 0 during countdown
+            this.state.speedKmh = 0;
+        }
+    }
+
     public startRace() {
         // Transition from pre-race (lap 0) to race start (lap 1)
         this.state.lapCurrent = 1;
+        this.countdownMode = false; // Allow movement when race starts
+        console.log(`NPC ${this.racerId} race started!`);
     }
 
     public reset() {
@@ -449,8 +658,17 @@ export class NPCShip {
         this.tunnelBoostAccumulator = 1.0;
         this.state.tunnelCenterBoost = 1.0;
 
-        // Hide rocket tail
+        // Reset boost pad
+        this.boostPadMultiplier = 1.0;
+        this.boostPadTimer = 0;
+
+        // Reset race state
+        this.countdownMode = false;
+
+        // Hide all boost effects
         this.rocketTail.visible = false;
+        this.speedStars.visible = false;
+        this.shipBoost.visible = false;
     }
 
     private updateCollisionAvoidance(allNPCs: NPCShip[]) {

@@ -21,7 +21,11 @@ export const CAMERA = {
     shakeMax: 0.02,
     // Additional camera tuning for Mario Kart-style presentation
     lookAheadDistance: 8.0,
-    downPitchDeg: 12
+    downPitchDeg: 12,
+    // Mario Kart-style camera behavior
+    cameraYawDamping: 4.0,  // Heavy damping for subtle camera rotation
+    cameraYawScale: 0.25,   // Camera only rotates 25% as much as ship
+    shipYawFromInput: 0.4   // How much ship rotates based on turning (radians)
 };
 
 export const PHYSICS = {
