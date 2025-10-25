@@ -94,7 +94,6 @@ export class NPCShip {
 
         // Set initial position immediately so NPCs are visible
         this.updateVisualPosition();
-        console.log(`NPC ${this.racerId} created at lateral offset ${this.state.lateralOffset}`);
     }
 
     private createShipModel() {
@@ -261,10 +260,6 @@ export class NPCShip {
         this.updatePhysics(dt);
         this.updatePosition(dt);
 
-        // Debug: log NPC position occasionally
-        if (Math.random() < 0.01) { // 1% chance per frame
-            console.log(`NPC ${this.racerId} at t=${this.state.t.toFixed(3)}, lateral=${this.state.lateralOffset.toFixed(2)}`);
-        }
     }
 
     private updateAI(playerPosition: number, playerLap: number, playerSpeed: number) {

@@ -12,6 +12,8 @@ import { AudioSystem } from './Audio';
 import { WormholeTunnel } from './WormholeTunnel';
 import { NPCShip } from './NPCShip';
 import { RaceManager } from './RaceManager';
+import { ShootingStars } from './ShootingStars';
+import { Comets } from './Comets';
 import { COLORS } from './constants';
 import type { RaceState } from './types';
 
@@ -45,6 +47,8 @@ export class Game {
     private shipBoost!: ShipBoost;
     private speedStars!: SpeedStars;
     private wormholeTunnel!: WormholeTunnel;
+    private shootingStars!: ShootingStars;
+    private comets!: Comets;
     private ui!: UI;
     private audio!: AudioSystem;
     private npcShips: NPCShip[] = [];
@@ -144,6 +148,14 @@ export class Game {
         // Wormhole tunnels
         this.wormholeTunnel = new WormholeTunnel(this.track);
         this.scene.add(this.wormholeTunnel.root);
+
+        // Shooting stars
+        this.shootingStars = new ShootingStars();
+        this.scene.add(this.shootingStars.root);
+
+        // Comets
+        this.comets = new Comets();
+        this.scene.add(this.comets.root);
 
         this.ui = new UI();
         // Ensure pause menu is hidden on initialization
@@ -245,7 +257,7 @@ export class Game {
                             npc.update(0, this.ship.state.t, this.ship.state.lapCurrent, this.ship.state.speedKmh, this.npcShips);
                         });
                     }
-                    console.log('Player ship positioned at t=', this.ship.state.t, 'lateral=', this.ship.state.lateralOffset);
+
                     this.npcShips.forEach((npc, index) => {
                         console.log(`NPC ${index} positioned at t=${npc.state.t}, lateral=${npc.state.lateralOffset}`);
                     });
@@ -545,6 +557,8 @@ export class Game {
             this.shipBoost.update(dt);
             this.speedStars.update(dt);
             this.wormholeTunnel.update(dt);
+            this.shootingStars.update(dt);
+            this.comets.update(dt);
             this.env.update(dt);
             this.ui.update(this.ship.state);
             this.audio.setSpeed(this.ship.state.speedKmh);
@@ -581,6 +595,13 @@ export class Game {
             this.npcShips.forEach(npc => {
                 npc.update(dt, this.ship.state.t, this.ship.state.lapCurrent, this.ship.state.speedKmh, this.npcShips);
             });
+
+            // Update atmospheric effects only during racing (not countdown)
+            // Temporarily disabled to test ship movement
+            // if (this.raceState === 'RACING') {
+            //     this.shootingStars.update(dt);
+            //     this.comets.update(dt);
+            // }
         }
     }
 

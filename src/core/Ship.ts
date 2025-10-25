@@ -486,23 +486,11 @@ export class Ship {
         pos.addScaledVector(binormal, this.state.lateralOffset);
         pos.addScaledVector(up, hoverHeight);
 
-        // Debug: log ship position during countdown
-        if (this.state.t < 0 || this.state.t === 0.0) {
-            console.log('Ship positioned at:', pos, 't=', this.state.t, 'lateral=', this.state.lateralOffset,
-                'binormal=', binormal, 'normal=', up);
-        }
-
         // compute quaternion from basis vectors (forward, up)
         const m = new THREE.Matrix4();
         const z = forward.clone().normalize(); // Remove .negate() - ship should face forward
         const x = new THREE.Vector3().crossVectors(up, z).normalize();
         const y = new THREE.Vector3().crossVectors(z, x).normalize();
-
-        // Debug: log orientation during countdown
-        if (this.state.t < 0) {
-            console.log('Ship orientation: forward=', forward, 'up=', up, 'right=', right);
-            console.log('Ship basis: x=', x, 'y=', y, 'z=', z);
-        }
 
         m.makeBasis(x, y, z);
         const q = new THREE.Quaternion().setFromRotationMatrix(m);
