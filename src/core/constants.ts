@@ -114,6 +114,7 @@ export const TUNNEL = {
 export const BOOST_PAD = {
     spacing: 600, // meters between boost pads
     lengthMeters: 40, // length of each boost pad zone
+    minStartOffset: 200, // meters from start line before first boost pad
     boostMultiplier: 1.6, // speed multiplier when on pad (more noticeable)
     boostDuration: 2.5, // seconds boost effect lasts after leaving pad
     boostDecaySpeed: 1.2, // how fast boost decays after leaving pad

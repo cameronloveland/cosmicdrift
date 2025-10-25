@@ -110,8 +110,8 @@ export class Ship {
         window.addEventListener('mouseup', (e) => this.onMouseButton(e, false));
         window.addEventListener('contextmenu', (e) => e.preventDefault());
 
-        // Start slightly behind the starting line to see the start sign
-        this.state.t = -0.01 // Start slightly behind the start line
+        // Start at the starting line
+        this.state.t = 0.0 // Start at the actual start line
 
         // Initially disable camera control (will be enabled after splash transition)
         this.cameraControlEnabled = false;
@@ -482,20 +482,30 @@ export class Ship {
         up.copy(normal).normalize();
 
         // apply lateral offset (side to side across the ribbon) and hover height
-        const hoverHeight = 0.3;
-        pos.addScaledVector(right, this.state.lateralOffset);
+        const hoverHeight = 1.5; // Increased from 0.3 for better visual clearance
+        pos.addScaledVector(binormal, this.state.lateralOffset);
         pos.addScaledVector(up, hoverHeight);
 
-        // Debug: log ship position
-        if (this.state.t === 0.0) {
-            console.log('Ship positioned at:', pos, 't=', this.state.t, 'lateral=', this.state.lateralOffset);
+        // Debug: log ship position during countdown
+        if (this.state.t < 0 || this.state.t === 0.0) {
+            console.log('Ship positioned at:', pos, 't=', this.state.t, 'lateral=', this.state.lateralOffset,
+                'binormal=', binormal, 'normal=', up);
         }
 
         // compute quaternion from basis vectors (forward, up)
         const m = new THREE.Matrix4();
-        const z = forward.clone().normalize();
-        const x = new THREE.Vector3().crossVectors(up, z).normalize();
-        const y = new THREE.Vector3().crossVectors(z, x).normalize();
+
+        // Ensure ship coordinate system aligns with track coordinate system
+        const x = right.clone().normalize(); // Ship's right = track's binormal
+        const y = up.clone().normalize();    // Ship's up = track's normal  
+        const z = forward.clone().normalize().negate(); // Ship's forward = track's tangent (negated for cone geometry)
+
+        // Debug: log orientation during countdown
+        if (this.state.t < 0) {
+            console.log('Ship orientation: forward=', forward, 'up=', up, 'right=', right);
+            console.log('Ship basis: x=', x, 'y=', y, 'z=', z);
+        }
+
         m.makeBasis(x, y, z);
         const q = new THREE.Quaternion().setFromRotationMatrix(m);
 

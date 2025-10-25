@@ -475,7 +475,7 @@ export class Track {
         const letterHeight = 3.0; // Much bigger
         const letterThickness = 0.4; // Thicker letters
         const letterSpacing = 0.6; // More spacing
-        const textYOffset = 5.0; // Higher above starting line
+        const textYOffset = 12.0; // Higher above starting line for better visibility
 
         // Helper to create letter segments
         const createLetterSegment = (width: number, height: number, xOffset: number, yOffset: number) => {
@@ -991,6 +991,10 @@ export class Track {
         this.boostPadGroup = new THREE.Group();
         this.boostPads = [];
 
+        // Minimum distance from start before boost pads appear
+        const minStartOffset = BOOST_PAD.minStartOffset; // meters
+        const minStartT = minStartOffset / this.length;
+
         // Calculate number of boost pads based on track length and spacing
         const count = Math.floor(this.length / BOOST_PAD.spacing);
         const actualSpacing = this.length / count; // evenly distribute
@@ -998,6 +1002,10 @@ export class Track {
         for (let i = 0; i < count; i++) {
             const startMeters = i * actualSpacing;
             const startT = startMeters / this.length;
+
+            // Skip boost pads before minimum offset
+            if (startT < minStartT) continue;
+
             const lengthT = BOOST_PAD.lengthMeters / this.length;
 
             this.boostPads.push({ t: startT, lengthT });

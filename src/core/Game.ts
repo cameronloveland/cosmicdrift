@@ -207,8 +207,8 @@ export class Game {
             this.raceManager.addNPC('npc3');
             this.raceManager.addNPC('npc4');
 
-            // Position all ships slightly behind the start line to see the start sign
-            const startT = -0.01; // All ships start slightly behind the start line
+            // Position all ships at the start line (consistent position and Frenet frame)
+            const startT = 0.0; // Ships start at the actual start line
             this.ship.state.t = startT;
             this.ship.state.lateralOffset = 0; // Player ship in center lane
             this.npcShips[0].state.t = startT; // NPC1 (Red) - left lane
@@ -232,16 +232,17 @@ export class Game {
             // Position all ships immediately at the starting line
             if (this.track.curve && this.track.curve.points && this.track.curve.points.length > 0) {
                 try {
-                    // Position player ship and camera at staging area
-                    this.ship.updatePositionAndCamera(0);
+                    // Force multiple position updates to ensure ships are stable
+                    for (let i = 0; i < 3; i++) {
+                        this.ship.updatePositionAndCamera(0);
+                        this.npcShips.forEach((npc, index) => {
+                            npc.update(0, this.ship.state.t, this.ship.state.lapCurrent, this.ship.state.speedKmh, this.npcShips);
+                        });
+                    }
                     console.log('Player ship positioned at t=', this.ship.state.t, 'lateral=', this.ship.state.lateralOffset);
-
-                    // Position NPCs side-by-side at starting line
                     this.npcShips.forEach((npc, index) => {
-                        npc.update(0, this.ship.state.t, this.ship.state.lapCurrent, this.ship.state.speedKmh, this.npcShips);
                         console.log(`NPC ${index} positioned at t=${npc.state.t}, lateral=${npc.state.lateralOffset}`);
                     });
-
                     console.log('All ships positioned at starting line');
                 } catch (error) {
                     console.error('Error positioning ships:', error);
@@ -615,8 +616,8 @@ export class Game {
         // Calculate animation progress (0 to 1 over 3 seconds)
         const progress = Math.min(this.cameraIntroTime / 3.0, 1.0);
 
-        // Get start line position and frame from track
-        const startT = -0.01;
+        // Get ship starting position and frame from track (at start line)
+        const startT = 0.0; // Ships are at the actual start line
         const startPos = new THREE.Vector3();
         const startNormal = new THREE.Vector3();
         const startBinormal = new THREE.Vector3();
@@ -639,17 +640,17 @@ export class Game {
         });
         centerPos.divideScalar(this.npcShips.length + 1); // Average of all ships
 
-        // Camera path: start behind and above, end in front and above
+        // Camera path: start far behind and above, end behind ships in chase-cam position
         const startOffset = new THREE.Vector3()
             .copy(startTangent)
-            .multiplyScalar(-25) // Behind start line
-            .addScaledVector(startNormal, 18); // Above track
+            .multiplyScalar(-30) // Far behind for dramatic sweep
+            .addScaledVector(startNormal, 20); // High above
 
         const endOffset = new THREE.Vector3()
             .copy(startTangent)
-            .multiplyScalar(18) // In front of start line
-            .addScaledVector(startNormal, 15) // Above track
-            .addScaledVector(startBinormal, 8); // Slightly to the side for dramatic angle
+            .multiplyScalar(-15) // Behind ships (chase-cam position)
+            .addScaledVector(startNormal, 10) // Chase-cam height
+            .addScaledVector(startBinormal, 0); // Centered behind ships
 
         // Smooth easing (cubic ease-in-out)
         const easedProgress = progress < 0.5

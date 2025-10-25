@@ -232,6 +232,9 @@ export class NPCShip {
     }
 
     public update(dt: number, playerPosition: number, playerLap: number, playerSpeed: number, allNPCs: NPCShip[] = []) {
+        // Update visual position even during countdown
+        this.updateVisualPosition();
+
         // Don't move during countdown
         if (this.countdownMode) {
             return; // Stay stationary during countdown
@@ -558,16 +561,13 @@ export class NPCShip {
             const { pos, tangent, normal, binormal } = this.getFrenetFrame();
 
             // Apply lateral offset and hover height
-            const hoverHeight = 0.3;
+            const hoverHeight = 1.5; // Increased from 0.3 for better visual clearance
             pos.addScaledVector(binormal, this.state.lateralOffset);
             pos.addScaledVector(normal, hoverHeight);
 
             this.root.position.copy(pos);
 
-            // Debug: log position occasionally
-            if (Math.random() < 0.01) {
-                console.log(`NPC ${this.racerId} positioned at:`, pos, 'lateral offset:', this.state.lateralOffset);
-            }
+
 
             // Orient ship along track
             const forward = tangent.clone().normalize();
@@ -575,7 +575,7 @@ export class NPCShip {
             const up = normal.clone().normalize();
 
             const m = new THREE.Matrix4();
-            const z = forward.clone().normalize();
+            const z = forward.clone().normalize(); // Remove .negate() - ships should face forward
             const x = new THREE.Vector3().crossVectors(up, z).normalize();
             const y = new THREE.Vector3().crossVectors(z, x).normalize();
             m.makeBasis(x, y, z);
