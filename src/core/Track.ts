@@ -889,6 +889,10 @@ export class Track {
             target = new THREE.Vector3();
         }
 
+        // Handle negative t values by wrapping around (for positions behind start line)
+        if (t < 0) {
+            t = 1 + t; // Wrap negative values to end of track
+        }
         // Ensure t is within valid range
         t = Math.max(0, Math.min(1, t));
 

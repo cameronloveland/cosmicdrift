@@ -110,8 +110,8 @@ export class Ship {
         window.addEventListener('mouseup', (e) => this.onMouseButton(e, false));
         window.addEventListener('contextmenu', (e) => e.preventDefault());
 
-        // Start at the starting line
-        this.state.t = 0.0 // Start at the actual start line
+        // Start 12 meters behind the starting line
+        this.state.t = -12 / this.track.length // Start 12 meters behind start line
 
         // Initially disable camera control (will be enabled after splash transition)
         this.cameraControlEnabled = false;

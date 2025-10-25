@@ -556,7 +556,7 @@ export class NPCShip {
         }
     }
 
-    private updateVisualPosition() {
+    public updateVisualPosition() {
         try {
             const { pos, tangent, normal, binormal } = this.getFrenetFrame();
 

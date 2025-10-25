@@ -207,14 +207,20 @@ export class Game {
             this.raceManager.addNPC('npc3');
             this.raceManager.addNPC('npc4');
 
-            // Position all ships at the start line (consistent position and Frenet frame)
-            const startT = 0.0; // Ships start at the actual start line
+            // Position all ships 12 meters behind the start line
+            const startT = -12 / this.track.length; // Ships start 12 meters behind start line
             this.ship.state.t = startT;
             this.ship.state.lateralOffset = 0; // Player ship in center lane
             this.npcShips[0].state.t = startT; // NPC1 (Red) - left lane
             this.npcShips[1].state.t = startT; // NPC2 (Pink) - right lane  
             this.npcShips[2].state.t = startT; // NPC3 (Yellow) - left lane
             this.npcShips[3].state.t = startT; // NPC4 (Purple) - right lane
+
+            // Immediately update visual positions to reflect new t values
+            this.ship.updatePositionAndCamera(0);
+            this.npcShips.forEach(npc => {
+                npc.updateVisualPosition();
+            });
 
             // Disable ship camera control for intro animation
             this.ship.setCameraControl(false);
@@ -616,8 +622,8 @@ export class Game {
         // Calculate animation progress (0 to 1 over 3 seconds)
         const progress = Math.min(this.cameraIntroTime / 3.0, 1.0);
 
-        // Get ship starting position and frame from track (at start line)
-        const startT = 0.0; // Ships are at the actual start line
+        // Get ship starting position and frame from track (12m behind start line)
+        const startT = -12 / this.track.length; // Ships are 12 meters behind start line
         const startPos = new THREE.Vector3();
         const startNormal = new THREE.Vector3();
         const startBinormal = new THREE.Vector3();
