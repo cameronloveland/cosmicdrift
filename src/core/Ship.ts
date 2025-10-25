@@ -494,11 +494,9 @@ export class Ship {
 
         // compute quaternion from basis vectors (forward, up)
         const m = new THREE.Matrix4();
-
-        // Ensure ship coordinate system aligns with track coordinate system
-        const x = right.clone().normalize(); // Ship's right = track's binormal
-        const y = up.clone().normalize();    // Ship's up = track's normal  
-        const z = forward.clone().normalize().negate(); // Ship's forward = track's tangent (negated for cone geometry)
+        const z = forward.clone().normalize(); // Remove .negate() - ship should face forward
+        const x = new THREE.Vector3().crossVectors(up, z).normalize();
+        const y = new THREE.Vector3().crossVectors(z, x).normalize();
 
         // Debug: log orientation during countdown
         if (this.state.t < 0) {
