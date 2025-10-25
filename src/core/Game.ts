@@ -50,6 +50,11 @@ export class Game {
     private npcShips: NPCShip[] = [];
     private raceManager!: RaceManager;
     private raceState: RaceState = 'NOT_STARTED';
+
+    // Camera intro state
+    private cameraIntroActive = false;
+    private cameraIntroTime = 0;
+
     private radio = {
         on: true,
         stationIndex: 0,
@@ -211,8 +216,12 @@ export class Game {
             this.npcShips[2].state.t = startT; // NPC3 (Yellow) - left lane
             this.npcShips[3].state.t = startT; // NPC4 (Purple) - right lane
 
-            // Enable camera control so camera follows ship to staging area
-            this.ship.setCameraControl(true);
+            // Disable ship camera control for intro animation
+            this.ship.setCameraControl(false);
+
+            // Initialize camera intro
+            this.cameraIntroActive = true;
+            this.cameraIntroTime = 0;
 
             // Disable ship input during countdown
             this.ship.disableInput();
@@ -537,6 +546,18 @@ export class Game {
             return;
         }
 
+        // Handle camera intro animation
+        if (this.cameraIntroActive) {
+            this.cameraIntroTime += dt;
+            this.updateCameraIntro(dt);
+
+            // Check if intro is complete
+            if (this.cameraIntroTime >= 3.0) {
+                this.cameraIntroActive = false;
+                this.ship.setCameraControl(true);
+            }
+        }
+
         // Update player ship during countdown and racing
         if (this.raceState === 'COUNTDOWN' || this.raceState === 'RACING') {
             this.ship.update(dt);
@@ -588,6 +609,67 @@ export class Game {
                 this.ui.hideCountdown();
             }, 500);
         }, 3000);
+    }
+
+    private updateCameraIntro(dt: number) {
+        // Calculate animation progress (0 to 1 over 3 seconds)
+        const progress = Math.min(this.cameraIntroTime / 3.0, 1.0);
+
+        // Get start line position and frame from track
+        const startT = -0.01;
+        const startPos = new THREE.Vector3();
+        const startNormal = new THREE.Vector3();
+        const startBinormal = new THREE.Vector3();
+        const startTangent = new THREE.Vector3();
+
+        this.track.getPointAtT(startT, startPos);
+        this.track.getFrenetFrame(startT, startNormal, startBinormal, startTangent);
+
+        // Calculate center point of all ships (average position)
+        const centerPos = new THREE.Vector3();
+        centerPos.copy(startPos);
+        centerPos.addScaledVector(startBinormal, this.ship.state.lateralOffset);
+
+        // Add NPC positions to center calculation
+        this.npcShips.forEach(npc => {
+            const npcPos = new THREE.Vector3();
+            this.track.getPointAtT(npc.state.t, npcPos);
+            npcPos.addScaledVector(startBinormal, npc.state.lateralOffset);
+            centerPos.add(npcPos);
+        });
+        centerPos.divideScalar(this.npcShips.length + 1); // Average of all ships
+
+        // Camera path: start behind and above, end in front and above
+        const startOffset = new THREE.Vector3()
+            .copy(startTangent)
+            .multiplyScalar(-25) // Behind start line
+            .addScaledVector(startNormal, 18); // Above track
+
+        const endOffset = new THREE.Vector3()
+            .copy(startTangent)
+            .multiplyScalar(18) // In front of start line
+            .addScaledVector(startNormal, 15) // Above track
+            .addScaledVector(startBinormal, 8); // Slightly to the side for dramatic angle
+
+        // Smooth easing (cubic ease-in-out)
+        const easedProgress = progress < 0.5
+            ? 4 * progress * progress * progress
+            : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+
+        // Interpolate camera position
+        const cameraPos = new THREE.Vector3()
+            .copy(centerPos)
+            .addScaledVector(startOffset, 1 - easedProgress)
+            .addScaledVector(endOffset, easedProgress);
+
+        // Position camera
+        this.camera.position.copy(cameraPos);
+
+        // Look at center of ships
+        this.camera.lookAt(centerPos);
+
+        // Align camera up with track normal for natural orientation
+        this.camera.up.copy(startNormal);
     }
 
     private async playOrAdvance(maxTries = this.radio.stations.length) {
