@@ -194,17 +194,17 @@ export const PLANET_EFFECTS = {
 
 // Shooting stars configuration
 export const SHOOTING_STARS = {
-    maxCount: 40, // Maximum active shooting stars (more for continuous effect)
-    spawnRateMin: 1, // Minimum seconds between spawns (very frequent)
-    spawnRateMax: 5, // Maximum seconds between spawns (very frequent)
-    lifetimeMin: 2.0, // Minimum star lifetime in seconds
-    lifetimeMax: 4.0, // Maximum star lifetime in seconds
+    maxCount: 80, // Maximum active shooting stars (much more for dramatic effect)
+    spawnRateMin: 0.05, // Minimum seconds between spawns (very frequent)
+    spawnRateMax: 0.15, // Maximum seconds between spawns (very frequent)
+    lifetimeMin: 3.0, // Minimum star lifetime in seconds
+    lifetimeMax: 6.0, // Maximum star lifetime in seconds
     speedMin: 80, // Minimum speed (units per second)
     speedMax: 150, // Maximum speed (units per second)
-    starfieldRadius: 400, // Spawn radius in starfield (closer for visibility)
-    trailLength: 60, // Length of particle trail
-    trailParticleCount: 20, // Particles per trail
-    starSize: 2.0, // Size of star core (larger for visibility)
+    starfieldRadius: 1200, // Spawn around the starfield outskirts in all directions
+    trailLength: 120, // Length of particle trail (longer for more drama)
+    trailParticleCount: 40, // Particles per trail (more dramatic trails)
+    starSize: 5.0, // Size of star core (much larger for visibility)
     trailColors: [
         new Color(0x53d7ff), // Cyan
         new Color(0xff2bd6), // Magenta

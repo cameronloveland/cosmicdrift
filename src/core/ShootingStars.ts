@@ -6,6 +6,7 @@ export class ShootingStars {
     private starMesh!: THREE.InstancedMesh;
     private trailMesh!: THREE.InstancedMesh;
     private maxStars = SHOOTING_STARS.maxCount;
+    private camera?: THREE.Camera;
     private activeStars: Array<{
         index: number;
         position: THREE.Vector3;
@@ -30,8 +31,12 @@ export class ShootingStars {
         this.root.add(this.starMesh);
         this.root.add(this.trailMesh);
 
-        // Start with very short spawn time for immediate effect
-        this.nextSpawnTime = 0.2;
+        // Start with immediate spawn for testing
+        this.nextSpawnTime = 0.1;
+    }
+
+    setCamera(camera: THREE.Camera) {
+        this.camera = camera;
     }
 
     private setupStarMesh() {
@@ -40,7 +45,7 @@ export class ShootingStars {
         const starMaterial = new THREE.MeshBasicMaterial({
             color: 0xffffff,
             transparent: true,
-            opacity: 0.9,
+            opacity: 1.0, // Full opacity for maximum visibility
             blending: THREE.AdditiveBlending,
             depthWrite: false,
             toneMapped: false
@@ -54,7 +59,7 @@ export class ShootingStars {
         const trailMaterial = new THREE.MeshBasicMaterial({
             color: 0xffffff,
             transparent: true,
-            opacity: 0.8,
+            opacity: 1.0, // Full opacity for maximum visibility
             blending: THREE.AdditiveBlending,
             depthWrite: false,
             toneMapped: false
@@ -66,6 +71,7 @@ export class ShootingStars {
         // Spawn new shooting stars
         this.nextSpawnTime -= dt;
         if (this.nextSpawnTime <= 0 && this.activeStars.length < this.maxStars) {
+            console.log('ShootingStars update: spawning star, activeStars:', this.activeStars.length, 'maxStars:', this.maxStars, 'nextSpawnTime was:', this.nextSpawnTime + dt);
             this.spawnStar();
             this.nextSpawnTime = SHOOTING_STARS.spawnRateMin + Math.random() * (SHOOTING_STARS.spawnRateMax - SHOOTING_STARS.spawnRateMin);
         }
@@ -95,7 +101,10 @@ export class ShootingStars {
     }
 
     private spawnStar() {
-        // Random spawn position on starfield sphere edge
+        // Spawn on the outskirts of the starfield in ALL directions (not relative to camera)
+        // Use a fixed sphere around the origin so stars appear from all directions
+
+        // Spawn on the edge of a fixed sphere around origin (0,0,0)
         const theta = Math.random() * Math.PI * 2;
         const phi = Math.acos(2 * Math.random() - 1);
         const radius = SHOOTING_STARS.starfieldRadius;
@@ -106,17 +115,19 @@ export class ShootingStars {
             radius * Math.sin(phi) * Math.sin(theta)
         );
 
+        const cameraPos = this.camera ? this.camera.position : new THREE.Vector3(0, 0, 0);
+        console.log('Spawning shooting star at:', position, 'camera at:', cameraPos, 'distance from camera:', position.distanceTo(cameraPos));
 
-        // Random velocity toward center (but not exactly)
-        const centerDirection = new THREE.Vector3().subVectors(new THREE.Vector3(0, 0, 0), position).normalize();
-        const randomOffset = new THREE.Vector3(
-            (Math.random() - 0.5) * 0.4,
-            (Math.random() - 0.5) * 0.2,
-            (Math.random() - 0.5) * 0.4
-        );
-        const velocity = centerDirection.add(randomOffset).normalize();
+        // Move across the background in random directions
+        // Create a natural "shooting across the sky" effect from all directions
+        const crossDirection = new THREE.Vector3(
+            (Math.random() - 0.5) * 2, // Random horizontal movement
+            (Math.random() - 0.5) * 1, // More vertical variation for natural movement
+            (Math.random() - 0.5) * 2  // Random depth movement
+        ).normalize();
+
         const speed = SHOOTING_STARS.speedMin + Math.random() * (SHOOTING_STARS.speedMax - SHOOTING_STARS.speedMin);
-        velocity.multiplyScalar(speed);
+        const velocity = crossDirection.multiplyScalar(speed);
 
         // Random trail color
         const trailColor = SHOOTING_STARS.trailColors[Math.floor(Math.random() * SHOOTING_STARS.trailColors.length)].clone();
@@ -136,7 +147,7 @@ export class ShootingStars {
 
     private updateTrailParticles(star: any, dt: number) {
         // Add new trail particle at star position
-        if (Math.random() < 0.3) { // 30% chance per frame
+        if (Math.random() < 0.8) { // 80% chance per frame for denser trails
             star.trailParticles.push({
                 position: star.position.clone(),
                 age: 0,

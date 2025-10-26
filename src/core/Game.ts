@@ -13,7 +13,7 @@ import { WormholeTunnel } from './WormholeTunnel';
 import { NPCShip } from './NPCShip';
 import { RaceManager } from './RaceManager';
 import { ShootingStars } from './ShootingStars';
-import { Comets } from './Comets';
+// import { Comets } from './Comets'; // Temporarily disabled
 import { COLORS } from './constants';
 import type { RaceState } from './types';
 
@@ -48,7 +48,7 @@ export class Game {
     private speedStars!: SpeedStars;
     private wormholeTunnel!: WormholeTunnel;
     private shootingStars!: ShootingStars;
-    private comets!: Comets;
+    // private comets!: Comets; // Temporarily disabled
     private ui!: UI;
     private audio!: AudioSystem;
     private npcShips: NPCShip[] = [];
@@ -151,11 +151,12 @@ export class Game {
 
         // Shooting stars
         this.shootingStars = new ShootingStars();
+        this.shootingStars.setCamera(this.camera);
         this.scene.add(this.shootingStars.root);
 
-        // Comets
-        this.comets = new Comets();
-        this.scene.add(this.comets.root);
+        // Comets - temporarily disabled
+        // this.comets = new Comets();
+        // this.scene.add(this.comets.root);
 
         this.ui = new UI();
         // Ensure pause menu is hidden on initialization
@@ -542,7 +543,7 @@ export class Game {
     private update(dt: number) {
         // Always update background effects for visual magic on splash screen
         this.shootingStars.update(dt);
-        this.comets.update(dt);
+        // this.comets.update(dt); // Temporarily disabled
         this.env.update(dt);
 
 
@@ -564,7 +565,7 @@ export class Game {
             this.speedStars.update(dt);
             this.wormholeTunnel.update(dt);
             this.shootingStars.update(dt);
-            this.comets.update(dt);
+            // this.comets.update(dt); // Temporarily disabled
             this.env.update(dt);
             this.ui.update(this.ship.state);
             this.audio.setSpeed(this.ship.state.speedKmh);
@@ -591,6 +592,7 @@ export class Game {
             this.shipBoost.update(dt);
             this.speedStars.update(dt);
             this.wormholeTunnel.update(dt);
+            this.shootingStars.update(dt); // Ensure shooting stars continue during race
             this.env.update(dt);
             this.ui.update(this.ship.state);
             this.audio.setSpeed(this.ship.state.speedKmh);
@@ -601,8 +603,6 @@ export class Game {
             this.npcShips.forEach(npc => {
                 npc.update(dt, this.ship.state.t, this.ship.state.lapCurrent, this.ship.state.speedKmh, this.npcShips);
             });
-
-            // Atmospheric effects are now handled at the top of update() for all states
         }
     }
 
