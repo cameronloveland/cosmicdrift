@@ -296,10 +296,10 @@ export class SpeedometerGauge {
 
     private drawBackgroundGlow(radius: number) {
         // Create radial gradient background for atmospheric depth
-        const gradient = this.ctx.createRadialGradient(
-            this.centerX, this.centerY, 0,
-            this.centerX, this.centerY, radius * 1.5
-        );
+        // const gradient = this.ctx.createRadialGradient(
+        //     this.centerX, this.centerY, 0,
+        //     this.centerX, this.centerY, radius * 1.5
+        // );
 
         //gradient.addColorStop(0, 'rgba(10, 3, 36, 0.8)'); // Dark center
         //gradient.addColorStop(0.3, 'rgba(11, 26, 95, 0.4)'); // Deep blue
@@ -328,7 +328,7 @@ export class SpeedometerGauge {
             this.ctx.stroke();
         }
 
-        // Draw concentric grid circles
+        // Draw concentric grid circles (full circles extending beyond the arc)
         this.ctx.strokeStyle = 'rgba(83, 215, 255, 0.08)';
         for (let r = radius * 0.3; r <= radius * 1.1; r += radius * 0.2) {
             this.ctx.beginPath();
