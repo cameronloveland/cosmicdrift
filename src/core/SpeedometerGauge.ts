@@ -110,6 +110,9 @@ export class SpeedometerGauge {
         // Draw speed arc (innermost, white) - represents actual speed
         this.drawArc(speedRadius, this.speed, '#ffffff', 8, 1.0);
 
+        // Draw connecting beam across bottom of speed segments
+        this.drawSpeedConnectingBeam(speedRadius);
+
         // Draw center speed text with decorations
         this.drawSpeedText();
 
@@ -410,6 +413,46 @@ export class SpeedometerGauge {
 
         this.ctx.fillStyle = coreGlow;
         this.ctx.fillRect(0, 0, this.canvas.width / (window.devicePixelRatio || 1), this.canvas.height / (window.devicePixelRatio || 1));
+
+        this.ctx.restore();
+    }
+
+    private drawSpeedConnectingBeam(radius: number) {
+        this.ctx.save();
+
+        const arcStart = Math.PI * 0.75;  // Bottom-left
+        const arcEnd = Math.PI * 2.25;    // Bottom-right
+        const totalAngle = arcEnd - arcStart;
+        const segmentAngle = totalAngle / this.segments;
+        const filledSegments = Math.ceil(this.speed * this.segments);
+
+        // Only draw connecting beam if there are filled segments
+        if (filledSegments > 0) {
+            const beamStartAngle = arcStart;
+            const beamEndAngle = arcStart + (filledSegments * segmentAngle);
+
+            // White connecting beam with cyan glow (matching speed text style)
+            this.ctx.strokeStyle = '#ffffff';
+            this.ctx.lineWidth = 4;
+            this.ctx.shadowColor = '#53d7ff';
+            this.ctx.shadowBlur = 15;
+            this.ctx.globalAlpha = 1.0;
+
+            this.ctx.beginPath();
+            this.ctx.arc(this.centerX, this.centerY, radius, beamStartAngle, beamEndAngle);
+            this.ctx.stroke();
+
+            // Additional cyan glow layer
+            this.ctx.strokeStyle = '#ffffff';
+            this.ctx.lineWidth = 6;
+            this.ctx.shadowColor = '#53d7ff';
+            this.ctx.shadowBlur = 25;
+            this.ctx.globalAlpha = 0.8;
+
+            this.ctx.beginPath();
+            this.ctx.arc(this.centerX, this.centerY, radius, beamStartAngle, beamEndAngle);
+            this.ctx.stroke();
+        }
 
         this.ctx.restore();
     }
