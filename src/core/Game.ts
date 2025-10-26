@@ -59,6 +59,10 @@ export class Game {
     private cameraIntroActive = false;
     private cameraIntroTime = 0;
 
+    // Background darkening for tunnels
+    private tunnelDarkenTarget = 0; // 0 = normal, 1 = almost black
+    private tunnelDarkenCurrent = 0; // smoothly interpolated value
+
     private radio = {
         on: true,
         stationIndex: 0,
@@ -599,6 +603,9 @@ export class Game {
             if (this.ship.state.boosting && !this.prevBoost) this.audio.triggerBoost();
             this.prevBoost = this.ship.state.boosting;
 
+            // Update tunnel background darkening
+            this.updateTunnelBackground(dt);
+
             // Update NPCs during countdown and racing
             this.npcShips.forEach(npc => {
                 npc.update(dt, this.ship.state.t, this.ship.state.lapCurrent, this.ship.state.speedKmh, this.npcShips);
@@ -721,6 +728,55 @@ export class Game {
     }
 
 
+    private updateTunnelBackground(dt: number) {
+        // Set target darkening based on tunnel state
+        this.tunnelDarkenTarget = this.ship.state.inTunnel ? 1 : 0;
+
+        // Smoothly interpolate to target
+        const lerpSpeed = 4.0; // how fast the transition happens
+        this.tunnelDarkenCurrent = THREE.MathUtils.lerp(
+            this.tunnelDarkenCurrent,
+            this.tunnelDarkenTarget,
+            lerpSpeed * dt
+        );
+
+        // Get base colors (original space background colors)
+        const bgStartBase = new THREE.Color(0x0a0324);
+        const bgMidBase = new THREE.Color(0x050314);
+        const bgEndBase = new THREE.Color(0x030211);
+        const fogColorBase = new THREE.Color(0x07051a);
+        const clearColorBase = new THREE.Color(0x050314);
+
+        // Get dark colors (almost black for tunnels)
+        const bgStartDark = new THREE.Color(0x000001);
+        const bgMidDark = new THREE.Color(0x000000);
+        const bgEndDark = new THREE.Color(0x000000);
+        const fogColorDark = new THREE.Color(0x000000);
+        const clearColorDark = new THREE.Color(0x000000);
+
+        // Interpolate colors based on tunnel darkness
+        const currentBgStart = bgStartBase.clone().lerp(bgStartDark, this.tunnelDarkenCurrent);
+        const currentBgMid = bgMidBase.clone().lerp(bgMidDark, this.tunnelDarkenCurrent);
+        const currentBgEnd = bgEndBase.clone().lerp(bgEndDark, this.tunnelDarkenCurrent);
+        const currentFogColor = fogColorBase.clone().lerp(fogColorDark, this.tunnelDarkenCurrent);
+        const currentClearColor = clearColorBase.clone().lerp(clearColorDark, this.tunnelDarkenCurrent);
+
+        // Update HTML background gradient
+        const gradient = document.querySelector('html')?.style;
+        if (gradient) {
+            const hex1 = currentBgStart.getHexString().padStart(6, '0');
+            const hex2 = currentBgMid.getHexString().padStart(6, '0');
+            const hex3 = currentBgEnd.getHexString().padStart(6, '0');
+            gradient.background = `radial-gradient(ellipse at center, #${hex1} 0%, #${hex2} 60%, #${hex3} 100%)`;
+        }
+
+        // Update fog color
+        this.scene.fog = new THREE.FogExp2(currentFogColor.getHex(), 0.0008);
+
+        // Update renderer clear color
+        this.renderer.setClearColor(currentClearColor.getHex(), 1);
+    }
+
     private restart() {
         // Reset ship to starting position
         this.ship.reset();
@@ -736,6 +792,10 @@ export class Game {
         // Exit pointer lock and hide cursor
         document.exitPointerLock();
         this.renderer.domElement.style.cursor = 'none';
+
+        // Reset tunnel background
+        this.tunnelDarkenCurrent = 0;
+        this.tunnelDarkenTarget = 0;
     }
 
     private quitToMenu() {
