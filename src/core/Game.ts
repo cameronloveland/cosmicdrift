@@ -540,6 +540,12 @@ export class Game {
     };
 
     private update(dt: number) {
+        // Always update background effects for visual magic on splash screen
+        this.shootingStars.update(dt);
+        this.comets.update(dt);
+        this.env.update(dt);
+
+
         if (!this.started) {
             this.ui.update(this.ship.state);
             return;
@@ -596,12 +602,7 @@ export class Game {
                 npc.update(dt, this.ship.state.t, this.ship.state.lapCurrent, this.ship.state.speedKmh, this.npcShips);
             });
 
-            // Update atmospheric effects only during racing (not countdown)
-            // Temporarily disabled to test ship movement
-            // if (this.raceState === 'RACING') {
-            //     this.shootingStars.update(dt);
-            //     this.comets.update(dt);
-            // }
+            // Atmospheric effects are now handled at the top of update() for all states
         }
     }
 

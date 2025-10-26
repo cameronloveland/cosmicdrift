@@ -194,17 +194,17 @@ export const PLANET_EFFECTS = {
 
 // Shooting stars configuration
 export const SHOOTING_STARS = {
-    maxCount: 25, // Maximum active shooting stars
-    spawnRateMin: 0.5, // Minimum seconds between spawns
-    spawnRateMax: 2.0, // Maximum seconds between spawns
+    maxCount: 40, // Maximum active shooting stars (more for continuous effect)
+    spawnRateMin: 1, // Minimum seconds between spawns (very frequent)
+    spawnRateMax: 5, // Maximum seconds between spawns (very frequent)
     lifetimeMin: 2.0, // Minimum star lifetime in seconds
     lifetimeMax: 4.0, // Maximum star lifetime in seconds
     speedMin: 80, // Minimum speed (units per second)
     speedMax: 150, // Maximum speed (units per second)
-    starfieldRadius: 1200, // Spawn radius in starfield
+    starfieldRadius: 400, // Spawn radius in starfield (closer for visibility)
     trailLength: 60, // Length of particle trail
     trailParticleCount: 20, // Particles per trail
-    starSize: 0.8, // Size of star core
+    starSize: 2.0, // Size of star core (larger for visibility)
     trailColors: [
         new Color(0x53d7ff), // Cyan
         new Color(0xff2bd6), // Magenta
@@ -214,10 +214,10 @@ export const SHOOTING_STARS = {
 
 // Comets configuration
 export const COMETS = {
-    maxCount: 3, // Maximum active comets
-    spawnIntervalMin: 15, // Minimum seconds between comet spawns
-    spawnIntervalMax: 30, // Maximum seconds between comet spawns
-    headRadius: 4, // Comet head size
+    maxCount: 8, // Maximum active comets (more for continuous effect)
+    spawnIntervalMin: 2, // Minimum seconds between comet spawns (very frequent)
+    spawnIntervalMax: 5, // Maximum seconds between comet spawns (very frequent)
+    headRadius: 8, // Comet head size (larger for visibility)
     tailLength: 200, // Tail length in units
     tailParticleCount: 150, // Particles in tail
     speedMin: 80, // Minimum comet speed
@@ -230,34 +230,34 @@ export const COMETS = {
     paths: [
         // Path 1: Arc from left to right, passing over track
         {
-            start: new Vector3(-800, 200, -400),
-            control1: new Vector3(-200, 300, 0),
-            control2: new Vector3(200, 250, 0),
-            end: new Vector3(800, 150, 400),
+            start: new Vector3(-200, 100, -100),
+            control1: new Vector3(-50, 150, 0),
+            control2: new Vector3(50, 125, 0),
+            end: new Vector3(200, 75, 100),
             duration: 8.0
         },
         // Path 2: Diagonal from back-left to front-right
         {
-            start: new Vector3(-600, 100, -600),
-            control1: new Vector3(0, 200, 0),
-            control2: new Vector3(300, 150, 200),
-            end: new Vector3(600, 80, 600),
+            start: new Vector3(-150, 50, -150),
+            control1: new Vector3(0, 100, 0),
+            control2: new Vector3(75, 75, 50),
+            end: new Vector3(150, 40, 150),
             duration: 10.0
         },
         // Path 3: High arc passing over track center
         {
-            start: new Vector3(-500, 50, -500),
-            control1: new Vector3(0, 400, 0),
-            control2: new Vector3(0, 350, 0),
-            end: new Vector3(500, 50, 500),
+            start: new Vector3(-125, 25, -125),
+            control1: new Vector3(0, 200, 0),
+            control2: new Vector3(0, 175, 0),
+            end: new Vector3(125, 25, 125),
             duration: 12.0
         },
         // Path 4: Low swoop under track
         {
-            start: new Vector3(-700, 20, -300),
-            control1: new Vector3(-100, 50, 0),
-            control2: new Vector3(100, 80, 0),
-            end: new Vector3(700, 30, 300),
+            start: new Vector3(-175, 10, -75),
+            control1: new Vector3(-25, 25, 0),
+            control2: new Vector3(25, 40, 0),
+            end: new Vector3(175, 15, 75),
             duration: 9.0
         }
     ]

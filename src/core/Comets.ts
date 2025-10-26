@@ -30,8 +30,8 @@ export class Comets {
         this.root.add(this.headMesh);
         this.root.add(this.tailMesh);
 
-        // Start with a random spawn time
-        this.nextSpawnTime = COMETS.spawnIntervalMin + Math.random() * (COMETS.spawnIntervalMax - COMETS.spawnIntervalMin);
+        // Start with short spawn time for immediate effect
+        this.nextSpawnTime = 1.0;
     }
 
     private setupHeadMesh() {
@@ -105,6 +105,7 @@ export class Comets {
 
         // Select random color
         const color = COMETS.colors[Math.floor(Math.random() * COMETS.colors.length)].clone();
+
 
         const comet = {
             index: this.activeComets.length,

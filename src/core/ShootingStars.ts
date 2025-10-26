@@ -29,6 +29,9 @@ export class ShootingStars {
         this.setupTrailMesh();
         this.root.add(this.starMesh);
         this.root.add(this.trailMesh);
+
+        // Start with very short spawn time for immediate effect
+        this.nextSpawnTime = 0.2;
     }
 
     private setupStarMesh() {
@@ -102,6 +105,7 @@ export class ShootingStars {
             radius * Math.cos(phi) * 0.85, // Slight bias toward horizontal
             radius * Math.sin(phi) * Math.sin(theta)
         );
+
 
         // Random velocity toward center (but not exactly)
         const centerDirection = new THREE.Vector3().subVectors(new THREE.Vector3(0, 0, 0), position).normalize();
