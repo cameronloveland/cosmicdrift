@@ -237,12 +237,20 @@ export class SpeedometerGauge {
         this.ctx.shadowBlur = 8;
         this.ctx.fillText('KM/H', this.centerX, this.centerY + 25);
 
-        // Lap information with monospace styling and separators
-        this.ctx.font = 'bold 16px Orbitron, monospace';
-        this.ctx.fillStyle = 'rgba(255, 43, 214, 0.8)';
+        // Lap information with improved layout
+        // Lap number (bigger text, above)
+        this.ctx.font = 'bold 24px Orbitron, monospace';
+        this.ctx.fillStyle = 'rgba(255, 43, 214, 0.9)';
+        this.ctx.shadowBlur = 8;
+        this.ctx.shadowColor = '#ff2bd6';
+        this.ctx.fillText(`${this.lapCurrent}/${this.lapTotal}`, this.centerX, this.centerY + 90);
+
+        // "LAP" label (smaller text, below)
+        this.ctx.font = 'bold 14px Orbitron, monospace';
+        this.ctx.fillStyle = 'rgba(255, 43, 214, 0.7)';
         this.ctx.shadowBlur = 5;
         this.ctx.shadowColor = '#ff2bd6';
-        this.ctx.fillText(`LAP ${this.lapCurrent}/${this.lapTotal}`, this.centerX, this.centerY + 100);
+        this.ctx.fillText('LAP', this.centerX, this.centerY + 115);
 
         this.ctx.restore();
     }
