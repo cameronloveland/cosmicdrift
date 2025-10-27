@@ -71,9 +71,25 @@ export class ShootingStars {
         // Spawn new shooting stars
         this.nextSpawnTime -= dt;
         if (this.nextSpawnTime <= 0 && this.activeStars.length < this.maxStars) {
-            console.log('ShootingStars update: spawning star, activeStars:', this.activeStars.length, 'maxStars:', this.maxStars, 'nextSpawnTime was:', this.nextSpawnTime + dt);
-            this.spawnStar();
+            // Use a mix of spawning methods to ensure full coverage
+            const spawnMethod = Math.random();
+            if (spawnMethod < 0.4) {
+                // 40% camera-aware spawning (in direction player is looking)
+                this.spawnStar();
+            } else if (spawnMethod < 0.7) {
+                // 30% omnidirectional spawning (all around the player)
+                this.spawnStarOmnidirectional();
+            } else {
+                // 30% fallback spawning (wider area coverage)
+                this.spawnStarFallback();
+            }
             this.nextSpawnTime = SHOOTING_STARS.spawnRateMin + Math.random() * (SHOOTING_STARS.spawnRateMax - SHOOTING_STARS.spawnRateMin);
+        }
+
+        // Ensure we always have some shooting stars in the field of view
+        // If we have very few stars, spawn more aggressively
+        if (this.activeStars.length < this.maxStars * 0.3) {
+            this.nextSpawnTime = Math.min(this.nextSpawnTime, 0.1); // Force spawn soon
         }
 
         // Update existing stars
@@ -101,33 +117,146 @@ export class ShootingStars {
     }
 
     private spawnStar() {
-        // Spawn on the outskirts of the starfield in ALL directions (not relative to camera)
-        // Use a fixed sphere around the origin so stars appear from all directions
+        if (!this.camera) return;
 
-        // Spawn on the edge of a fixed sphere around origin (0,0,0)
-        const theta = Math.random() * Math.PI * 2;
-        const phi = Math.acos(2 * Math.random() - 1);
-        const radius = SHOOTING_STARS.starfieldRadius;
+        // Get camera position and direction
+        const cameraPos = this.camera.position.clone();
+        const cameraDirection = new THREE.Vector3();
+        this.camera.getWorldDirection(cameraDirection);
 
-        const position = new THREE.Vector3(
-            radius * Math.sin(phi) * Math.cos(theta),
-            radius * Math.cos(phi) * 0.85, // Slight bias toward horizontal
-            radius * Math.sin(phi) * Math.sin(theta)
-        );
+        // Create a cone of directions around the camera's look direction
+        // This ensures shooting stars appear in the depths where the player is looking
+        const baseDirection = cameraDirection.clone();
 
-        const cameraPos = this.camera ? this.camera.position : new THREE.Vector3(0, 0, 0);
-        console.log('Spawning shooting star at:', position, 'camera at:', cameraPos, 'distance from camera:', position.distanceTo(cameraPos));
-
-        // Move across the background in random directions
-        // Create a natural "shooting across the sky" effect from all directions
-        const crossDirection = new THREE.Vector3(
-            (Math.random() - 0.5) * 2, // Random horizontal movement
-            (Math.random() - 0.5) * 1, // More vertical variation for natural movement
-            (Math.random() - 0.5) * 2  // Random depth movement
+        // Add some randomness around the camera's look direction
+        const randomAngle = (Math.random() - 0.5) * Math.PI * 0.6; // ±54 degrees
+        const randomAxis = new THREE.Vector3(
+            Math.random() - 0.5,
+            Math.random() - 0.5,
+            Math.random() - 0.5
         ).normalize();
 
+        const randomRotation = new THREE.Quaternion().setFromAxisAngle(randomAxis, randomAngle);
+        const spawnDirection = baseDirection.clone().applyQuaternion(randomRotation);
+
+        // Spawn at various distances in the direction the player is looking
+        const minDistance = SHOOTING_STARS.starfieldRadius * 0.8;
+        const maxDistance = SHOOTING_STARS.starfieldRadius * 1.5;
+        const spawnDistance = minDistance + Math.random() * (maxDistance - minDistance);
+
+        const position = cameraPos.clone().addScaledVector(spawnDirection, spawnDistance);
+
+        // Create velocity that moves across the field of view
+        // Mix the spawn direction with some perpendicular movement for natural "shooting" effect
+        const perpendicular1 = new THREE.Vector3().crossVectors(spawnDirection, new THREE.Vector3(0, 1, 0)).normalize();
+        const perpendicular2 = new THREE.Vector3().crossVectors(spawnDirection, perpendicular1).normalize();
+
+        const crossMovement = new THREE.Vector3()
+            .addScaledVector(perpendicular1, (Math.random() - 0.5) * 0.8)
+            .addScaledVector(perpendicular2, (Math.random() - 0.5) * 0.8)
+            .addScaledVector(spawnDirection, -0.3) // Slight movement toward camera for "shooting" effect
+            .normalize();
+
         const speed = SHOOTING_STARS.speedMin + Math.random() * (SHOOTING_STARS.speedMax - SHOOTING_STARS.speedMin);
-        const velocity = crossDirection.multiplyScalar(speed);
+        const velocity = crossMovement.multiplyScalar(speed);
+
+        // Random trail color
+        const trailColor = SHOOTING_STARS.trailColors[Math.floor(Math.random() * SHOOTING_STARS.trailColors.length)].clone();
+
+        const star = {
+            index: this.activeStars.length,
+            position: position.clone(),
+            velocity: velocity,
+            lifetime: SHOOTING_STARS.lifetimeMin + Math.random() * (SHOOTING_STARS.lifetimeMax - SHOOTING_STARS.lifetimeMin),
+            maxLifetime: SHOOTING_STARS.lifetimeMin + Math.random() * (SHOOTING_STARS.lifetimeMax - SHOOTING_STARS.lifetimeMin),
+            trailColor: trailColor,
+            trailParticles: []
+        };
+
+        this.activeStars.push(star);
+    }
+
+    private spawnStarOmnidirectional() {
+        // Omnidirectional spawning - spawn from any direction around the player
+        // This ensures coverage of all areas of the starfield
+        if (!this.camera) return;
+
+        const cameraPos = this.camera.position.clone();
+
+        // Spawn in a full sphere around the camera position
+        const theta = Math.random() * Math.PI * 2;
+        const phi = Math.acos(2 * Math.random() - 1);
+        const radius = SHOOTING_STARS.starfieldRadius * (0.9 + Math.random() * 0.2);
+
+        const position = new THREE.Vector3(
+            cameraPos.x + radius * Math.sin(phi) * Math.cos(theta),
+            cameraPos.y + radius * Math.cos(phi) * 0.85, // Slight bias toward horizontal
+            cameraPos.z + radius * Math.sin(phi) * Math.sin(theta)
+        );
+
+        // Create velocity that moves across the field of view
+        // Mix random direction with slight bias toward camera for "shooting" effect
+        const randomDirection = new THREE.Vector3(
+            (Math.random() - 0.5) * 2,
+            (Math.random() - 0.5) * 1,
+            (Math.random() - 0.5) * 2
+        ).normalize();
+
+        // Add slight bias toward camera for more natural shooting effect
+        const toCamera = cameraPos.clone().sub(position).normalize();
+        const biasedDirection = randomDirection.clone().lerp(toCamera, 0.2).normalize();
+
+        const speed = SHOOTING_STARS.speedMin + Math.random() * (SHOOTING_STARS.speedMax - SHOOTING_STARS.speedMin);
+        const velocity = biasedDirection.multiplyScalar(speed);
+
+        // Random trail color
+        const trailColor = SHOOTING_STARS.trailColors[Math.floor(Math.random() * SHOOTING_STARS.trailColors.length)].clone();
+
+        const star = {
+            index: this.activeStars.length,
+            position: position.clone(),
+            velocity: velocity,
+            lifetime: SHOOTING_STARS.lifetimeMin + Math.random() * (SHOOTING_STARS.lifetimeMax - SHOOTING_STARS.lifetimeMin),
+            maxLifetime: SHOOTING_STARS.lifetimeMin + Math.random() * (SHOOTING_STARS.lifetimeMax - SHOOTING_STARS.lifetimeMin),
+            trailColor: trailColor,
+            trailParticles: []
+        };
+
+        this.activeStars.push(star);
+    }
+
+    private spawnStarFallback() {
+        // Fallback spawning method - spawn from the outer edges of the starfield
+        // This ensures coverage even when the camera is in unusual positions
+        if (!this.camera) return;
+
+        const cameraPos = this.camera.position.clone();
+
+        // Spawn from the outer edges of the starfield, ensuring full coverage
+        const theta = Math.random() * Math.PI * 2;
+        const phi = Math.acos(2 * Math.random() - 1);
+        const radius = SHOOTING_STARS.starfieldRadius * (1.2 + Math.random() * 0.3); // Further out
+
+        const position = new THREE.Vector3(
+            cameraPos.x + radius * Math.sin(phi) * Math.cos(theta),
+            cameraPos.y + radius * Math.cos(phi) * 0.85,
+            cameraPos.z + radius * Math.sin(phi) * Math.sin(theta)
+        );
+
+        // Create velocity that moves across the field of view
+        // Use a more varied approach for fallback spawning
+        const randomDirection = new THREE.Vector3(
+            (Math.random() - 0.5) * 2,
+            (Math.random() - 0.5) * 1,
+            (Math.random() - 0.5) * 2
+        ).normalize();
+
+        // Add slight bias toward camera for more natural shooting effect
+        const toCamera = cameraPos.clone().sub(position).normalize();
+        const biasedDirection = randomDirection.clone().lerp(toCamera, 0.3).normalize();
+
+        const speed = SHOOTING_STARS.speedMin + Math.random() * (SHOOTING_STARS.speedMax - SHOOTING_STARS.speedMin);
+        const velocity = biasedDirection.multiplyScalar(speed);
 
         // Random trail color
         const trailColor = SHOOTING_STARS.trailColors[Math.floor(Math.random() * SHOOTING_STARS.trailColors.length)].clone();
