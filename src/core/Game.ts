@@ -527,7 +527,12 @@ export class Game {
         this.stats.begin();
 
         const dt = this.clock.getDelta();
-        this.fixedAccumulator += dt;
+
+        // Clamp dt to prevent catch-up issues when the game first loads
+        // Cap at 2 frames worth of time to prevent spiky first frames
+        const clampedDt = Math.min(dt, this.fixedDelta * 2);
+
+        this.fixedAccumulator += clampedDt;
         const maxSteps = 5;
         let steps = 0;
         while (this.fixedAccumulator >= this.fixedDelta && steps < maxSteps) {
