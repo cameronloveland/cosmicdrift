@@ -195,8 +195,8 @@ export const PLANET_EFFECTS = {
 // Shooting stars configuration
 export const SHOOTING_STARS = {
     maxCount: 80, // Increased for better coverage across all areas
-    spawnRateMin: 0.06, // More frequent spawning for better coverage
-    spawnRateMax: 0.18, // More frequent spawning for better coverage
+    spawnRateMin: 0.03, // More frequent spawning for better visibility
+    spawnRateMax: 0.12, // More frequent spawning for better visibility
     lifetimeMin: 4.0, // Minimum star lifetime in seconds (longer trails)
     lifetimeMax: 8.0, // Maximum star lifetime in seconds (longer trails)
     speedMin: 60, // Minimum speed (units per second) - slightly slower for better visibility
