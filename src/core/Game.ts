@@ -402,9 +402,6 @@ export class Game {
             this.togglePause();
         }
 
-        if (e.code === 'KeyF' && down && this.started) {
-            this.toggleFreeFlying();
-        }
 
         // Free camera movement (only when paused or free flying)
         if (!this.paused && !this.freeFlying) return;
@@ -552,7 +549,7 @@ export class Game {
 
 
         if (!this.started) {
-            this.ui.update(this.ship.state);
+            this.ui.update(this.ship.state, this.ship.getFocusRefillActive(), this.ship.getFocusRefillProgress());
             return;
         }
 
@@ -571,7 +568,7 @@ export class Game {
             this.shootingStars.update(dt);
             // this.comets.update(dt); // Temporarily disabled
             this.env.update(dt);
-            this.ui.update(this.ship.state);
+            this.ui.update(this.ship.state, this.ship.getFocusRefillActive(), this.ship.getFocusRefillProgress());
             this.audio.setSpeed(this.ship.state.speedKmh);
             if (this.ship.state.boosting && !this.prevBoost) this.audio.triggerBoost();
             this.prevBoost = this.ship.state.boosting;
@@ -598,7 +595,7 @@ export class Game {
             this.wormholeTunnel.update(dt);
             this.shootingStars.update(dt); // Ensure shooting stars continue during race
             this.env.update(dt);
-            this.ui.update(this.ship.state);
+            this.ui.update(this.ship.state, this.ship.getFocusRefillActive(), this.ship.getFocusRefillProgress());
             this.audio.setSpeed(this.ship.state.speedKmh);
             if (this.ship.state.boosting && !this.prevBoost) this.audio.triggerBoost();
             this.prevBoost = this.ship.state.boosting;

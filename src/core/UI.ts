@@ -43,9 +43,12 @@ export class UI {
         }
     }
 
-    update(state: ShipState) {
+    update(state: ShipState, focusRefillActive: boolean, focusRefillProgress: number) {
         // Update speedometer gauge with all values including lap info
         this.speedometerGauge.setValues(state.speedKmh, state.boostLevel, state.flow, state.lapCurrent, state.lapTotal);
+
+        // Update focus refill state
+        this.speedometerGauge.setFocusRefill(focusRefillActive, focusRefillProgress);
 
         // keep splash text steady; no jiggle
         if (!this.started) {

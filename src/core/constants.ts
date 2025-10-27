@@ -264,5 +264,12 @@ export const COMETS = {
     ]
 };
 
+// Focus refill configuration
+export const FOCUS_REFILL = {
+    duration: 1.5, // seconds for refill animation
+    pinkGlowColor: new Color(0xff2bd6), // pink/magenta glow color
+    minFlowRequired: 0.95 // minimum flow needed to trigger (nearly full)
+};
+
 
 

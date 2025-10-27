@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CAMERA, COLORS, LAPS_TOTAL, PHYSICS, TUNNEL, BOOST_PAD } from './constants';
+import { CAMERA, COLORS, LAPS_TOTAL, PHYSICS, TUNNEL, BOOST_PAD, FOCUS_REFILL } from './constants';
 import { Track } from './Track';
 
 function kmhToMps(kmh: number) { return kmh / 3.6; }
@@ -49,6 +49,11 @@ export class Ship {
     private boostPadTimer = 0; // remaining boost pad duration
     private baseFov = CAMERA.fov;
     private currentFov = CAMERA.fov;
+
+    // Focus refill state
+    private focusRefillActive = false;
+    private focusRefillProgress = 0;
+    private focusRefillDuration = FOCUS_REFILL.duration;
 
     private shipMaterial!: THREE.MeshStandardMaterial;
     private glowMaterial!: THREE.MeshBasicMaterial;
@@ -128,6 +133,11 @@ export class Ship {
         if (e.code === 'ArrowUp' || e.code === 'KeyW') this.input.up = down;
         if (e.code === 'ArrowDown' || e.code === 'KeyS') this.input.down = down;
         if (e.code === 'Space') this.input.boost = down;
+
+        // Focus refill key (F key)
+        if (e.code === 'KeyF' && down) {
+            this.triggerFocusRefill();
+        }
     }
 
     private onMouseMove(e: MouseEvent) {
@@ -177,6 +187,14 @@ export class Ship {
         this.inputEnabled = false;
     }
 
+    private triggerFocusRefill() {
+        // Check if flow is nearly full and not already refilling
+        if (this.state.flow >= FOCUS_REFILL.minFlowRequired && !this.focusRefillActive) {
+            this.focusRefillActive = true;
+            this.focusRefillProgress = 0;
+        }
+    }
+
     startRace() {
         // Transition from pre-race (lap 0) to race start (lap 1)
         this.state.lapCurrent = 1;
@@ -215,6 +233,10 @@ export class Ship {
         this.boostPadMultiplier = 1.0;
         this.boostPadTimer = 0;
         this.currentFov = this.baseFov;
+
+        // Reset focus refill state
+        this.focusRefillActive = false;
+        this.focusRefillProgress = 0;
 
         // Clear input
         this.clearInput();
@@ -386,11 +408,31 @@ export class Ship {
         this.velocityPitch = THREE.MathUtils.damp(this.velocityPitch, targetPitchVel, PHYSICS.pitchDamping, dt);
         this.state.pitch = THREE.MathUtils.clamp(this.state.pitch + this.velocityPitch * dt, -PHYSICS.pitchMax, PHYSICS.pitchMax);
 
-        // flow meter logic
-        const fast = this.state.speedKmh >= PHYSICS.highSpeedThreshold;
-        const stable = Math.abs(sideInput) === 0 && Math.abs(pitchInput) === 0;
-        const df = (fast && stable ? PHYSICS.flowFillSpeed : -PHYSICS.flowDrainSpeed) * dt;
-        this.state.flow = THREE.MathUtils.clamp(this.state.flow + df, 0, 1);
+        // Focus refill logic
+        if (this.focusRefillActive) {
+            this.focusRefillProgress += dt / this.focusRefillDuration;
+
+            if (this.focusRefillProgress >= 1) {
+                // Complete the refill
+                this.focusRefillActive = false;
+                this.focusRefillProgress = 1;
+                this.state.flow = 0;
+                this.boostEnergy = 1;
+            } else {
+                // Progress the refill: drain flow and fill boost proportionally
+                const startFlow = 1; // flow starts at 1 when refill begins
+                const startBoost = this.boostEnergy; // boost starts at current level
+
+                this.state.flow = THREE.MathUtils.lerp(startFlow, 0, this.focusRefillProgress);
+                this.boostEnergy = THREE.MathUtils.lerp(startBoost, 1, this.focusRefillProgress);
+            }
+        } else {
+            // Normal flow meter logic (only when not refilling)
+            const fast = this.state.speedKmh >= PHYSICS.highSpeedThreshold;
+            const stable = Math.abs(sideInput) === 0 && Math.abs(pitchInput) === 0;
+            const df = (fast && stable ? PHYSICS.flowFillSpeed : -PHYSICS.flowDrainSpeed) * dt;
+            this.state.flow = THREE.MathUtils.clamp(this.state.flow + df, 0, 1);
+        }
 
         // position and orientation from banked Frenet frame
         const { pos, tangent, normal, binormal, right, up, forward } = this.tmp;
@@ -577,6 +619,15 @@ export class Ship {
         const shake = CAMERA.shakeMax * (this.state.speedKmh / PHYSICS.maxSpeed) * (0.4 + 0.6 * this.boostTimer);
         this.camera.position.x += (Math.random() - 0.5) * shake;
         this.camera.position.y += (Math.random() - 0.5) * shake;
+    }
+
+    // Getters for focus refill state
+    public getFocusRefillActive(): boolean {
+        return this.focusRefillActive;
+    }
+
+    public getFocusRefillProgress(): number {
+        return this.focusRefillProgress;
     }
 }
 
