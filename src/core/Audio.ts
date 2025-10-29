@@ -93,6 +93,7 @@ export class AudioSystem {
 
     async playRadio(): Promise<boolean> {
         try {
+            return false;
             await this.radioMedia?.play();
             return true;
         } catch (e) {

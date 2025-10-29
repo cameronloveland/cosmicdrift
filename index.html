@@ -541,6 +541,34 @@
     <div class="countdown hidden" id="countdown" style="z-index: 1002;">
         <div class="countdown-text" id="countdownText">3</div>
     </div>
+
+    <div id="debugOverlay"
+        style="position: fixed; bottom: 10px; left: 10px; background: rgba(0,0,0,0.7); color: #0ff; padding: 10px; font-family: monospace; font-size: 12px; border: 1px solid #0ff; z-index: 1000; display: none;">
+        <div>Game Time: <span id="debugGameTime">0.0</span>s</div>
+        <div>Stars Ahead: <span id="debugStarsAhead">0</span></div>
+        <div>Stars Behind: <span id="debugStarsBehind">0</span></div>
+        <div>Distant Stars: <span id="debugDistantStars">0</span></div>
+        <div>Total Stars: <span id="debugTotalStars">0</span></div>
+        <div>Ship Speed: <span id="debugShipSpeed">0</span> km/h</div>
+    </div>
+    <script>
+        // Debug overlay toggle with F9
+        (function () {
+            const debugOverlay = document.getElementById('debugOverlay');
+            let debugVisible = false;
+            window.addEventListener('keydown', (e) => {
+                // F9 key (without modifiers)
+                if (e.code === 'F9' && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey) {
+                    debugVisible = !debugVisible;
+                    if (debugOverlay) {
+                        debugOverlay.style.display = debugVisible ? 'block' : 'none';
+                    }
+                    e.preventDefault();
+                }
+            });
+        })();
+    </script>
+
     <script type="module" src="/src/main.ts"></script>
 </body>
 
