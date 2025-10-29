@@ -7,7 +7,7 @@ import { Track } from './Track';
 import { UI } from './UI';
 import { Environment } from './Environment';
 import { ShipBoost } from './ShipBoost';
-import { SpeedStars } from './SpeedStars';
+import { ShipSpeedStars } from './ShipSpeedStars';
 import { AudioSystem } from './Audio';
 import { WormholeTunnel } from './WormholeTunnel';
 import { NPCShip } from './NPCShip';
@@ -45,7 +45,7 @@ export class Game {
     private ship!: Ship;
     private env!: Environment;
     private shipBoost!: ShipBoost;
-    private speedStars!: SpeedStars;
+    private speedStars!: ShipSpeedStars;
     private wormholeTunnel!: WormholeTunnel;
     private shootingStars!: ShootingStars;
     // private comets!: Comets; // Temporarily disabled
@@ -146,16 +146,16 @@ export class Game {
         this.scene.add(this.shipBoost.root);
 
         // Speed stars
-        this.speedStars = new SpeedStars(this.ship, this.track);
+        this.speedStars = new ShipSpeedStars(this.ship, this.track);
         this.scene.add(this.speedStars.root);
 
         // Wormhole tunnels
         this.wormholeTunnel = new WormholeTunnel(this.track);
         this.scene.add(this.wormholeTunnel.root);
 
-        // Shooting stars - temporarily disabled
-        // this.shootingStars = new ShootingStars();
-        // this.scene.add(this.shootingStars.root);
+        // Shooting stars
+        this.shootingStars = new ShootingStars();
+        this.scene.add(this.shootingStars.root);
 
         // Comets - temporarily disabled
         // this.comets = new Comets();
@@ -547,7 +547,7 @@ export class Game {
 
     private update(dt: number) {
         // Always update background effects for visual magic on splash screen
-        // this.shootingStars.update(dt); // Temporarily disabled
+        this.shootingStars.update(dt);
         // this.comets.update(dt); // Temporarily disabled
         this.env.update(dt);
 
@@ -569,7 +569,7 @@ export class Game {
             this.shipBoost.update(dt);
             this.speedStars.update(dt);
             this.wormholeTunnel.update(dt);
-            // this.shootingStars.update(dt); // Temporarily disabled
+            this.shootingStars.update(dt);
             // this.comets.update(dt); // Temporarily disabled
             this.env.update(dt);
             this.ui.update(this.ship.state, this.ship.getFocusRefillActive(), this.ship.getFocusRefillProgress());
@@ -597,9 +597,16 @@ export class Game {
             this.shipBoost.update(dt);
             this.speedStars.update(dt);
             this.wormholeTunnel.update(dt);
-            // this.shootingStars.update(dt); // Temporarily disabled - Ensure shooting stars continue during race
+            this.shootingStars.update(dt); // Ensure shooting stars continue during race
             this.env.update(dt);
             this.ui.update(this.ship.state, this.ship.getFocusRefillActive(), this.ship.getFocusRefillProgress());
+
+            // Update debug overlay
+            // TODO FIX THIS CAUSES WEIRD INTRO CAMERA JERK 
+            // const starStats = this.speedStars.getStarStats();
+            // const gameTime = this.clock.getElapsedTime();
+            // this.ui.updateDebugOverlay(gameTime, starStats.ahead, starStats.behind, starStats.distant, starStats.total, this.ship.state.speedKmh);
+
             this.audio.setSpeed(this.ship.state.speedKmh);
             if (this.ship.state.boosting && !this.prevBoost) this.audio.triggerBoost();
             this.prevBoost = this.ship.state.boosting;

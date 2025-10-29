@@ -3,7 +3,7 @@ import { Ship } from './Ship';
 import { Track } from './Track';
 import { PHYSICS } from './constants';
 
-export class SpeedStars {
+export class ShipSpeedStars {
     public root = new THREE.Group();
     private ship: Ship;
     private track: Track;
@@ -23,18 +23,28 @@ export class SpeedStars {
         const geo = new THREE.CylinderGeometry(0.01, 0.02, 1, 6, 1, true);
         const mat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false });
         this.imesh = new THREE.InstancedMesh(geo, mat, this.max);
+        this.imesh.renderOrder = 999; // Ensure stars render after other objects
+
+        // Initialize instanceColor attribute for proper rendering
+        this.imesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(this.max * 3), 3);
+
         this.velocities = new Float32Array(this.max);
         this.offsets = new Float32Array(this.max);
         this.colors = new Array(this.max);
         this.root.add(this.imesh);
+
+        // Initialize all stars with valid positions
         for (let i = 0; i < this.max; i++) this.respawn(i, true);
+
+        // Force bounds update
+        this.imesh.geometry.computeBoundingSphere();
+        this.imesh.geometry.computeBoundingBox();
         this.imesh.instanceMatrix.needsUpdate = true;
     }
 
     update(dt: number) {
-        const show = this.ship.state.boosting;
-        this.root.visible = show;
-        if (!show) return;
+        // Always visible - simple approach
+        this.root.visible = true;
 
         const forward = new THREE.Vector3(0, 0, 1);
         this.ship.root.localToWorld(forward).sub(this.ship.root.position).normalize();
@@ -44,6 +54,7 @@ export class SpeedStars {
         const mps = this.ship.state.speedKmh / 3.6;
         const baseSpeed = Math.max(10, mps * 1.5);
 
+        let activeStars = 0;
         for (let i = 0; i < this.max; i++) {
             const speed = baseSpeed * this.velocities[i];
             // move opposite to forward (towards camera)
@@ -68,8 +79,13 @@ export class SpeedStars {
             this.tmpObj.scale.set(1, len, 1);
             this.tmpObj.updateMatrix();
             this.imesh.setMatrixAt(i, this.tmpObj.matrix);
+            activeStars++;
         }
         this.imesh.instanceMatrix.needsUpdate = true;
+
+        // Force bounds update for consistent rendering
+        this.imesh.geometry.computeBoundingSphere();
+        this.imesh.geometry.computeBoundingBox();
     }
 
     private respawn(i: number, initial: boolean) {

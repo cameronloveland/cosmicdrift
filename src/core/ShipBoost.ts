@@ -1,76 +1,128 @@
 import * as THREE from 'three';
 import { Ship } from './Ship';
-import { PHYSICS } from './constants';
+
+interface Particle {
+    position: THREE.Vector3;
+    velocity: THREE.Vector3;
+    age: number;
+    maxAge: number;
+    opacity: number;
+    scale: number;
+}
 
 export class ShipBoost {
     public root = new THREE.Group();
     private ship: Ship;
-    private imesh!: THREE.InstancedMesh;
-    private max = 120;
-    private cursor = 0;
+    private particles: Particle[] = [];
+    private imesh: THREE.InstancedMesh;
     private tmpObj = new THREE.Object3D();
-    private colors!: Float32Array;
+    private colors: THREE.Color[] = [];
+    private maxParticles = 50;
 
     constructor(ship: Ship) {
         this.ship = ship;
-        const geo = new THREE.CylinderGeometry(2.12, 0.04, 0.5, 6, 1, true);
-        const mat = new THREE.MeshBasicMaterial({ color: 0x53d7ff, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false });
-        this.imesh = new THREE.InstancedMesh(geo, mat, this.max);
-        this.colors = new Float32Array(this.max * 3);
+
+        // Create particle geometry (small spheres)
+        const geometry = new THREE.SphereGeometry(0.05, 8, 6);
+
+        // Create material with additive blending for glow effect
+        const material = new THREE.MeshBasicMaterial({
+            color: 0x00ffff, // Cyan
+            transparent: true,
+            opacity: 0.8,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false
+        });
+
+        // Create instanced mesh for efficient rendering
+        this.imesh = new THREE.InstancedMesh(geometry, material, this.maxParticles);
+        this.imesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(this.maxParticles * 3), 3);
+        this.imesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
         this.root.add(this.imesh);
-    }
 
-    update(dt: number) {
-        // Manual boost particle effect - only emit when ship is actively boosting
-        const baseRate = 180;
-        let ratePerSec = 0;
-
-        if (this.ship.state.boosting) {
-            ratePerSec = baseRate;
+        // Initialize colors array
+        for (let i = 0; i < this.maxParticles; i++) {
+            this.colors[i] = new THREE.Color();
         }
-
-        // Increase particle rate dramatically when in tunnel
-        if (this.ship.state.inTunnel) {
-            ratePerSec = Math.max(ratePerSec, baseRate * 2.5);
-        }
-        if (ratePerSec === 0) return;
-
-        const count = Math.floor(ratePerSec * dt);
-        for (let i = 0; i < count; i++) this.spawn();
     }
 
     private spawn() {
-        const i = this.cursor++ % this.max;
-        const base = this.ship.root.position;
-        const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(this.ship.root.quaternion);
-        this.tmpObj.position.copy(base).addScaledVector(dir, -0.8);
-        this.tmpObj.quaternion.copy(this.ship.root.quaternion);
-        this.tmpObj.scale.setScalar(0.6 + Math.random() * 0.8);
-        this.tmpObj.updateMatrix();
-        this.imesh.setMatrixAt(i, this.tmpObj.matrix);
+        if (this.particles.length >= this.maxParticles) return;
 
-        // Vary particle colors: cyan/magenta gradient in tunnels, cyan when boosting
-        let color: THREE.Color;
-        if (this.ship.state.inTunnel) {
-            // Mix cyan and magenta for tunnel particles
-            const mix = Math.random();
-            if (mix > 0.5) {
-                // Cyan
-                color = new THREE.Color(0.2, 0.7 + 0.3 * Math.random(), 1);
-            } else {
-                // Magenta tint
-                color = new THREE.Color(1, 0.2, 0.7 + 0.3 * Math.random());
-            }
-        } else {
-            // Manual boost particles (cyan trail)
-            const c = 0.7 + 0.3 * Math.random();
-            color = new THREE.Color(0.2, c, 1);
+        const shipPos = this.ship.root.position.clone();
+        const shipDir = new THREE.Vector3(0, 0, 1).applyQuaternion(this.ship.root.quaternion);
+        const shipRight = new THREE.Vector3(1, 0, 0).applyQuaternion(this.ship.root.quaternion);
+
+        // Spawn particles behind the ship
+        const offset = (Math.random() - 0.5) * 0.6; // Spread across ship width
+        const spawnPos = shipPos.clone()
+            .addScaledVector(shipRight, offset)
+            .addScaledVector(shipDir, -0.5); // Behind ship
+
+        const particle: Particle = {
+            position: spawnPos,
+            velocity: shipDir.clone().multiplyScalar(-2 - Math.random() * 3), // Move backward
+            age: 0,
+            maxAge: 0.5 + Math.random() * 1.0, // 0.5-1.5 seconds
+            opacity: 1.0,
+            scale: 0.5 + Math.random() * 0.5 // 0.5-1.0 scale
+        };
+
+        this.particles.push(particle);
+    }
+
+    update(dt: number) {
+        // Only visible when boosting
+        const isBoosting = this.ship.state.boosting;
+        this.root.visible = isBoosting;
+        this.imesh.visible = isBoosting;
+
+        // Spawn new particles when boosting
+        if (this.ship.state.boosting) {
+            this.spawn();
         }
 
-        this.imesh.setColorAt(i, color);
+        // Update existing particles
+        for (let i = this.particles.length - 1; i >= 0; i--) {
+            const particle = this.particles[i];
+
+            // Age particle
+            particle.age += dt;
+
+            // Move particle
+            particle.position.addScaledVector(particle.velocity, dt);
+
+            // Fade out over time
+            particle.opacity = 1 - (particle.age / particle.maxAge);
+
+            // Remove dead particles
+            if (particle.age >= particle.maxAge || particle.opacity <= 0) {
+                this.particles.splice(i, 1);
+                continue;
+            }
+
+            // Update instance matrix
+            this.tmpObj.position.copy(particle.position);
+            this.tmpObj.scale.setScalar(particle.scale * particle.opacity);
+            this.tmpObj.updateMatrix();
+            this.imesh.setMatrixAt(i, this.tmpObj.matrix);
+
+            // Update color
+            const color = this.colors[i];
+            color.setHSL(0.5, 1.0, 0.5); // Cyan
+            color.multiplyScalar(particle.opacity);
+            this.imesh.setColorAt(i, color);
+        }
+
+        // Update instanced mesh
         this.imesh.instanceMatrix.needsUpdate = true;
-        (this.imesh.instanceColor as any).needsUpdate = true;
+        this.imesh.instanceColor!.needsUpdate = true;
+        this.imesh.count = this.particles.length;
+    }
+
+    public dispose() {
+        this.imesh.geometry.dispose();
+        (this.imesh.material as THREE.Material).dispose();
+        this.root.remove(this.imesh);
     }
 }
-
-

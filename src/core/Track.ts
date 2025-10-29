@@ -85,13 +85,11 @@ export class Track {
             // Test the curve with a simple point first
             const testPoint = new THREE.Vector3();
             this.curve.getPointAt(0, testPoint);
-            console.log('Curve test point at t=0:', testPoint);
 
             // Test a few more points to ensure curve is working
             for (let t = 0.1; t <= 1.0; t += 0.2) {
                 const testPoint2 = new THREE.Vector3();
                 this.curve.getPointAt(t, testPoint2);
-                console.log(`Curve test point at t=${t}:`, testPoint2);
             }
 
             this.length = this.curve.getLength();

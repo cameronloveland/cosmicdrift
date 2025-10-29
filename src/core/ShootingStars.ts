@@ -31,7 +31,7 @@ export class ShootingStars {
         this.root.add(this.trailMesh);
 
         // Start with immediate spawn for testing
-        this.nextSpawnTime = 0.05;
+        this.nextSpawnTime = 0.05; // Frequent spawning for good coverage
     }
 
 
@@ -44,6 +44,7 @@ export class ShootingStars {
             opacity: 1.0, // Full opacity for maximum visibility
             blending: THREE.AdditiveBlending,
             depthWrite: false,
+            depthTest: false, // Disable depth test to ensure visibility
             toneMapped: false
         });
         this.starMesh = new THREE.InstancedMesh(starGeometry, starMaterial, this.maxStars);
@@ -58,12 +59,15 @@ export class ShootingStars {
             opacity: 1.0, // Full opacity for maximum visibility
             blending: THREE.AdditiveBlending,
             depthWrite: false,
+            depthTest: false, // Disable depth test to ensure visibility
             toneMapped: false
         });
         this.trailMesh = new THREE.InstancedMesh(trailGeometry, trailMaterial, this.maxStars * SHOOTING_STARS.trailParticleCount);
     }
 
     update(dt: number) {
+
+
         // Spawn new shooting stars
         this.nextSpawnTime -= dt;
         if (this.nextSpawnTime <= 0 && this.activeStars.length < this.maxStars) {
@@ -96,17 +100,34 @@ export class ShootingStars {
     }
 
     private spawnStar() {
-        // Spawn at a closer distance for better visibility while still being "outskirts"
-        // Use a distance that's visible but still feels like outer space
-        const spawnRadius = 2500; // Much closer than starfield radius for visibility
+        // Create multiple spawn zones for better distribution
+        const spawnZones = [
+            { radius: 800, weight: 0.3 },   // Close zone
+            { radius: 1200, weight: 0.4 },  // Medium zone  
+            { radius: 1800, weight: 0.3 }   // Far zone
+        ];
 
+        // Select spawn zone based on weights
+        const rand = Math.random();
+        let selectedZone = spawnZones[0];
+        let cumulativeWeight = 0;
+
+        for (const zone of spawnZones) {
+            cumulativeWeight += zone.weight;
+            if (rand <= cumulativeWeight) {
+                selectedZone = zone;
+                break;
+            }
+        }
+
+        // Use uniform distribution across the sphere
         const theta = Math.random() * Math.PI * 2;
         const phi = Math.acos(2 * Math.random() - 1);
 
         const position = new THREE.Vector3(
-            spawnRadius * Math.sin(phi) * Math.cos(theta),
-            spawnRadius * Math.cos(phi),
-            spawnRadius * Math.sin(phi) * Math.sin(theta)
+            selectedZone.radius * Math.sin(phi) * Math.cos(theta),
+            selectedZone.radius * Math.cos(phi),
+            selectedZone.radius * Math.sin(phi) * Math.sin(theta)
         );
 
         // Create direction that ensures shooting stars cross through the track area
@@ -119,7 +140,7 @@ export class ShootingStars {
         ).normalize();
 
         // Mix random direction with center direction for better track crossing
-        const finalDirection = randomDirection.clone().lerp(centerDirection, 0.3).normalize();
+        const finalDirection = randomDirection.clone().lerp(centerDirection, 0.1).normalize(); // Reduced bias
 
         const speed = SHOOTING_STARS.speedMin + Math.random() * (SHOOTING_STARS.speedMax - SHOOTING_STARS.speedMin);
         const velocity = finalDirection.multiplyScalar(speed);
@@ -178,7 +199,7 @@ export class ShootingStars {
 
         // Scale based on lifetime (fade out) - make larger for visibility
         const lifetimeRatio = star.lifetime / star.maxLifetime;
-        const scale = SHOOTING_STARS.starSize * 2.0 * (0.5 + 0.5 * lifetimeRatio); // 2x larger
+        const scale = SHOOTING_STARS.starSize * 4.0 * (0.5 + 0.5 * lifetimeRatio); // 4x larger for visibility
         this.tmpObj.scale.set(1, scale * 2, 1); // Elongated along velocity
 
         this.tmpObj.updateMatrix();
@@ -198,7 +219,7 @@ export class ShootingStars {
 
                 // Scale based on age (fade out) - make larger for visibility
                 const ageRatio = particle.age / particle.maxAge;
-                const scale = 0.8 * (1 - ageRatio); // Larger trail particles
+                const scale = 2.0 * (1 - ageRatio); // Much larger trail particles
                 this.tmpObj.scale.setScalar(scale);
 
                 this.tmpObj.updateMatrix();

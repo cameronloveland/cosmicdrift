@@ -142,8 +142,6 @@ export class NPCShip {
         this.createShipBoost();
         this.root.add(this.shipBoost);
         this.shipBoost.visible = false;
-
-        console.log(`NPC ${this.racerId} ship model created with color:`, this.color);
     }
 
     private createRocketTail() {
@@ -340,7 +338,6 @@ export class NPCShip {
         this.boostDuration = PHYSICS.boostDurationSec * 0.8; // NPCs boost for 80% of player duration
         this.boostEnergy = Math.max(0, this.boostEnergy - 0.4); // Use 40% of boost energy
         this.boostCooldown = 2.0; // 2 second cooldown between boosts
-        console.log(`NPC ${this.racerId} activated boost!`);
     }
 
     private updateTunnelBoost(dt: number) {
@@ -547,7 +544,6 @@ export class NPCShip {
 
         if (crossedStartLine && this.state.lapCurrent < this.state.lapTotal) {
             this.state.lapCurrent++;
-            console.log(`NPC ${this.racerId} completed lap ${this.state.lapCurrent}`);
         }
     }
 
@@ -612,7 +608,6 @@ export class NPCShip {
     public finish(finishTime: number) {
         this.finished = true;
         this.finishTime = finishTime;
-        console.log(`NPC ${this.racerId} finished at ${finishTime.toFixed(2)}s`);
     }
 
     public setCountdownMode(enabled: boolean) {
@@ -627,7 +622,6 @@ export class NPCShip {
         // Transition from pre-race (lap 0) to race start (lap 1)
         this.state.lapCurrent = 1;
         this.countdownMode = false; // Allow movement when race starts
-        console.log(`NPC ${this.racerId} race started!`);
     }
 
     public reset() {
