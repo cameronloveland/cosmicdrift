@@ -206,10 +206,10 @@ export const SHOOTING_STARS = {
     trailParticleCount: 50, // Particles per trail (more dramatic trails)
     starSize: 4.0, // Size of star core (slightly smaller for better performance)
     trailColors: [
-        new Color(0x53d7ff), // Cyan
-        new Color(0xff2bd6), // Magenta
-        new Color(0xffffff), // White
-        new Color(0xffff00)  // Yellow for more variety
+        new Color(0x00ffff), // Pure cyan
+        new Color(0xff1493), // Deep pink
+        new Color(0x00bfff), // Deep sky blue (cyan variant)
+        new Color(0xff69b4)  // Hot pink
     ]
 };
 
