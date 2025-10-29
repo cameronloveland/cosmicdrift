@@ -14,6 +14,12 @@ export class UI {
     private radioVol = document.getElementById('radioVol')! as HTMLInputElement;
     private radioPrev = document.getElementById('radioPrev')! as HTMLButtonElement;
     private radioNext = document.getElementById('radioNext')! as HTMLButtonElement;
+    private debugGameTimeEl = document.getElementById('debugGameTime')!;
+    private debugStarsAheadEl = document.getElementById('debugStarsAhead')!;
+    private debugStarsBehindEl = document.getElementById('debugStarsBehind')!;
+    private debugDistantStarsEl = document.getElementById('debugDistantStars')!;
+    private debugTotalStarsEl = document.getElementById('debugTotalStars')!;
+    private debugShipSpeedEl = document.getElementById('debugShipSpeed')!;
 
     constructor() {
         // Initialize speedometer gauge
@@ -144,6 +150,27 @@ export class UI {
     hideCountdown() {
         this.countdownEl.classList.remove('visible');
         this.countdownEl.classList.add('hidden');
+    }
+
+    updateDebugOverlay(gameTime: number, starsAhead: number, starsBehind: number, distantStars: number, totalStars: number, shipSpeed: number) {
+        if (this.debugGameTimeEl) {
+            this.debugGameTimeEl.textContent = gameTime.toFixed(1);
+        }
+        if (this.debugStarsAheadEl) {
+            this.debugStarsAheadEl.textContent = starsAhead.toString();
+        }
+        if (this.debugStarsBehindEl) {
+            this.debugStarsBehindEl.textContent = starsBehind.toString();
+        }
+        if (this.debugDistantStarsEl) {
+            this.debugDistantStarsEl.textContent = distantStars.toString();
+        }
+        if (this.debugTotalStarsEl) {
+            this.debugTotalStarsEl.textContent = totalStars.toString();
+        }
+        if (this.debugShipSpeedEl) {
+            this.debugShipSpeedEl.textContent = shipSpeed.toFixed(1);
+        }
     }
 
 }
