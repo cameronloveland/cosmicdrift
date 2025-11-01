@@ -76,6 +76,16 @@ export class UI {
     setRadioUi(isOn: boolean, stationName: string) {
         this.radioToggle.classList.toggle('on', isOn);
         this.radioStation.textContent = stationName;
+
+        // Hide/show volume control based on radio state
+        const volumeControl = document.querySelector('.volume-control');
+        if (volumeControl) {
+            if (isOn) {
+                volumeControl.classList.remove('hidden');
+            } else {
+                volumeControl.classList.add('hidden');
+            }
+        }
     }
 
     setRadioVolumeSlider(v: number) {

@@ -34,25 +34,30 @@ export class ShootingStars {
         // Start with immediate spawn for testing
         this.nextSpawnTime = 0.05; // Frequent spawning for good coverage
     }
-    
+
     public setStarfieldRadius(r: number) {
         this.starfieldRadius = r;
     }
 
 
     private setupStarMesh() {
-        // Create elongated cylinder for shooting star core
-        const starGeometry = new THREE.CylinderGeometry(0.1, 0.1, 1, 6, 1, true);
+        // Create bright sphere for shooting star core with soft glow
+        const starGeometry = new THREE.SphereGeometry(0.1, 8, 8); // Very small for point-like appearance
         const starMaterial = new THREE.MeshBasicMaterial({
             color: 0xffffff,
             transparent: true,
-            opacity: 1.0, // Full opacity for maximum visibility
+            opacity: 0.8, // Slightly softer for glow
             blending: THREE.AdditiveBlending,
             depthWrite: false,
-            depthTest: false, // Disable depth test to ensure visibility
-            toneMapped: false
+            depthTest: true, // Enable depth test for proper layering
+            toneMapped: false,
+            vertexColors: true // Enable vertex colors for per-instance color control
         });
         this.starMesh = new THREE.InstancedMesh(starGeometry, starMaterial, this.maxStars);
+
+        // Initialize instanceColor for per-star fade effects
+        this.starMesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(this.maxStars * 3), 3);
+        this.starMesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
     }
 
     private setupTrailMesh() {
@@ -83,15 +88,16 @@ export class ShootingStars {
         // Update existing stars
         for (let i = this.activeStars.length - 1; i >= 0; i--) {
             const star = this.activeStars[i];
-            star.lifetime -= dt;
-
-            if (star.lifetime <= 0) {
-                this.removeStar(i);
-                continue;
-            }
 
             // Update star position
             star.position.addScaledVector(star.velocity, dt);
+
+            // Remove star if it travels too far from center (beyond outer shell with fade distance)
+            const distanceFromCenter = star.position.length();
+            if (distanceFromCenter > this.starfieldRadius * 2.0) {
+                this.removeStar(i);
+                continue;
+            }
 
             // Update trail particles
             this.updateTrailParticles(star, dt);
@@ -105,8 +111,9 @@ export class ShootingStars {
     }
 
     private spawnStar() {
-        // Spawn on the outer edge of starfield with slight variation
-        const spawnRadius = this.starfieldRadius * (0.95 + Math.random() * 0.1); // 95-105% of starfield radius
+        // Spawn in far shell for distant background shooting stars
+        // Use starfield radius to ensure they're as distant as background stars
+        const spawnRadius = this.starfieldRadius * (0.8 + Math.random() * 0.4); // 80-120% of starfield for far distant background
 
         // Use uniform distribution across the sphere
         const theta = Math.random() * Math.PI * 2;
@@ -118,14 +125,15 @@ export class ShootingStars {
             spawnRadius * Math.sin(phi) * Math.sin(theta)
         );
 
-        // Completely random direction (no center bias)
+        // Random direction for ambient movement
         const randomDirection = new THREE.Vector3(
             (Math.random() - 0.5) * 2,
             (Math.random() - 0.5) * 2,
             (Math.random() - 0.5) * 2
         ).normalize();
 
-        const speed = SHOOTING_STARS.speedMin + Math.random() * (SHOOTING_STARS.speedMax - SHOOTING_STARS.speedMin);
+        // Much faster speed for visible streaks
+        const speed = 300 + Math.random() * 200; // 300-500 units/sec
         const velocity = randomDirection.multiplyScalar(speed);
 
         // White trail color to match background stars
@@ -174,19 +182,46 @@ export class ShootingStars {
         // Position star
         this.tmpObj.position.copy(star.position);
 
-        // Orient star along velocity direction
+        // Orient star along velocity direction with proper 3D rotation (fixes flat plane bug)
         const direction = star.velocity.clone().normalize();
         const up = new THREE.Vector3(0, 1, 0);
-        const quat = new THREE.Quaternion().setFromUnitVectors(up, direction);
+
+        // Handle edge case where direction is parallel to up
+        let right: THREE.Vector3;
+        if (Math.abs(direction.y) > 0.99) {
+            right = new THREE.Vector3(1, 0, 0);
+        } else {
+            right = new THREE.Vector3().crossVectors(up, direction).normalize();
+        }
+        const upCorrected = new THREE.Vector3().crossVectors(direction, right).normalize();
+
+        const m = new THREE.Matrix4().makeBasis(right, upCorrected, direction);
+        const quat = new THREE.Quaternion().setFromRotationMatrix(m);
         this.tmpObj.quaternion.copy(quat);
 
-        // Scale based on lifetime (fade out) - make larger for visibility
-        const lifetimeRatio = star.lifetime / star.maxLifetime;
-        const scale = SHOOTING_STARS.starSize * 4.0 * (0.5 + 0.5 * lifetimeRatio); // 4x larger for visibility
-        this.tmpObj.scale.set(1, scale * 2, 1); // Elongated along velocity
+        // Scale based on distance from center for consistent visibility
+        // Star is a sphere, so scale uniformly (no elongation - trail provides streak)
+        const distance = star.position.length();
+        const minDistance = this.starfieldRadius * 0.8;
+        const fadeStartDistance = this.starfieldRadius * 1.5;
+        const fadeEndDistance = this.starfieldRadius * 2.0;
+
+        // Calculate fade ratio based on distance
+        let visibility = 1.0;
+        if (distance > fadeStartDistance) {
+            const fadeRatio = THREE.MathUtils.clamp((distance - fadeStartDistance) / (fadeEndDistance - fadeStartDistance), 0, 1);
+            visibility = 1.0 - fadeRatio; // Fade from 100% to 0% over fade zone
+        }
+
+        const scale = SHOOTING_STARS.starSize * 15.0 * visibility;
+        this.tmpObj.scale.setScalar(scale); // Uniform scale for sphere
 
         this.tmpObj.updateMatrix();
         this.starMesh.setMatrixAt(star.index, this.tmpObj.matrix);
+
+        // Set color based on visibility for fade effect
+        const color = star.trailColor.clone().multiplyScalar(visibility);
+        this.starMesh.setColorAt(star.index, color);
     }
 
     private updateTrailMesh() {
@@ -200,9 +235,9 @@ export class ShootingStars {
                 this.tmpObj.position.copy(particle.position);
                 this.tmpObj.quaternion.identity();
 
-                // Scale based on age (fade out) - make larger for visibility
+                // Scale based on age (fade out) - make much larger for visibility
                 const ageRatio = particle.age / particle.maxAge;
-                const scale = 2.0 * (1 - ageRatio); // Much larger trail particles
+                const scale = 15.0 * (1 - ageRatio); // Much larger trail particles
                 this.tmpObj.scale.setScalar(scale);
 
                 this.tmpObj.updateMatrix();
@@ -226,6 +261,7 @@ export class ShootingStars {
 
         this.starMesh.instanceMatrix.needsUpdate = true;
         this.trailMesh.instanceMatrix.needsUpdate = true;
+        (this.starMesh.instanceColor as any).needsUpdate = true;
         (this.trailMesh.instanceColor as any).needsUpdate = true;
     }
 
