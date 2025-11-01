@@ -8,12 +8,10 @@ export class UI {
     private controlsMenuEl = document.getElementById('controlsMenu')!;
     private countdownEl = document.getElementById('countdown')!;
     private countdownTextEl = document.getElementById('countdownText')!;
-    private radioRoot = document.getElementById('radio')!;
-    private radioToggle = document.getElementById('radioToggle')! as HTMLButtonElement;
+    private radioToggle = document.getElementById('radioToggle')! as HTMLDivElement;
     private radioStation = document.getElementById('radioStation')! as HTMLDivElement;
     private radioVol = document.getElementById('radioVol')! as HTMLInputElement;
-    private radioPrev = document.getElementById('radioPrev')! as HTMLButtonElement;
-    private radioNext = document.getElementById('radioNext')! as HTMLButtonElement;
+    private volumeFill = document.getElementById('volumeFill')! as HTMLDivElement;
     private debugGameTimeEl = document.getElementById('debugGameTime')!;
     private debugStarsAheadEl = document.getElementById('debugStarsAhead')!;
     private debugStarsBehindEl = document.getElementById('debugStarsBehind')!;
@@ -66,27 +64,27 @@ export class UI {
         this.radioToggle.addEventListener('click', handler);
     }
 
-    onRadioPrev(handler: () => void) {
-        this.radioPrev.addEventListener('click', handler);
-    }
-
-    onRadioNext(handler: () => void) {
-        this.radioNext.addEventListener('click', handler);
-    }
 
     onRadioVolume(handler: (v: number) => void) {
-        this.radioVol.addEventListener('input', () => handler(parseFloat(this.radioVol.value)));
+        this.radioVol.addEventListener('input', () => {
+            const value = parseFloat(this.radioVol.value);
+            this.updateVolumeFill(value);
+            handler(value);
+        });
     }
 
     setRadioUi(isOn: boolean, stationName: string) {
-        this.radioToggle.textContent = isOn ? 'ON' : 'OFF';
         this.radioToggle.classList.toggle('on', isOn);
-        this.radioToggle.classList.toggle('off', !isOn);
         this.radioStation.textContent = stationName;
     }
 
     setRadioVolumeSlider(v: number) {
         this.radioVol.value = String(v);
+        this.updateVolumeFill(v);
+    }
+
+    private updateVolumeFill(v: number) {
+        this.volumeFill.style.width = `${v * 100}%`;
     }
 
     setPaused(paused: boolean) {

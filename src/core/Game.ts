@@ -38,6 +38,7 @@ export class Game {
     private freeCamYaw = 0;
     private freeCamPitch = 0;
     private freeCamInput = { forward: false, back: false, left: false, right: false, up: false, down: false, sprint: false };
+    private freeCamSprintSpeed = 1; // accumulates over time when sprinting
     private savedCamPos = new THREE.Vector3();
     private savedCamQuat = new THREE.Quaternion();
 
@@ -328,23 +329,6 @@ export class Game {
             }
         });
         this.ui.onRadioVolume((v) => this.audio.setRadioVolume(v));
-        // Prev/Next station
-        this.ui.onRadioPrev(async () => {
-            this.radio.stationIndex = (this.radio.stationIndex - 1 + this.radio.stations.length) % this.radio.stations.length;
-            const st = this.radio.stations[this.radio.stationIndex];
-            this.audio.setRadioSource(st.url);
-            this.ui.setRadioUi(this.radio.on, st.name);
-            if (this.radio.on) await this.playOrAdvance(2);
-            this.ui.setRadioUi(this.radio.on, st.name);
-        });
-        this.ui.onRadioNext(async () => {
-            this.radio.stationIndex = (this.radio.stationIndex + 1) % this.radio.stations.length;
-            const st = this.radio.stations[this.radio.stationIndex];
-            this.audio.setRadioSource(st.url);
-            this.ui.setRadioUi(this.radio.on, st.name);
-            if (this.radio.on) await this.playOrAdvance(2);
-            this.ui.setRadioUi(this.radio.on, st.name);
-        });
 
         // Pause menu button handlers
         this.ui.onRestartClick(() => {
@@ -403,6 +387,10 @@ export class Game {
             this.togglePause();
         }
 
+        // Free flight mode toggle with '-' key
+        if (e.code === 'Minus' && down && this.started) {
+            this.toggleFreeFlying();
+        }
 
         // Free camera movement (only when paused or free flying)
         if (!this.paused && !this.freeFlying) return;
@@ -474,6 +462,9 @@ export class Game {
             // Clear ship input to avoid stuck keys
             this.ship.clearInput();
 
+            // Reset sprint speed
+            this.freeCamSprintSpeed = 1;
+
             // Disable ship camera control
             this.ship.setCameraControl(false);
 
@@ -495,8 +486,18 @@ export class Game {
 
     private updateFreeCamera(dt: number) {
         const baseSpeed = 20; // units per second
-        const sprintMultiplier = 3; // 3x faster when sprinting
-        const speed = baseSpeed * (this.freeCamInput.sprint ? sprintMultiplier : 1);
+        const sprintAcceleration = 2; // speed multiplier per second when sprinting
+        const maxSprintSpeed = 50; // maximum speed multiplier
+
+        // Accumulate sprint speed when shift is held
+        if (this.freeCamInput.sprint) {
+            this.freeCamSprintSpeed = Math.min(this.freeCamSprintSpeed + sprintAcceleration * dt, maxSprintSpeed);
+        } else {
+            // Decay sprint speed when not sprinting
+            this.freeCamSprintSpeed = Math.max(1, this.freeCamSprintSpeed - sprintAcceleration * dt);
+        }
+
+        const speed = baseSpeed * this.freeCamSprintSpeed;
 
         const forward = new THREE.Vector3(0, 0, -1);
         const right = new THREE.Vector3(1, 0, 0);
