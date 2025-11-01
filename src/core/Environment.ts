@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import { STARFIELD_MIN_RADIUS, PLANET_EFFECTS } from './constants';
+// import { AccretionDisk } from './AccretionDisk';
+// import { AccretionParticles } from './AccretionParticles';
 
 export class Environment {
     public root = new THREE.Group();
@@ -8,6 +10,11 @@ export class Environment {
     private planets = new THREE.Group();
     private blackHole = new THREE.Group();
     private eventHorizonGlow!: THREE.Mesh;
+    // Temporarily disabled - moved to separate files
+    // private accretionDisk!: THREE.Mesh;
+    // private accretionParticles!: THREE.Points;
+    // private accretionDisk!: AccretionDisk;
+    // private accretionParticles!: AccretionParticles;
     private vortexLayers: THREE.Points[] = [];
     private jupiterRings: THREE.Points[] = [];
     private diskLights: THREE.PointLight[] = [];
@@ -98,13 +105,18 @@ export class Environment {
         this.eventHorizonGlow = new THREE.Mesh(horizonGeometry, horizonMaterial);
         this.blackHole.add(this.eventHorizonGlow);
 
-        // 3. Clean black hole - no rings or particles
+        // 3. Accretion disk - temporarily disabled (moved to AccretionDisk.ts)
+        // this.accretionDisk = new AccretionDisk();
+        // this.blackHole.add(this.accretionDisk.root);
 
-        // 6. No additional effects - clean black hole
+        // 4. Accretion particles - temporarily disabled (moved to AccretionParticles.ts)
+        // this.accretionParticles = new AccretionParticles();
+        // this.blackHole.add(this.accretionParticles.root);
 
-        // 7. Add rotating point lights around vortex
+        // 5. Add rotating point lights around vortex
         this.addVortexLights();
     }
+
 
 
 
@@ -251,6 +263,14 @@ export class Environment {
         });
 
         this.stars.rotation.z += dt * 0.005;
+
+        // Accretion disk and particles temporarily disabled (moved to separate files)
+        // if (this.accretionDisk) {
+        //     this.accretionDisk.update(dt);
+        // }
+        // if (this.accretionParticles) {
+        //     this.accretionParticles.update(dt);
+        // }
 
         // No vortex layer animations - clean black hole
 
