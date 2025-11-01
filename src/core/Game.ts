@@ -65,7 +65,7 @@ export class Game {
     private tunnelDarkenCurrent = 0; // smoothly interpolated value
 
     private radio = {
-        on: true,
+        on: false,
         stationIndex: 0,
         stations: [
             { name: 'Nightride FM', url: 'https://stream.nightride.fm/nightride.mp3' },
@@ -170,9 +170,6 @@ export class Game {
 
         this.audio = new AudioSystem();
         this.audio.attach(this.camera);
-        // initialize radio stream source
-        const initial = this.radio.stations[this.radio.stationIndex];
-        this.audio.initRadio(initial.url);
 
         // Initialize race manager
         this.raceManager = new RaceManager();
@@ -298,8 +295,15 @@ export class Game {
             this.audio.start();
             // hide cursor only once the game actually starts
             this.renderer.domElement.style.cursor = 'none';
-            // Autoplay radio on first user gesture
-            this.playOrAdvance().then(() => { /* state/UI updated in helper */ });
+            // Turn on radio when game starts (source already preloaded)
+            this.radio.on = true;
+            const st = this.radio.stations[this.radio.stationIndex];
+            this.ui.setRadioUi(true, st.name);
+            this.playOrAdvance().catch(() => {
+                // If playback fails, revert UI state
+                this.radio.on = false;
+                this.ui.setRadioUi(false, st.name);
+            });
             window.removeEventListener('keydown', handler);
             document.getElementById('beginBtn')?.removeEventListener('click', begin);
             start?.removeEventListener('pointerdown', begin);
@@ -315,14 +319,27 @@ export class Game {
         start?.addEventListener('pointerdown', begin);
 
         // Radio UI wiring
+        const initial = this.radio.stations[this.radio.stationIndex];
         this.ui.setRadioUi(this.radio.on, initial.name);
         this.ui.setRadioVolumeSlider(0.6);
+
+        // Preload radio source so it's ready when game starts
+        this.audio.preloadRadio(initial.url);
 
         this.ui.onRadioToggle(async () => {
             const st = this.radio.stations[this.radio.stationIndex];
             if (!this.radio.on) {
-                await this.playOrAdvance();
+                // Update UI immediately for instant feedback
+                this.radio.on = true;
+                this.ui.setRadioUi(true, st.name);
+                // Play audio in background without blocking
+                this.playOrAdvance().catch(() => {
+                    // If playback fails, revert UI state
+                    this.radio.on = false;
+                    this.ui.setRadioUi(false, st.name);
+                });
             } else {
+                // Update UI immediately
                 this.audio.pauseRadio();
                 this.radio.on = false;
                 this.ui.setRadioUi(false, st.name);
@@ -726,15 +743,25 @@ export class Game {
             this.audio.setRadioSource(st.url);
             const ok = await this.audio.playRadio();
             if (ok) {
-                this.radio.on = true;
-                this.ui.setRadioUi(true, st.name);
+                // Only update UI if radio is still on (user didn't toggle it off)
+                if (this.radio.on) {
+                    this.ui.setRadioUi(true, st.name);
+                }
                 return true;
             }
             this.radio.stationIndex = (this.radio.stationIndex + 1) % this.radio.stations.length;
+            // Update station name in UI if radio is still on
+            if (this.radio.on) {
+                const newSt = this.radio.stations[this.radio.stationIndex];
+                this.ui.setRadioUi(true, newSt.name);
+            }
         }
-        this.radio.on = false;
-        const st = this.radio.stations[this.radio.stationIndex];
-        this.ui.setRadioUi(false, st.name);
+        // Only update UI if radio is still on (user didn't toggle it off during loading)
+        if (this.radio.on) {
+            this.radio.on = false;
+            const st = this.radio.stations[this.radio.stationIndex];
+            this.ui.setRadioUi(false, st.name);
+        }
         return false;
     }
 

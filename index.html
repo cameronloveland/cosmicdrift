@@ -202,6 +202,13 @@
             gap: 4px;
             width: 140px;
             flex-shrink: 0;
+            transition: opacity 0.3s ease, visibility 0.3s ease;
+        }
+
+        .volume-control.hidden {
+            opacity: 0;
+            visibility: hidden;
+            pointer-events: none;
         }
 
         .volume-label {
@@ -230,8 +237,8 @@
             left: 0;
             height: 100%;
             width: 60%;
-            background: linear-gradient(90deg, #53d7ff, #c33dff, #ff2bd6);
-            box-shadow: 0 0 18px rgba(197, 64, 255, 0.7);
+            background: #ff2bd6;
+            box-shadow: 0 0 18px rgba(255, 43, 214, 0.7);
             transition: width 0.08s ease-out;
         }
 
@@ -254,18 +261,19 @@
             width: 14px;
             height: 14px;
             border-radius: 50%;
-            background: linear-gradient(135deg, #53d7ff, #ff2bd6);
+            background: #ff2bd6;
             box-shadow:
-                0 0 10px rgba(83, 215, 255, 0.9),
+                0 0 10px rgba(255, 43, 214, 0.9),
                 0 0 20px rgba(255, 43, 214, 0.7),
                 0 2px 6px rgba(0, 0, 0, 0.4);
             border: 2px solid rgba(255, 255, 255, 0.5);
             transition: all 0.2s ease;
+            margin-top: -3px;
         }
 
         .radio-container input[type="range"]::-webkit-slider-thumb:hover {
             box-shadow:
-                0 0 15px rgba(83, 215, 255, 1),
+                0 0 15px rgba(255, 43, 214, 1),
                 0 0 30px rgba(255, 43, 214, 0.9);
             transform: scale(1.2);
         }
@@ -274,9 +282,9 @@
             width: 14px;
             height: 14px;
             border-radius: 50%;
-            background: linear-gradient(135deg, #53d7ff, #ff2bd6);
+            background: #ff2bd6;
             box-shadow:
-                0 0 10px rgba(83, 215, 255, 0.9),
+                0 0 10px rgba(255, 43, 214, 0.9),
                 0 0 20px rgba(255, 43, 214, 0.7),
                 0 2px 6px rgba(0, 0, 0, 0.4);
             border: 2px solid rgba(255, 255, 255, 0.5);
@@ -285,7 +293,7 @@
 
         .radio-container input[type="range"]::-moz-range-thumb:hover {
             box-shadow:
-                0 0 15px rgba(83, 215, 255, 1),
+                0 0 15px rgba(255, 43, 214, 1),
                 0 0 30px rgba(255, 43, 214, 0.9);
             transform: scale(1.2);
         }
@@ -297,6 +305,7 @@
         .radio-container input[type="range"]::-webkit-slider-runnable-track {
             background: transparent;
             height: 8px;
+            margin: 3px 0;
         }
 
         .hud .speed {

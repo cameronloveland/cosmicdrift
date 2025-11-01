@@ -79,6 +79,8 @@ export class AudioSystem {
         el.style.display = 'none';
         document.body.appendChild(el);
         this.radioMedia = el;
+        // Start loading immediately
+        el.load();
     }
 
     setRadioSource(streamUrl: string) {
@@ -91,9 +93,21 @@ export class AudioSystem {
         this.radioMedia.load();
     }
 
+    preloadRadio(streamUrl: string) {
+        if (!this.radioMedia) {
+            this.initRadio(streamUrl);
+        }
+        // Force preloading
+        if (this.radioMedia) {
+            this.radioMedia.src = streamUrl;
+            this.radioMedia.preload = 'auto';
+            this.radioMedia.load();
+        }
+    }
+
     async playRadio(): Promise<boolean> {
         try {
-            return false;
+            //return false;
             await this.radioMedia?.play();
             return true;
         } catch (e) {
