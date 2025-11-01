@@ -407,13 +407,79 @@
 
         .hidden {
             opacity: 0;
-            transition: opacity .4s ease;
+            visibility: hidden;
+            transition: opacity .4s ease, visibility 0s linear .4s;
             pointer-events: none;
         }
 
         .visible {
             opacity: 1;
+            visibility: visible;
             transition: opacity .6s ease;
+        }
+
+        /* Speedometer Gauge Styles */
+        .speedometer-container {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            pointer-events: none;
+        }
+
+        .speedometer-container canvas {
+            width: 320px;
+            height: 320px;
+            pointer-events: none;
+            filter: drop-shadow(0 0 20px rgba(83, 215, 255, 0.3)) drop-shadow(0 0 40px rgba(255, 43, 214, 0.2));
+            border-radius: 50%;
+        }
+
+        /* Countdown Styles */
+        .countdown {
+            position: absolute;
+            inset: 0;
+            display: grid;
+            place-items: center;
+            pointer-events: none;
+            font-family: 'Orbitron', 'Oxanium', sans-serif;
+        }
+
+        .countdown-text {
+            font-size: clamp(80px, 12vw, 120px);
+            font-weight: 800;
+            letter-spacing: 4px;
+            color: transparent;
+            background: linear-gradient(90deg, #53d7ff 0%, #ff2bd6 50%, #53d7ff 100%);
+            -webkit-background-clip: text;
+            background-clip: text;
+            background-size: 200% 100%;
+            animation: neonSweep 1.5s linear infinite;
+            text-shadow: 0 0 30px rgba(83, 215, 255, .8), 0 0 60px rgba(255, 43, 214, .6), 0 0 90px rgba(83, 215, 255, .4);
+            -webkit-text-stroke: 2px rgba(255, 255, 255, .2);
+            filter: drop-shadow(0 0 20px rgba(83, 215, 255, .5));
+        }
+
+        .countdown-text.go {
+            font-size: clamp(100px, 15vw, 140px);
+            animation: goPulse 0.5s ease-out;
+        }
+
+        @keyframes goPulse {
+            0% {
+                transform: scale(0.5);
+                opacity: 0;
+            }
+
+            50% {
+                transform: scale(1.2);
+                opacity: 1;
+            }
+
+            100% {
+                transform: scale(1);
+                opacity: 1;
+            }
         }
     </style>
 </head>
@@ -429,33 +495,80 @@
             <input type="range" id="radioVol" min="0" max="1" step="0.01" value="0.6" />
             <button class="nav" id="radioNext" aria-label="Next station">›</button>
         </div>
-        <div class="row">
-            <div class="speed" id="speed">0 KM/H</div>
-            <div class="lap" id="lap">LAP 1/3</div>
-        </div>
-        <div class="meters">
-            <div class="boost">
-                <div class="label">BOOST</div>
-                <div class="bar" id="boostBar"></div>
-            </div>
-            <div class="boost">
-                <div class="label">FLOW</div>
-                <div class="bar" id="flowBar"></div>
-            </div>
+        <div class="speedometer-container hidden">
+            <canvas id="speedometerCanvas"></canvas>
         </div>
     </div>
-    <div class="title visible" id="start">
+    <div class="title visible" id="start" style="z-index: 1000;">
         <div class="panel">
             <span class="panel-stars" aria-hidden="true"></span>
             <h1>COSMIC <span class="accent">DRIFT</span></h1>
             <h2 class="logo-jp">コズミック・ドリフト</h2>
-            <div class="instructions">WASD/Arrow keys to steer • Hold Space to Boost</div>
+            <div class="instructions">A/D or Arrow keys to steer • Hold Space to Boost</div>
             <div class="cta">
                 <button class="btn" id="beginBtn">START</button>
-                <div class="hint">Press Space to Start</div>
             </div>
         </div>
     </div>
+    <div class="title hidden" id="pauseMenu" style="z-index: 1001;">
+        <div class="panel">
+            <span class="panel-stars" aria-hidden="true"></span>
+            <h1>PAUSED</h1>
+            <div class="cta">
+                <button class="btn" id="restartBtn">RESTART RACE</button>
+                <button class="btn" id="controlsBtn">CONTROLS</button>
+                <button class="btn" id="quitBtn">QUIT GAME</button>
+                <div class="hint">Press Escape to Resume</div>
+            </div>
+        </div>
+    </div>
+    <div class="title hidden" id="controlsMenu" style="z-index: 1001;">
+        <div class="panel">
+            <span class="panel-stars" aria-hidden="true"></span>
+            <h1>CONTROLS</h1>
+            <div class="instructions">
+                <div><strong>Steer:</strong> A/D or Left/Right Arrow Keys</div>
+                <div><strong>Boost:</strong> Hold Space</div>
+                <div><strong>Focus Refill:</strong> F (when focus bar is full)</div>
+                <div><strong>Pause:</strong> Escape</div>
+                <div><strong>Mouse Look:</strong> Hold Right Mouse Button</div>
+            </div>
+            <div class="cta">
+                <button class="btn" id="backToPauseBtn">BACK</button>
+            </div>
+        </div>
+    </div>
+    <div class="countdown hidden" id="countdown" style="z-index: 1002;">
+        <div class="countdown-text" id="countdownText">3</div>
+    </div>
+
+    <div id="debugOverlay"
+        style="position: fixed; bottom: 10px; left: 10px; background: rgba(0,0,0,0.7); color: #0ff; padding: 10px; font-family: monospace; font-size: 12px; border: 1px solid #0ff; z-index: 1000; display: none;">
+        <div>Game Time: <span id="debugGameTime">0.0</span>s</div>
+        <div>Stars Ahead: <span id="debugStarsAhead">0</span></div>
+        <div>Stars Behind: <span id="debugStarsBehind">0</span></div>
+        <div>Distant Stars: <span id="debugDistantStars">0</span></div>
+        <div>Total Stars: <span id="debugTotalStars">0</span></div>
+        <div>Ship Speed: <span id="debugShipSpeed">0</span> km/h</div>
+    </div>
+    <script>
+        // Debug overlay toggle with F9
+        (function () {
+            const debugOverlay = document.getElementById('debugOverlay');
+            let debugVisible = false;
+            window.addEventListener('keydown', (e) => {
+                // F9 key (without modifiers)
+                if (e.code === 'F9' && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey) {
+                    debugVisible = !debugVisible;
+                    if (debugOverlay) {
+                        debugOverlay.style.display = debugVisible ? 'block' : 'none';
+                    }
+                    e.preventDefault();
+                }
+            });
+        })();
+    </script>
+
     <script type="module" src="/src/main.ts"></script>
 </body>
 

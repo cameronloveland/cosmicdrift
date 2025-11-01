@@ -15,6 +15,8 @@ export interface ShipState {
     lapCurrent: number;
     lapTotal: number;
     boostLevel: number; // 0..1 visual intensity of manual boost
+    inTunnel: boolean;
+    tunnelCenterBoost: number; // multiplier from tunnel center alignment
 }
 
 export interface TrackSystem {
@@ -52,6 +54,49 @@ export type TrackSample = {
     binormal: Vector3;
     bankRadians: number;
     up: Vector3;
+};
+
+export type TunnelType = 'rings' | 'wormhole';
+
+export type TunnelSegment = {
+    startT: number;
+    endT: number;
+    lengthMeters: number;
+    tunnelType: TunnelType;
+};
+
+export type TunnelInfo = {
+    inTunnel: boolean;
+    progress: number; // 0..1 progress through current tunnel
+    centerAlignment: number; // 0..1 how centered the ship is
+};
+
+export type BoostPadSegment = {
+    t: number; // position on track [0..1]
+    lengthT: number; // length in t units
+};
+
+export type BoostPadInfo = {
+    onPad: boolean; // currently driving over a boost pad
+    boostActive: boolean; // boost effect is currently active (includes duration after leaving pad)
+    boostTimer: number; // remaining boost duration in seconds
+};
+
+export type RacePosition = {
+    racerId: string;
+    position: number;
+    lapCurrent: number;
+    lapTotal: number;
+    finished: boolean;
+    finishTime?: number;
+};
+
+export type RaceState = 'NOT_STARTED' | 'COUNTDOWN' | 'RACING' | 'FINISHED';
+
+export type RaceResults = {
+    positions: RacePosition[];
+    raceTime: number;
+    playerPosition: number;
 };
 
 

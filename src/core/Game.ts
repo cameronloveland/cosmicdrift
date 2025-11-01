@@ -6,9 +6,16 @@ import { Ship } from './Ship';
 import { Track } from './Track';
 import { UI } from './UI';
 import { Environment } from './Environment';
-import { Particles } from './Particles';
-import { SpeedStars } from './SpeedStars';
+import { ShipBoost } from './ShipBoost';
+import { ShipSpeedStars } from './ShipSpeedStars';
 import { AudioSystem } from './Audio';
+import { WormholeTunnel } from './WormholeTunnel';
+import { NPCShip } from './NPCShip';
+import { RaceManager } from './RaceManager';
+import { ShootingStars } from './ShootingStars';
+// import { Comets } from './Comets'; // Temporarily disabled
+import { COLORS } from './constants';
+import type { RaceState } from './types';
 
 export class Game {
     private container: HTMLElement;
@@ -23,14 +30,39 @@ export class Game {
     private pixelRatio = Math.min(window.devicePixelRatio, RENDER.maxPixelRatio);
     private prevBoost = false;
     private started = false;
+    private paused = false;
+    private freeFlying = false;
+
+    // Free camera state
+    private freeCamPos = new THREE.Vector3();
+    private freeCamYaw = 0;
+    private freeCamPitch = 0;
+    private freeCamInput = { forward: false, back: false, left: false, right: false, up: false, down: false, sprint: false };
+    private savedCamPos = new THREE.Vector3();
+    private savedCamQuat = new THREE.Quaternion();
 
     private track!: Track;
     private ship!: Ship;
     private env!: Environment;
-    private particles!: Particles;
-    private speedStars!: SpeedStars;
+    private shipBoost!: ShipBoost;
+    private speedStars!: ShipSpeedStars;
+    private wormholeTunnel!: WormholeTunnel;
+    private shootingStars!: ShootingStars;
+    // private comets!: Comets; // Temporarily disabled
     private ui!: UI;
     private audio!: AudioSystem;
+    private npcShips: NPCShip[] = [];
+    private raceManager!: RaceManager;
+    private raceState: RaceState = 'NOT_STARTED';
+
+    // Camera intro state
+    private cameraIntroActive = false;
+    private cameraIntroTime = 0;
+
+    // Background darkening for tunnels
+    private tunnelDarkenTarget = 0; // 0 = normal, 1 = almost black
+    private tunnelDarkenCurrent = 0; // smoothly interpolated value
+
     private radio = {
         on: true,
         stationIndex: 0,
@@ -67,6 +99,12 @@ export class Game {
         this.setup();
         this.onResize();
         window.addEventListener('resize', () => this.onResize());
+
+        // Pause and free camera controls
+        window.addEventListener('keydown', (e) => this.onPauseKey(e, true));
+        window.addEventListener('keyup', (e) => this.onPauseKey(e, false));
+        window.addEventListener('mousemove', (e) => this.onFreeCamMouseMove(e));
+
         this.loop();
     }
 
@@ -79,6 +117,21 @@ export class Game {
         this.track = new Track();
         this.scene.add(this.track.root);
 
+        // Verify track initialization
+        if (this.track.curve && this.track.curve.points && this.track.curve.points.length > 0) {
+            console.log('Track initialized successfully with', this.track.curve.points.length, 'control points');
+        } else {
+            console.error('Track initialization failed - curve not ready');
+            // Wait a frame for track to fully initialize
+            setTimeout(() => {
+                if (this.track.curve && this.track.curve.points && this.track.curve.points.length > 0) {
+                    console.log('Track initialized on retry with', this.track.curve.points.length, 'control points');
+                } else {
+                    console.error('Track still not ready after retry');
+                }
+            }, 0);
+        }
+
         this.ship = new Ship(this.track, this.camera);
         this.scene.add(this.ship.root);
 
@@ -88,21 +141,40 @@ export class Game {
         // Ensure environment encloses the whole track
         this.env.setStarfieldRadius(this.track.boundingRadius * 1.6);
 
-        // Particles
-        this.particles = new Particles(this.ship);
-        this.scene.add(this.particles.root);
+        // Manual boost particle effect
+        this.shipBoost = new ShipBoost(this.ship);
+        this.scene.add(this.shipBoost.root);
 
         // Speed stars
-        this.speedStars = new SpeedStars(this.ship, this.track);
+        this.speedStars = new ShipSpeedStars(this.ship, this.track);
         this.scene.add(this.speedStars.root);
 
+        // Wormhole tunnels
+        this.wormholeTunnel = new WormholeTunnel(this.track);
+        this.scene.add(this.wormholeTunnel.root);
+
+        // Shooting stars
+        this.shootingStars = new ShootingStars();
+        this.scene.add(this.shootingStars.root);
+
+        // Comets - temporarily disabled
+        // this.comets = new Comets();
+        // this.scene.add(this.comets.root);
+
         this.ui = new UI();
+        // Ensure pause menu is hidden on initialization
+        this.ui.setPaused(false);
 
         this.audio = new AudioSystem();
         this.audio.attach(this.camera);
         // initialize radio stream source
         const initial = this.radio.stations[this.radio.stationIndex];
         this.audio.initRadio(initial.url);
+
+        // Initialize race manager
+        this.raceManager = new RaceManager();
+
+        // NPCs will be created when game starts, not on initial load
 
         // Post FX
         this.composer = new EffectComposer(this.renderer);
@@ -124,9 +196,102 @@ export class Game {
         const start = document.getElementById('start');
         const begin = () => {
             if (this.started) return;
+
+            // Hide splash screen
             start?.classList.remove('visible');
             start?.classList.add('hidden');
+
+            // Show HUD
             this.ui.setStarted(true);
+            this.ui.setHudVisible(true);
+
+            // Create 4 competitive NPC ships with varied colors and behaviors
+            const npc1 = new NPCShip(this.track, 'npc1', COLORS.neonRed, 'aggressive', -8);
+            const npc2 = new NPCShip(this.track, 'npc2', COLORS.neonMagenta, 'aggressive', 8);
+            const npc3 = new NPCShip(this.track, 'npc3', COLORS.neonYellow, 'conservative', -4);
+            const npc4 = new NPCShip(this.track, 'npc4', COLORS.neonPurple, 'conservative', 4);
+
+            this.npcShips = [npc1, npc2, npc3, npc4];
+            this.scene.add(npc1.root);
+            this.scene.add(npc2.root);
+            this.scene.add(npc3.root);
+            this.scene.add(npc4.root);
+
+            // Register NPCs with race manager
+            this.raceManager.addNPC('npc1');
+            this.raceManager.addNPC('npc2');
+            this.raceManager.addNPC('npc3');
+            this.raceManager.addNPC('npc4');
+
+            // Position all ships 12 meters behind the start line
+            const startT = -12 / this.track.length; // Ships start 12 meters behind start line
+            this.ship.state.t = startT;
+            this.ship.state.lateralOffset = 0; // Player ship in center lane
+            this.npcShips[0].state.t = startT; // NPC1 (Red) - left lane
+            this.npcShips[1].state.t = startT; // NPC2 (Pink) - right lane  
+            this.npcShips[2].state.t = startT; // NPC3 (Yellow) - left lane
+            this.npcShips[3].state.t = startT; // NPC4 (Purple) - right lane
+
+            // Immediately update visual positions to reflect new t values
+            this.ship.updatePositionAndCamera(0);
+            this.npcShips.forEach(npc => {
+                npc.updateVisualPosition();
+            });
+
+            // Disable ship camera control for intro animation
+            this.ship.setCameraControl(false);
+
+            // Initialize camera intro
+            this.cameraIntroActive = true;
+            this.cameraIntroTime = 0;
+
+            // Disable ship input during countdown
+            this.ship.disableInput();
+
+            // Set all NPCs to countdown mode (no movement)
+            this.npcShips.forEach(npc => npc.setCountdownMode(true));
+
+            // Position all ships immediately at the starting line
+            if (this.track.curve && this.track.curve.points && this.track.curve.points.length > 0) {
+                try {
+                    // Force multiple position updates to ensure ships are stable
+                    for (let i = 0; i < 3; i++) {
+                        this.ship.updatePositionAndCamera(0);
+                        this.npcShips.forEach((npc, index) => {
+                            npc.update(0, this.ship.state.t, this.ship.state.lapCurrent, this.ship.state.speedKmh, this.npcShips);
+                        });
+                    }
+
+                    this.npcShips.forEach((npc, index) => {
+                        console.log(`NPC ${index} positioned at t=${npc.state.t}, lateral=${npc.state.lateralOffset}`);
+                    });
+                    console.log('All ships positioned at starting line');
+                } catch (error) {
+                    console.error('Error positioning ships:', error);
+                    // Try to continue anyway
+                }
+            } else {
+                console.error('Track not ready - ships cannot be positioned');
+                // Try to initialize track again
+                setTimeout(() => {
+                    if (this.track.curve && this.track.curve.points && this.track.curve.points.length > 0) {
+                        console.log('Track ready on retry, positioning ships');
+                        try {
+                            this.ship.updatePositionAndCamera(0);
+                            this.npcShips.forEach(npc => {
+                                npc.update(0, this.ship.state.t, this.ship.state.lapCurrent, this.ship.state.speedKmh, this.npcShips);
+                            });
+                        } catch (error) {
+                            console.error('Error positioning ships on retry:', error);
+                        }
+                    }
+                }, 100);
+            }
+
+            // Start countdown sequence
+            this.raceState = 'COUNTDOWN';
+            this.startCountdownSequence();
+
             this.audio.start();
             // hide cursor only once the game actually starts
             this.renderer.domElement.style.cursor = 'none';
@@ -149,6 +314,7 @@ export class Game {
         // Radio UI wiring
         this.ui.setRadioUi(this.radio.on, initial.name);
         this.ui.setRadioVolumeSlider(0.6);
+
         this.ui.onRadioToggle(async () => {
             const st = this.radio.stations[this.radio.stationIndex];
             if (!this.radio.on) {
@@ -176,6 +342,23 @@ export class Game {
             this.ui.setRadioUi(this.radio.on, st.name);
             if (this.radio.on) await this.playOrAdvance(2);
             this.ui.setRadioUi(this.radio.on, st.name);
+        });
+
+        // Pause menu button handlers
+        this.ui.onRestartClick(() => {
+            this.restart();
+        });
+
+        this.ui.onQuitClick(() => {
+            this.quitToMenu();
+        });
+
+        this.ui.onControlsClick(() => {
+            this.ui.showControlsMenu();
+        });
+
+        this.ui.onBackToPauseClick(() => {
+            this.ui.showPauseMenu();
         });
         // If current station errors, auto-advance
         this.audio.onRadioEvent('error', () => {
@@ -213,12 +396,143 @@ export class Game {
         this.track?.updateResolution(w, h);
     }
 
+    private onPauseKey(e: KeyboardEvent, down: boolean) {
+        if (e.code === 'Escape' && down && this.started) {
+            this.togglePause();
+        }
+
+
+        // Free camera movement (only when paused or free flying)
+        if (!this.paused && !this.freeFlying) return;
+        if (e.code === 'KeyW') this.freeCamInput.forward = down;
+        if (e.code === 'KeyS') this.freeCamInput.back = down;
+        if (e.code === 'KeyA') this.freeCamInput.left = down;
+        if (e.code === 'KeyD') this.freeCamInput.right = down;
+        if (e.code === 'Space') this.freeCamInput.up = down;
+        if (e.code === 'ControlLeft' || e.code === 'ControlRight') this.freeCamInput.down = down;
+        if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') this.freeCamInput.sprint = down;
+    }
+
+    private onFreeCamMouseMove(e: MouseEvent) {
+        if (!this.paused && !this.freeFlying) return;
+        const dx = e.movementX;
+        const dy = e.movementY;
+        if (dx === 0 && dy === 0) return;
+
+        // Full 360 mouse look
+        this.freeCamYaw -= dx * 0.003;
+        this.freeCamPitch = THREE.MathUtils.clamp(this.freeCamPitch - dy * 0.003, -Math.PI / 2, Math.PI / 2);
+    }
+
+    private togglePause() {
+        this.paused = !this.paused;
+        this.ui.setPaused(this.paused);
+
+        if (this.paused) {
+            // Entering pause: save camera state and init free cam
+            this.savedCamPos.copy(this.camera.position);
+            this.savedCamQuat.copy(this.camera.quaternion);
+            this.freeCamPos.copy(this.camera.position);
+
+            // Extract yaw/pitch from current camera rotation
+            const euler = new THREE.Euler().setFromQuaternion(this.camera.quaternion, 'YXZ');
+            this.freeCamYaw = euler.y;
+            this.freeCamPitch = euler.x;
+
+            // Clear ship input to avoid stuck keys
+            this.ship.clearInput();
+
+            // Request pointer lock for unlimited mouse movement
+            this.renderer.domElement.requestPointerLock();
+        } else {
+            // Exiting pause: restore camera state
+            this.camera.position.copy(this.savedCamPos);
+            this.camera.quaternion.copy(this.savedCamQuat);
+
+            // Exit pointer lock and hide cursor
+            document.exitPointerLock();
+            this.renderer.domElement.style.cursor = 'none';
+        }
+    }
+
+    private toggleFreeFlying() {
+        this.freeFlying = !this.freeFlying;
+
+        if (this.freeFlying) {
+            // Entering free fly: save camera state and init free cam
+            this.savedCamPos.copy(this.camera.position);
+            this.savedCamQuat.copy(this.camera.quaternion);
+            this.freeCamPos.copy(this.camera.position);
+
+            // Extract yaw/pitch from current camera rotation
+            const euler = new THREE.Euler().setFromQuaternion(this.camera.quaternion, 'YXZ');
+            this.freeCamYaw = euler.y;
+            this.freeCamPitch = euler.x;
+
+            // Clear ship input to avoid stuck keys
+            this.ship.clearInput();
+
+            // Disable ship camera control
+            this.ship.setCameraControl(false);
+
+            // Request pointer lock for unlimited mouse movement
+            this.renderer.domElement.requestPointerLock();
+        } else {
+            // Exiting free fly: restore camera state
+            this.camera.position.copy(this.savedCamPos);
+            this.camera.quaternion.copy(this.savedCamQuat);
+
+            // Re-enable ship camera control
+            this.ship.setCameraControl(true);
+
+            // Exit pointer lock and hide cursor
+            document.exitPointerLock();
+            this.renderer.domElement.style.cursor = 'none';
+        }
+    }
+
+    private updateFreeCamera(dt: number) {
+        const baseSpeed = 20; // units per second
+        const sprintMultiplier = 3; // 3x faster when sprinting
+        const speed = baseSpeed * (this.freeCamInput.sprint ? sprintMultiplier : 1);
+
+        const forward = new THREE.Vector3(0, 0, -1);
+        const right = new THREE.Vector3(1, 0, 0);
+        const up = new THREE.Vector3(0, 1, 0);
+
+        // Build rotation from yaw/pitch
+        const qYaw = new THREE.Quaternion().setFromAxisAngle(up, this.freeCamYaw);
+        const qPitch = new THREE.Quaternion().setFromAxisAngle(right, this.freeCamPitch);
+        const rotation = qYaw.multiply(qPitch);
+
+        // Apply rotation to direction vectors
+        forward.applyQuaternion(rotation);
+        right.applyQuaternion(rotation);
+
+        // Move camera based on input
+        if (this.freeCamInput.forward) this.freeCamPos.addScaledVector(forward, speed * dt);
+        if (this.freeCamInput.back) this.freeCamPos.addScaledVector(forward, -speed * dt);
+        if (this.freeCamInput.right) this.freeCamPos.addScaledVector(right, speed * dt);
+        if (this.freeCamInput.left) this.freeCamPos.addScaledVector(right, -speed * dt);
+        if (this.freeCamInput.up) this.freeCamPos.addScaledVector(up, speed * dt);
+        if (this.freeCamInput.down) this.freeCamPos.addScaledVector(up, -speed * dt);
+
+        // Apply to camera
+        this.camera.position.copy(this.freeCamPos);
+        this.camera.quaternion.copy(rotation);
+    }
+
     private loop = () => {
         requestAnimationFrame(this.loop);
         this.stats.begin();
 
         const dt = this.clock.getDelta();
-        this.fixedAccumulator += dt;
+
+        // Clamp dt to prevent catch-up issues when the game first loads
+        // Cap at 2 frames worth of time to prevent spiky first frames
+        const clampedDt = Math.min(dt, this.fixedDelta * 2);
+
+        this.fixedAccumulator += clampedDt;
         const maxSteps = 5;
         let steps = 0;
         while (this.fixedAccumulator >= this.fixedDelta && steps < maxSteps) {
@@ -232,23 +546,174 @@ export class Game {
     };
 
     private update(dt: number) {
+        // Always update background effects for visual magic on splash screen
+        this.shootingStars.update(dt);
+        // this.comets.update(dt); // Temporarily disabled
+        this.env.update(dt);
+
+
         if (!this.started) {
-            this.ui.update(this.ship.state);
+            this.ui.update(this.ship.state, this.ship.getFocusRefillActive(), this.ship.getFocusRefillProgress());
             return;
         }
 
-        this.ship.update(dt);
-        this.particles.update(dt);
-        this.speedStars.update(dt);
-        this.env.update(dt);
-        this.ui.update(this.ship.state);
-        this.audio.setSpeed(this.ship.state.speedKmh);
-        if (this.ship.state.boosting && !this.prevBoost) this.audio.triggerBoost();
-        this.prevBoost = this.ship.state.boosting;
+        if (this.paused) {
+            this.updateFreeCamera(dt);
+            return;
+        }
+
+        if (this.freeFlying) {
+            // Free fly mode: update both free camera and game state
+            this.updateFreeCamera(dt);
+            this.ship.update(dt);
+            this.shipBoost.update(dt);
+            this.speedStars.update(dt);
+            this.wormholeTunnel.update(dt);
+            this.shootingStars.update(dt);
+            // this.comets.update(dt); // Temporarily disabled
+            this.env.update(dt);
+            this.ui.update(this.ship.state, this.ship.getFocusRefillActive(), this.ship.getFocusRefillProgress());
+            this.audio.setSpeed(this.ship.state.speedKmh);
+            if (this.ship.state.boosting && !this.prevBoost) this.audio.triggerBoost();
+            this.prevBoost = this.ship.state.boosting;
+            return;
+        }
+
+        // Handle camera intro animation
+        if (this.cameraIntroActive) {
+            this.cameraIntroTime += dt;
+            this.updateCameraIntro(dt);
+
+            // Check if intro is complete
+            if (this.cameraIntroTime >= 3.0) {
+                this.cameraIntroActive = false;
+                this.ship.setCameraControl(true);
+            }
+        }
+
+        // Update player ship during countdown and racing
+        if (this.raceState === 'COUNTDOWN' || this.raceState === 'RACING') {
+            this.ship.update(dt);
+            this.shipBoost.update(dt);
+            this.speedStars.update(dt);
+            this.wormholeTunnel.update(dt);
+            this.shootingStars.update(dt); // Ensure shooting stars continue during race
+            this.env.update(dt);
+            this.ui.update(this.ship.state, this.ship.getFocusRefillActive(), this.ship.getFocusRefillProgress());
+
+            // Update debug overlay
+            // TODO FIX THIS CAUSES WEIRD INTRO CAMERA JERK 
+            // const starStats = this.speedStars.getStarStats();
+            // const gameTime = this.clock.getElapsedTime();
+            // this.ui.updateDebugOverlay(gameTime, starStats.ahead, starStats.behind, starStats.distant, starStats.total, this.ship.state.speedKmh);
+
+            this.audio.setSpeed(this.ship.state.speedKmh);
+            if (this.ship.state.boosting && !this.prevBoost) this.audio.triggerBoost();
+            this.prevBoost = this.ship.state.boosting;
+
+            // Update tunnel background darkening
+            this.updateTunnelBackground(dt);
+
+            // Update NPCs during countdown and racing
+            this.npcShips.forEach(npc => {
+                npc.update(dt, this.ship.state.t, this.ship.state.lapCurrent, this.ship.state.speedKmh, this.npcShips);
+            });
+        }
     }
 
     private render() {
         this.composer.render();
+    }
+
+    private startCountdownSequence() {
+        // 3-2-1-GO countdown sequence
+        this.ui.showCountdown(3);
+
+        setTimeout(() => {
+            this.ui.showCountdown(2);
+        }, 1000);
+
+        setTimeout(() => {
+            this.ui.showCountdown(1);
+        }, 2000);
+
+        setTimeout(() => {
+            this.ui.showGo();
+            // Start the race
+            this.raceState = 'RACING';
+            this.ship.enableInput();
+            // Camera control already enabled in begin() function
+
+            // Start all ships
+            this.ship.startRace();
+            this.npcShips.forEach(npc => npc.startRace());
+
+            // Hide countdown after GO animation
+            setTimeout(() => {
+                this.ui.hideCountdown();
+            }, 500);
+        }, 3000);
+    }
+
+    private updateCameraIntro(dt: number) {
+        // Calculate animation progress (0 to 1 over 3 seconds)
+        const progress = Math.min(this.cameraIntroTime / 3.0, 1.0);
+
+        // Get ship starting position and frame from track (12m behind start line)
+        const startT = -12 / this.track.length; // Ships are 12 meters behind start line
+        const startPos = new THREE.Vector3();
+        const startNormal = new THREE.Vector3();
+        const startBinormal = new THREE.Vector3();
+        const startTangent = new THREE.Vector3();
+
+        this.track.getPointAtT(startT, startPos);
+        this.track.getFrenetFrame(startT, startNormal, startBinormal, startTangent);
+
+        // Calculate center point of all ships (average position)
+        const centerPos = new THREE.Vector3();
+        centerPos.copy(startPos);
+        centerPos.addScaledVector(startBinormal, this.ship.state.lateralOffset);
+
+        // Add NPC positions to center calculation
+        this.npcShips.forEach(npc => {
+            const npcPos = new THREE.Vector3();
+            this.track.getPointAtT(npc.state.t, npcPos);
+            npcPos.addScaledVector(startBinormal, npc.state.lateralOffset);
+            centerPos.add(npcPos);
+        });
+        centerPos.divideScalar(this.npcShips.length + 1); // Average of all ships
+
+        // Camera path: start far behind and above, end behind ships in chase-cam position
+        const startOffset = new THREE.Vector3()
+            .copy(startTangent)
+            .multiplyScalar(-30) // Far behind for dramatic sweep
+            .addScaledVector(startNormal, 20); // High above
+
+        const endOffset = new THREE.Vector3()
+            .copy(startTangent)
+            .multiplyScalar(-15) // Behind ships (chase-cam position)
+            .addScaledVector(startNormal, 10) // Chase-cam height
+            .addScaledVector(startBinormal, 0); // Centered behind ships
+
+        // Smooth easing (cubic ease-in-out)
+        const easedProgress = progress < 0.5
+            ? 4 * progress * progress * progress
+            : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+
+        // Interpolate camera position
+        const cameraPos = new THREE.Vector3()
+            .copy(centerPos)
+            .addScaledVector(startOffset, 1 - easedProgress)
+            .addScaledVector(endOffset, easedProgress);
+
+        // Position camera
+        this.camera.position.copy(cameraPos);
+
+        // Look at center of ships
+        this.camera.lookAt(centerPos);
+
+        // Align camera up with track normal for natural orientation
+        this.camera.up.copy(startNormal);
     }
 
     private async playOrAdvance(maxTries = this.radio.stations.length) {
@@ -268,6 +733,82 @@ export class Game {
         const st = this.radio.stations[this.radio.stationIndex];
         this.ui.setRadioUi(false, st.name);
         return false;
+    }
+
+
+    private updateTunnelBackground(dt: number) {
+        // Set target darkening based on tunnel state
+        this.tunnelDarkenTarget = this.ship.state.inTunnel ? 1 : 0;
+
+        // Smoothly interpolate to target
+        const lerpSpeed = 4.0; // how fast the transition happens
+        this.tunnelDarkenCurrent = THREE.MathUtils.lerp(
+            this.tunnelDarkenCurrent,
+            this.tunnelDarkenTarget,
+            lerpSpeed * dt
+        );
+
+        // Get base colors (original space background colors)
+        const bgStartBase = new THREE.Color(0x0a0324);
+        const bgMidBase = new THREE.Color(0x050314);
+        const bgEndBase = new THREE.Color(0x030211);
+        const fogColorBase = new THREE.Color(0x07051a);
+        const clearColorBase = new THREE.Color(0x050314);
+
+        // Get dark colors (almost black for tunnels)
+        const bgStartDark = new THREE.Color(0x000001);
+        const bgMidDark = new THREE.Color(0x000000);
+        const bgEndDark = new THREE.Color(0x000000);
+        const fogColorDark = new THREE.Color(0x000000);
+        const clearColorDark = new THREE.Color(0x000000);
+
+        // Interpolate colors based on tunnel darkness
+        const currentBgStart = bgStartBase.clone().lerp(bgStartDark, this.tunnelDarkenCurrent);
+        const currentBgMid = bgMidBase.clone().lerp(bgMidDark, this.tunnelDarkenCurrent);
+        const currentBgEnd = bgEndBase.clone().lerp(bgEndDark, this.tunnelDarkenCurrent);
+        const currentFogColor = fogColorBase.clone().lerp(fogColorDark, this.tunnelDarkenCurrent);
+        const currentClearColor = clearColorBase.clone().lerp(clearColorDark, this.tunnelDarkenCurrent);
+
+        // Update HTML background gradient
+        const gradient = document.querySelector('html')?.style;
+        if (gradient) {
+            const hex1 = currentBgStart.getHexString().padStart(6, '0');
+            const hex2 = currentBgMid.getHexString().padStart(6, '0');
+            const hex3 = currentBgEnd.getHexString().padStart(6, '0');
+            gradient.background = `radial-gradient(ellipse at center, #${hex1} 0%, #${hex2} 60%, #${hex3} 100%)`;
+        }
+
+        // Update fog color
+        this.scene.fog = new THREE.FogExp2(currentFogColor.getHex(), 0.0008);
+
+        // Update renderer clear color
+        this.renderer.setClearColor(currentClearColor.getHex(), 1);
+    }
+
+    private restart() {
+        // Reset ship to starting position
+        this.ship.reset();
+
+        // Reset game state
+        this.paused = false;
+        this.ui.setPaused(false);
+
+        // Clear any free camera state
+        this.freeFlying = false;
+        this.ship.setCameraControl(true);
+
+        // Exit pointer lock and hide cursor
+        document.exitPointerLock();
+        this.renderer.domElement.style.cursor = 'none';
+
+        // Reset tunnel background
+        this.tunnelDarkenCurrent = 0;
+        this.tunnelDarkenTarget = 0;
+    }
+
+    private quitToMenu() {
+        // Reload the page to reset everything to initial state
+        window.location.reload();
     }
 }
 
