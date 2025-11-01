@@ -31,11 +31,19 @@ export class ShipBoost {
             transparent: true,
             opacity: 0.8,
             blending: THREE.AdditiveBlending,
-            depthWrite: false
+            depthWrite: false,
+            depthTest: false // CRITICAL FIX: Disable depth test to ensure visibility
         });
 
         // Create instanced mesh for efficient rendering
         this.imesh = new THREE.InstancedMesh(geometry, material, this.maxParticles);
+
+        // Explain frustumCulled:
+        // By default, Three.js objects set `frustumCulled = true`, which means the renderer skips drawing them if their bounding volume is outside the camera's view (the "view frustum").
+        // For InstancedMesh used with dynamic, procedural, or fast-moving particles, the automatic bounding box may be incorrect (especially before first update), causing objects to disappear or "pop" even when they should be visible.
+        // Disabling frustum culling here (`frustumCulled = false`) ensures all instances are always drawn, regardless of computed bounds—eliminating intermittent particle trail visibility issues during initialization and fast motion.
+        this.imesh.frustumCulled = false;
+
         this.imesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(this.maxParticles * 3), 3);
         this.imesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
         this.root.add(this.imesh);
@@ -114,10 +122,11 @@ export class ShipBoost {
             this.imesh.setColorAt(i, color);
         }
 
-        // Update instanced mesh
+        // CRITICAL FIX: Update instanced mesh - must set count BEFORE needsUpdate
+        // If count is 0, Three.js won't render anything even if matrices are valid
+        this.imesh.count = this.particles.length;
         this.imesh.instanceMatrix.needsUpdate = true;
         this.imesh.instanceColor!.needsUpdate = true;
-        this.imesh.count = this.particles.length;
     }
 
     public dispose() {
