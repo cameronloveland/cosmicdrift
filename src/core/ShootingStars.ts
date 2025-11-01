@@ -23,6 +23,7 @@ export class ShootingStars {
     private tmpObj = new THREE.Object3D();
     private tmpVec3 = new THREE.Vector3();
     private tmpQuat = new THREE.Quaternion();
+    private starfieldRadius = STARFIELD_MIN_RADIUS;
 
     constructor() {
         this.setupStarMesh();
@@ -32,6 +33,10 @@ export class ShootingStars {
 
         // Start with immediate spawn for testing
         this.nextSpawnTime = 0.05; // Frequent spawning for good coverage
+    }
+    
+    public setStarfieldRadius(r: number) {
+        this.starfieldRadius = r;
     }
 
 
@@ -100,53 +105,31 @@ export class ShootingStars {
     }
 
     private spawnStar() {
-        // Create multiple spawn zones for better distribution
-        const spawnZones = [
-            { radius: 800, weight: 0.3 },   // Close zone
-            { radius: 1200, weight: 0.4 },  // Medium zone  
-            { radius: 1800, weight: 0.3 }   // Far zone
-        ];
-
-        // Select spawn zone based on weights
-        const rand = Math.random();
-        let selectedZone = spawnZones[0];
-        let cumulativeWeight = 0;
-
-        for (const zone of spawnZones) {
-            cumulativeWeight += zone.weight;
-            if (rand <= cumulativeWeight) {
-                selectedZone = zone;
-                break;
-            }
-        }
+        // Spawn on the outer edge of starfield with slight variation
+        const spawnRadius = this.starfieldRadius * (0.95 + Math.random() * 0.1); // 95-105% of starfield radius
 
         // Use uniform distribution across the sphere
         const theta = Math.random() * Math.PI * 2;
         const phi = Math.acos(2 * Math.random() - 1);
 
         const position = new THREE.Vector3(
-            selectedZone.radius * Math.sin(phi) * Math.cos(theta),
-            selectedZone.radius * Math.cos(phi),
-            selectedZone.radius * Math.sin(phi) * Math.sin(theta)
+            spawnRadius * Math.sin(phi) * Math.cos(theta),
+            spawnRadius * Math.cos(phi),
+            spawnRadius * Math.sin(phi) * Math.sin(theta)
         );
 
-        // Create direction that ensures shooting stars cross through the track area
-        // Generate a random direction but bias it toward the center (where track is)
-        const centerDirection = new THREE.Vector3(0, 0, 0).sub(position).normalize();
+        // Completely random direction (no center bias)
         const randomDirection = new THREE.Vector3(
             (Math.random() - 0.5) * 2,
             (Math.random() - 0.5) * 2,
             (Math.random() - 0.5) * 2
         ).normalize();
 
-        // Mix random direction with center direction for better track crossing
-        const finalDirection = randomDirection.clone().lerp(centerDirection, 0.1).normalize(); // Reduced bias
-
         const speed = SHOOTING_STARS.speedMin + Math.random() * (SHOOTING_STARS.speedMax - SHOOTING_STARS.speedMin);
-        const velocity = finalDirection.multiplyScalar(speed);
+        const velocity = randomDirection.multiplyScalar(speed);
 
-        // Random trail color
-        const trailColor = SHOOTING_STARS.trailColors[Math.floor(Math.random() * SHOOTING_STARS.trailColors.length)].clone();
+        // White trail color to match background stars
+        const trailColor = new THREE.Color(0xffffff);
 
         const star = {
             index: this.activeStars.length,

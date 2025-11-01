@@ -32,6 +32,7 @@ export class Ship {
     // lap detection helpers
     private prevT = 0;
     private checkpointT = 0.0; // could move later; start line
+    private hasCrossedCheckpointThisFrame = false;
 
     private mouseYawTarget = 0;
     private mousePitchTarget = 0;
@@ -196,8 +197,12 @@ export class Ship {
     }
 
     startRace() {
-        // Transition from pre-race (lap 0) to race start (lap 1)
-        this.state.lapCurrent = 1;
+        // Keep lap at 0 - we start before the start line
+        // Lap will increment to 1 when crossing the start line for the first time
+        // Reset checkpoint flag to ensure clean detection
+        this.hasCrossedCheckpointThisFrame = false;
+        // Ensure prevT is set correctly
+        this.prevT = this.state.t;
     }
 
     reset() {
@@ -219,8 +224,9 @@ export class Ship {
         this.boostTimer = 0;
         this.boostEnergy = 1;
         this.now = 0;
-        this.prevT = 0;
+        this.prevT = this.state.t; // Initialize to match starting position
         this.checkpointT = 0.0;
+        this.hasCrossedCheckpointThisFrame = false;
         this.mouseYawTarget = 0;
         this.mousePitchTarget = 0;
         this.mouseYaw = 0;
@@ -380,18 +386,56 @@ export class Ship {
 
         // advance along curve
         const mps = kmhToMps(this.state.speedKmh);
-        this.prevT = this.state.t;
+        const prevTBeforeUpdate = this.state.t;
         this.state.t += (mps * dt) / this.track.length; // normalize by length
-        if (this.state.t > 1) this.state.t -= 1; if (this.state.t < 0) this.state.t += 1;
 
         // lap detection: crossing checkpoint at t=0
-        const crossedCheckpoint = (a: number, b: number, tCheck: number) => {
-            if (a <= b) return a < tCheck && b >= tCheck; // inclusive on b end
-            return a < tCheck || b >= tCheck; // wrapped around
-        };
-        if (crossedCheckpoint(this.prevT, this.state.t, 0.0)) {
-            this.state.lapCurrent = this.state.lapCurrent % this.state.lapTotal + 1;
+        // Count laps from the start (lapCurrent >= 0)
+        if (this.state.lapCurrent >= 0 && !this.hasCrossedCheckpointThisFrame) {
+            const prevT = prevTBeforeUpdate;
+            let newT = this.state.t;
+
+            // Check if we'll wrap
+            const willWrapForward = newT > 1;
+            const willWrapBackward = newT < 0;
+
+            // Normal case: crossed from negative to positive (without wrapping)
+            const normalCrossing = prevT < 0 && newT >= 0 && !willWrapForward && !willWrapBackward;
+
+            // Wrapping case: detect if we're about to wrap or just wrapped
+            let wrappingCrossing = false;
+            if (willWrapForward) {
+                // We're about to wrap forward: prevT was > 0.5 means we crossed 0
+                wrappingCrossing = prevT > 0.5;
+                // Wrap now for detection
+                newT = newT - 1;
+            } else if (willWrapBackward) {
+                // Wrapping backward shouldn't happen, but handle it
+                wrappingCrossing = false;
+            } else {
+                // Check if we already wrapped (prevT high, newT low after wrap)
+                // This handles the case where wrapping happened in a previous step
+                // But since we wrap after detection, we can check: prevT > 0.9 and newT < 0.1
+                wrappingCrossing = prevT > 0.9 && newT < 0.1;
+            }
+
+            if (normalCrossing || wrappingCrossing) {
+                // Increment lap count (0 -> 1, 1 -> 2, 2 -> 3)
+                // Race finishes when crossing at lap 3 (lapCurrent >= lapTotal after increment)
+                this.state.lapCurrent++;
+                this.hasCrossedCheckpointThisFrame = true;
+            }
         }
+
+        // Wrap t after checkpoint detection
+        if (this.state.t > 1) this.state.t -= 1;
+        if (this.state.t < 0) this.state.t += 1;
+
+        // Update prevT for next frame (after all checks)
+        this.prevT = this.state.t;
+
+        // Reset checkpoint flag for next frame
+        this.hasCrossedCheckpointThisFrame = false;
 
         // lateral control
         const sideInput = (this.input.right ? 1 : 0) - (this.input.left ? 1 : 0);

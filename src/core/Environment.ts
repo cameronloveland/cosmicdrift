@@ -17,6 +17,7 @@ export class Environment {
         this.addStars();
         this.addBlackHole();
         this.addPlanets();
+        this.planets.visible = false; // Temporarily hidden
         this.root.add(this.planets);
         this.root.add(this.blackHole);
     }

@@ -139,7 +139,8 @@ export class Game {
         this.scene.add(this.env.root);
 
         // Ensure environment encloses the whole track
-        this.env.setStarfieldRadius(this.track.boundingRadius * 1.6);
+        const starfieldRadius = this.track.boundingRadius * 1.6;
+        this.env.setStarfieldRadius(starfieldRadius);
 
         // Manual boost particle effect
         this.shipBoost = new ShipBoost(this.ship);
@@ -155,6 +156,7 @@ export class Game {
 
         // Shooting stars
         this.shootingStars = new ShootingStars();
+        this.shootingStars.setStarfieldRadius(starfieldRadius);
         this.scene.add(this.shootingStars.root);
 
         // Comets - temporarily disabled
