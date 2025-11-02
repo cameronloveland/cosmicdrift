@@ -29,6 +29,7 @@ export class Game {
     private readonly fixedDelta = 1 / RENDER.targetFPS;
     private pixelRatio = Math.min(window.devicePixelRatio, RENDER.maxPixelRatio);
     private prevBoost = false;
+    private prevBoostPadEntry = false;
     private started = false;
     private paused = false;
     private freeFlying = false;
@@ -65,13 +66,19 @@ export class Game {
     private tunnelDarkenCurrent = 0; // smoothly interpolated value
 
     private radio = {
-        on: false,
+        on: false, // Start off - only plays when radio tab is active
         stationIndex: 0,
         stations: [
             { name: 'Nightride FM', url: 'https://stream.nightride.fm/nightride.mp3' },
             { name: 'Nightwave Plaza', url: 'https://radio.plaza.one/mp3' },
 
         ] as { name: string; url: string; }[]
+    };
+
+    private mp3Mode = {
+        active: true, // Default to MP3 mode
+        playing: false,
+        currentTrackIndex: 0
     };
 
     constructor(container: HTMLElement) {
@@ -164,12 +171,25 @@ export class Game {
         // this.comets = new Comets();
         // this.scene.add(this.comets.root);
 
+        // Start line holographic wall is now built into Track.buildStartLine()
+        // No separate particle system needed
+
         this.ui = new UI();
         // Ensure pause menu is hidden on initialization
         this.ui.setPaused(false);
 
         this.audio = new AudioSystem();
         this.audio.attach(this.camera);
+        // initialize radio stream source
+        const initial = this.radio.stations[this.radio.stationIndex];
+        this.audio.initRadio(initial.url);
+        // Scan and initialize MP3 tracks (load but don't play until user gesture)
+        this.audio.scanMp3Tracks().then((tracks) => {
+            if (tracks.length > 0 && this.mp3Mode.active) {
+                this.audio.loadMp3Track(0);
+                this.updateMp3UI();
+            }
+        });
 
         // Initialize race manager
         this.raceManager = new RaceManager();
@@ -290,20 +310,27 @@ export class Game {
 
             // Start countdown sequence
             this.raceState = 'COUNTDOWN';
+            // Start gate fade-out when countdown begins
+            const currentTime = this.clock.getElapsedTime();
+            this.track.startGateFade(currentTime);
             this.startCountdownSequence();
 
             this.audio.start();
             // hide cursor only once the game actually starts
             this.renderer.domElement.style.cursor = 'none';
-            // Turn on radio when game starts (source already preloaded)
-            this.radio.on = true;
-            const st = this.radio.stations[this.radio.stationIndex];
-            this.ui.setRadioUi(true, st.name);
-            this.playOrAdvance().catch(() => {
-                // If playback fails, revert UI state
-                this.radio.on = false;
-                this.ui.setRadioUi(false, st.name);
-            });
+            // Only autoplay if radio tab is active (MP3 will autoplay if active)
+            if (!this.mp3Mode.active && this.radio.on) {
+                this.playOrAdvance().then(() => { /* state/UI updated in helper */ });
+            } else if (this.mp3Mode.active) {
+                // Ensure MP3 autoplays if tab is active and tracks are loaded
+                const tracks = this.audio.getMp3Tracks();
+                if (tracks.length > 0 && !this.mp3Mode.playing) {
+                    this.audio.playMp3().then((ok) => {
+                        this.mp3Mode.playing = ok;
+                        this.updateMp3UI();
+                    });
+                }
+            }
             window.removeEventListener('keydown', handler);
             document.getElementById('beginBtn')?.removeEventListener('click', begin);
             start?.removeEventListener('pointerdown', begin);
@@ -318,34 +345,123 @@ export class Game {
         document.getElementById('beginBtn')?.addEventListener('click', begin);
         start?.addEventListener('pointerdown', begin);
 
-        // Radio UI wiring
-        const initial = this.radio.stations[this.radio.stationIndex];
-        this.ui.setRadioUi(this.radio.on, initial.name);
-        this.ui.setRadioVolumeSlider(0.6);
+        // Tab switching
+        this.ui.onTabSwitch((mode) => {
+            if (mode === 'radio') {
+                this.mp3Mode.active = false;
+                // Pause MP3 when switching to radio
+                this.audio.pauseMp3();
+                this.mp3Mode.playing = false;
+                // Start radio when switching to radio tab
+                if (this.started) {
+                    // Only autoplay if game has started (user gesture occurred)
+                    this.radio.on = true;
+                    this.playOrAdvance().then(() => {
+                        this.ui.setRadioUi(this.radio.on, this.radio.stations[this.radio.stationIndex].name);
+                    });
+                } else {
+                    // Game hasn't started yet, just prepare
+                    this.radio.on = false;
+                    this.ui.setRadioUi(false, initial.name);
+                }
+            } else {
+                this.mp3Mode.active = true;
+                // Pause radio when switching to MP3
+                this.audio.pauseRadio();
+                this.radio.on = false;
+                this.ui.setRadioUi(false, initial.name);
+                // Autoplay MP3 when switching to MP3 tab
+                const tracks = this.audio.getMp3Tracks();
+                if (tracks.length > 0) {
+                    if (this.started || !this.audio.isMp3Playing()) {
+                        // Load track if not already loaded
+                        const current = this.audio.getCurrentMp3Track();
+                        if (!current) {
+                            this.audio.loadMp3Track(0);
+                        }
+                        this.audio.playMp3().then((ok) => {
+                            this.mp3Mode.playing = ok;
+                            this.updateMp3UI();
+                        });
+                    }
+                }
+            }
+            this.ui.setActiveTab(mode);
+        });
 
-        // Preload radio source so it's ready when game starts
-        this.audio.preloadRadio(initial.url);
+        // Set default tab (MP3)
+        this.ui.setActiveTab('mp3');
+
+        // Radio UI wiring (starts off since MP3 is default)
+        this.ui.setRadioUi(false, initial.name);
+        this.ui.setRadioVolumeSlider(0.6);
 
         this.ui.onRadioToggle(async () => {
             const st = this.radio.stations[this.radio.stationIndex];
             if (!this.radio.on) {
-                // Update UI immediately for instant feedback
-                this.radio.on = true;
-                this.ui.setRadioUi(true, st.name);
-                // Play audio in background without blocking
-                this.playOrAdvance().catch(() => {
-                    // If playback fails, revert UI state
-                    this.radio.on = false;
-                    this.ui.setRadioUi(false, st.name);
-                });
+                await this.playOrAdvance();
             } else {
-                // Update UI immediately
                 this.audio.pauseRadio();
                 this.radio.on = false;
                 this.ui.setRadioUi(false, st.name);
             }
         });
+        // Unified volume control (controls both radio and MP3)
+        this.ui.onUnifiedVolume((v) => {
+            this.audio.setRadioVolume(v);
+            this.audio.setMp3Volume(v);
+        });
+        this.ui.setUnifiedVolumeSlider(0.6);
+
+        // Legacy radio volume handler (if still needed)
         this.ui.onRadioVolume((v) => this.audio.setRadioVolume(v));
+
+        // MP3 controls
+        this.ui.onMp3Control('play', () => {
+            if (this.mp3Mode.playing) {
+                this.audio.pauseMp3();
+                this.mp3Mode.playing = false;
+            } else {
+                this.audio.playMp3().then((ok) => {
+                    this.mp3Mode.playing = ok;
+                    this.updateMp3UI();
+                });
+            }
+            this.updateMp3UI();
+        });
+
+        this.ui.onMp3Control('prev', () => {
+            this.audio.prevMp3();
+            this.mp3Mode.currentTrackIndex = this.audio.getCurrentMp3Track()?.index ?? 0;
+            this.mp3Mode.playing = this.audio.isMp3Playing();
+            this.updateMp3UI();
+        });
+
+        this.ui.onMp3Control('next', () => {
+            this.audio.nextMp3();
+            this.mp3Mode.currentTrackIndex = this.audio.getCurrentMp3Track()?.index ?? 0;
+            this.mp3Mode.playing = this.audio.isMp3Playing();
+            this.updateMp3UI();
+        });
+
+        this.ui.onMp3TrackClick((index) => {
+            this.audio.loadMp3Track(index);
+            this.mp3Mode.currentTrackIndex = index;
+            this.audio.playMp3().then((ok) => {
+                this.mp3Mode.playing = ok;
+                this.updateMp3UI();
+            });
+        });
+
+        // MP3 volume now handled by unified volume control above
+
+        // MP3 auto-advance handler
+        this.audio.setMp3OnEnded(() => {
+            this.audio.nextMp3();
+            this.mp3Mode.currentTrackIndex = this.audio.getCurrentMp3Track()?.index ?? 0;
+            this.mp3Mode.playing = true;
+            this.updateMp3UI();
+        });
 
         // Pause menu button handlers
         this.ui.onRestartClick(() => {
@@ -573,7 +689,7 @@ export class Game {
 
 
         if (!this.started) {
-            this.ui.update(this.ship.state, this.ship.getFocusRefillActive(), this.ship.getFocusRefillProgress());
+            this.ui.update(this.ship.state, this.ship.getFocusRefillActive(), this.ship.getFocusRefillProgress(), this.ship.getBoostRechargeDelay());
             return;
         }
 
@@ -592,10 +708,12 @@ export class Game {
             this.shootingStars.update(dt);
             // this.comets.update(dt); // Temporarily disabled
             this.env.update(dt);
-            this.ui.update(this.ship.state, this.ship.getFocusRefillActive(), this.ship.getFocusRefillProgress());
+            this.ui.update(this.ship.state, this.ship.getFocusRefillActive(), this.ship.getFocusRefillProgress(), this.ship.getBoostRechargeDelay());
             this.audio.setSpeed(this.ship.state.speedKmh);
             if (this.ship.state.boosting && !this.prevBoost) this.audio.triggerBoost();
             this.prevBoost = this.ship.state.boosting;
+            if (this.ship.state.onBoostPadEntry && !this.prevBoostPadEntry) this.audio.triggerBoostPad();
+            this.prevBoostPadEntry = this.ship.state.onBoostPadEntry;
             return;
         }
 
@@ -613,13 +731,17 @@ export class Game {
 
         // Update player ship during countdown and racing
         if (this.raceState === 'COUNTDOWN' || this.raceState === 'RACING') {
+            // Update gate fade-out during countdown and race
+            const currentTime = this.clock.getElapsedTime();
+            this.track.updateGateFade(currentTime);
+
             this.ship.update(dt);
             this.shipBoost.update(dt);
             this.speedStars.update(dt);
             this.wormholeTunnel.update(dt);
             this.shootingStars.update(dt); // Ensure shooting stars continue during race
             this.env.update(dt);
-            this.ui.update(this.ship.state, this.ship.getFocusRefillActive(), this.ship.getFocusRefillProgress());
+            this.ui.update(this.ship.state, this.ship.getFocusRefillActive(), this.ship.getFocusRefillProgress(), this.ship.getBoostRechargeDelay());
 
             // Update debug overlay
             // TODO FIX THIS CAUSES WEIRD INTRO CAMERA JERK 
@@ -627,17 +749,30 @@ export class Game {
             // const gameTime = this.clock.getElapsedTime();
             // this.ui.updateDebugOverlay(gameTime, starStats.ahead, starStats.behind, starStats.distant, starStats.total, this.ship.state.speedKmh);
 
-            this.audio.setSpeed(this.ship.state.speedKmh);
-            if (this.ship.state.boosting && !this.prevBoost) this.audio.triggerBoost();
-            this.prevBoost = this.ship.state.boosting;
-
-            // Update tunnel background darkening
-            this.updateTunnelBackground(dt);
-
-            // Update NPCs during countdown and racing
+            // Update NPCs FIRST so their state is current when calculating positions
             this.npcShips.forEach(npc => {
                 npc.update(dt, this.ship.state.t, this.ship.state.lapCurrent, this.ship.state.speedKmh, this.npcShips);
             });
+
+            // Update race position and lap time info (after NPCs have been updated)
+            this.raceManager.updatePlayerState(this.ship.state);
+            // Update NPC states so positions can be calculated accurately
+            this.npcShips.forEach(npc => {
+                this.raceManager.updateNPCState(npc.racerId, npc.state);
+            });
+
+            // Calculate and update race positions
+            const raceResults = this.raceManager.getRaceResults();
+            this.ui.updateRaceInfo(raceResults.playerPosition, this.ship.state.lastLapTime ?? 0, this.npcShips.length + 1);
+
+            this.audio.setSpeed(this.ship.state.speedKmh);
+            if (this.ship.state.boosting && !this.prevBoost) this.audio.triggerBoost();
+            this.prevBoost = this.ship.state.boosting;
+            if (this.ship.state.onBoostPadEntry && !this.prevBoostPadEntry) this.audio.triggerBoostPad();
+            this.prevBoostPadEntry = this.ship.state.onBoostPadEntry;
+
+            // Update tunnel background darkening
+            this.updateTunnelBackground(dt);
         }
     }
 
@@ -661,12 +796,16 @@ export class Game {
             this.ui.showGo();
             // Start the race
             this.raceState = 'RACING';
+            // Gate should already be faded out by now (fade started during countdown)
             this.ship.enableInput();
             // Camera control already enabled in begin() function
 
             // Start all ships
             this.ship.startRace();
             this.npcShips.forEach(npc => npc.startRace());
+
+            // Show race info display
+            this.ui.setRaceInfoVisible(true);
 
             // Hide countdown after GO animation
             setTimeout(() => {
@@ -743,28 +882,32 @@ export class Game {
             this.audio.setRadioSource(st.url);
             const ok = await this.audio.playRadio();
             if (ok) {
-                // Only update UI if radio is still on (user didn't toggle it off)
-                if (this.radio.on) {
-                    this.ui.setRadioUi(true, st.name);
-                }
+                this.radio.on = true;
+                this.ui.setRadioUi(true, st.name);
                 return true;
             }
             this.radio.stationIndex = (this.radio.stationIndex + 1) % this.radio.stations.length;
-            // Update station name in UI if radio is still on
-            if (this.radio.on) {
-                const newSt = this.radio.stations[this.radio.stationIndex];
-                this.ui.setRadioUi(true, newSt.name);
-            }
         }
-        // Only update UI if radio is still on (user didn't toggle it off during loading)
-        if (this.radio.on) {
-            this.radio.on = false;
-            const st = this.radio.stations[this.radio.stationIndex];
-            this.ui.setRadioUi(false, st.name);
-        }
+        this.radio.on = false;
+        const st = this.radio.stations[this.radio.stationIndex];
+        this.ui.setRadioUi(false, st.name);
         return false;
     }
 
+    private updateMp3UI() {
+        const trackInfo = this.audio.getCurrentMp3Track();
+        const tracks = this.audio.getMp3Tracks();
+        const isPlaying = this.audio.isMp3Playing();
+
+        this.ui.updateMp3Controls(isPlaying, trackInfo?.name || '-');
+        if (tracks.length > 0 && trackInfo) {
+            // Convert tracks to display format with artist and song
+            const displayTracks = tracks.map(t => ({ artist: t.artist, song: t.song }));
+            this.ui.updateMp3TrackList(displayTracks, trackInfo.index);
+            this.mp3Mode.currentTrackIndex = trackInfo.index;
+        }
+        this.mp3Mode.playing = isPlaying;
+    }
 
     private updateTunnelBackground(dt: number) {
         // Set target darkening based on tunnel state

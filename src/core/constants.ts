@@ -35,6 +35,9 @@ export const PHYSICS = {
     // Manual boost resource
     boostDurationSec: 3.0, // full-to-empty hold duration
     boostRegenPerSec: 0.25, // refills in ~4s when not boosting and not holding
+    boostDrainThreshold: 0.01, // minimum boost level before considered drained
+    boostMinActivation: 0.0625, // minimum boost level to activate (1 segment = 1/16)
+    boostRechargeDelaySec: 1.5, // delay before boost starts recharging after release
     lateralMax: 1.6,
     lateralAccel: 16.0,
     lateralDamping: 13.0,
@@ -211,6 +214,31 @@ export const SHOOTING_STARS = {
         new Color(0x00bfff), // Deep sky blue (cyan variant)
         new Color(0xff69b4)  // Hot pink
     ]
+};
+
+// Start line welding sparks configuration
+export const START_LINE_SPARKS = {
+    maxParticles: 1500, // Maximum number of active particles (enhanced for dense effect)
+    spawnRate: 200.0, // Particles per second (very high rate for many sparks)
+    gravity: 15.0, // Downward acceleration
+    initialVelocityMin: -2.0, // Minimum initial downward velocity
+    initialVelocityMax: -6.0, // Maximum initial downward velocity
+    lateralSpread: 0.8, // Random spread perpendicular to fall direction (wider spread)
+    particleSizeMin: 0.15, // Minimum particle size (larger for visibility)
+    particleSizeMax: 0.3, // Maximum particle size (larger for visibility)
+    lifetimeMin: 1.5, // Minimum particle lifetime in seconds (longer to see bounces)
+    lifetimeMax: 3.0, // Maximum particle lifetime in seconds
+    colors: [
+        new Color(0x53d7ff), // Cyan
+        new Color(0xff2bd6), // Magenta
+        new Color(0x00ffff), // Pure cyan
+        new Color(0xff1493)  // Deep pink
+    ],
+    opacityBase: 2.5, // Base opacity for intense glow (much brighter)
+    fadeOutRatio: 0.2, // Start fading out at 20% of lifetime remaining (longer visible)
+    bounceDamping: 0.6, // Velocity retained after bounce (60% energy)
+    maxBounces: 3, // Maximum number of bounces before particle becomes static
+    trackSurfaceOffset: 0.5 // Distance above track surface to consider "on track"
 };
 
 // Comets configuration

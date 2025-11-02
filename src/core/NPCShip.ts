@@ -46,6 +46,14 @@ export class NPCShip {
     // Race state system
     private countdownMode = false; // prevents movement during countdown
 
+    // Rubber banding system
+    private rubberBandingMultiplier = 1.0; // speed multiplier based on distance from player
+    private targetRubberBandingMultiplier = 1.0; // target multiplier (smoothly lerped to)
+    private playerPosition = 0;
+    private playerLap = 0;
+    private raceStartTime = 0; // Track elapsed game time since race started (in seconds)
+    private raceStarted = false; // Track if race has started
+
     // Rocket tail effect (like player ship)
     private rocketTail!: THREE.Group;
     private rocketTailMaterials: THREE.MeshBasicMaterial[] = [];
@@ -85,6 +93,7 @@ export class NPCShip {
             boostLevel: 1,
             inTunnel: false,
             tunnelCenterBoost: 1.0,
+            onBoostPadEntry: false,
         };
 
         // NPCs start immediately when countdown ends (no random delay)
@@ -237,6 +246,11 @@ export class NPCShip {
             return; // Stay stationary during countdown
         }
 
+        // Track race time (elapsed game time since race started)
+        if (this.raceStarted) {
+            this.raceStartTime += dt;
+        }
+
         this.aiUpdateTimer += dt;
 
         // Check for stuck condition and reset if needed
@@ -261,9 +275,16 @@ export class NPCShip {
     }
 
     private updateAI(playerPosition: number, playerLap: number, playerSpeed: number) {
+        // Store player state for rubber banding
+        this.playerPosition = playerPosition;
+        this.playerLap = playerLap;
+
         // Calculate our position relative to player
         const ourPosition = this.getTrackPosition();
         const positionDiff = ourPosition - playerPosition;
+
+        // Calculate rubber banding multiplier based on distance from player
+        this.updateRubberBanding();
 
         // AI lateral movement - follow track center with slight variation
         this.lateralSwayTimer += this.aiUpdateInterval;
@@ -279,25 +300,130 @@ export class NPCShip {
         }
     }
 
+    private updateRubberBanding() {
+        // Don't apply rubber banding if player position hasn't been initialized yet
+        // (playerPosition defaults to 0, which could cause issues at race start)
+        if (this.playerLap === 0 && this.state.lapCurrent === 0) {
+            // Both are at pre-race state, no rubber banding needed
+            this.targetRubberBandingMultiplier = 1.0;
+            return;
+        }
+
+        // Calculate player distance from start line (tracks are normalized 0-1, start is at t=0)
+        // If player hasn't moved significantly from start, disable rubber banding
+        // Handle both positive and negative positions (player might start behind start line)
+        let playerDistanceFromStart = this.playerPosition;
+        if (playerDistanceFromStart < 0) {
+            // Player is behind start line (negative t), use absolute value
+            playerDistanceFromStart = Math.abs(playerDistanceFromStart);
+        } else if (playerDistanceFromStart > 0.5) {
+            // Player wrapped around track, calculate distance from start going the other way
+            playerDistanceFromStart = 1 - playerDistanceFromStart;
+        }
+        const playerDistanceMeters = playerDistanceFromStart * 8000;
+
+        // Disable rubber banding until player has moved > 50m from start line
+        // This ensures NPCs can accelerate naturally at race start
+        if (playerDistanceMeters < 50) {
+            this.targetRubberBandingMultiplier = 1.0;
+            return;
+        }
+
+        // Calculate distance from player (accounting for lap differences)
+        const ourPosition = this.getTrackPosition();
+        const lapDiff = this.state.lapCurrent - this.playerLap;
+
+        // Calculate normalized track distance (0-1 range)
+        let trackDistance: number;
+        if (lapDiff === 0) {
+            // Same lap - calculate simple distance
+            trackDistance = ourPosition - this.playerPosition;
+            // Handle track wrapping
+            if (Math.abs(trackDistance) > 0.5) {
+                trackDistance = trackDistance > 0 ? trackDistance - 1 : trackDistance + 1;
+            }
+        } else if (lapDiff > 0) {
+            // NPC is ahead by lapDiff laps
+            trackDistance = (1 - this.playerPosition) + ourPosition + (lapDiff - 1);
+        } else {
+            // NPC is behind by |lapDiff| laps
+            trackDistance = ourPosition - (1 + this.playerPosition) - (Math.abs(lapDiff) - 1);
+        }
+
+        // Convert to meters (track length is 8000m)
+        const distanceMeters = Math.abs(trackDistance) * 8000;
+
+        // Rubber banding thresholds and multipliers
+        const closeDistance = 50; // meters - within this, no rubber banding
+        const maxAheadDistance = 100; // meters - hard cap: NPCs cannot get more than this ahead
+        const farBehindDistance = 300; // meters - beyond this, maximum speedup effect (reduced from 400 for better catch-up)
+        const veryFarBehindDistance = 400; // meters - beyond this, extra strong speedup
+        const maxSlowdown = 0.7; // Slow down to 70% when at max ahead distance (competitive but capped)
+        const maxSpeedup = 1.4; // Speed up to 140% when very far behind (increased for better catch-up)
+        const normalSpeedup = 1.3; // Speed up to 130% when moderately behind
+
+        // Calculate target rubber banding multiplier
+        if (trackDistance > 0) {
+            // NPC is ahead of player
+            if (distanceMeters >= maxAheadDistance) {
+                // At or beyond hard cap - apply maximum slowdown to prevent getting further ahead
+                this.targetRubberBandingMultiplier = maxSlowdown;
+            } else if (distanceMeters > closeDistance) {
+                // Between close distance and max ahead - gradual slowdown
+                const t = THREE.MathUtils.clamp((distanceMeters - closeDistance) / (maxAheadDistance - closeDistance), 0, 1);
+                this.targetRubberBandingMultiplier = THREE.MathUtils.lerp(1.0, maxSlowdown, t);
+            } else {
+                // Very close to player - no rubber banding
+                this.targetRubberBandingMultiplier = 1.0;
+            }
+        } else {
+            // NPC is behind player
+            if (distanceMeters < closeDistance) {
+                // Close to player - no rubber banding
+                this.targetRubberBandingMultiplier = 1.0;
+            } else if (distanceMeters >= veryFarBehindDistance) {
+                // Very far behind (>400m) - maximum speedup to catch up quickly
+                this.targetRubberBandingMultiplier = maxSpeedup;
+            } else {
+                // Moderately behind - gradual speedup
+                const t = THREE.MathUtils.clamp((distanceMeters - closeDistance) / (farBehindDistance - closeDistance), 0, 1);
+                this.targetRubberBandingMultiplier = THREE.MathUtils.lerp(1.0, normalSpeedup, t);
+            }
+        }
+
+        // Smoothly transition rubber banding multiplier (update happens in updatePhysics with dt)
+    }
+
     private updateBoostBehavior(dt: number) {
         // Update boost cooldown and duration
         this.boostCooldown = Math.max(0, this.boostCooldown - dt);
         this.boostDuration = Math.max(0, this.boostDuration - dt);
 
-        // Regenerate boost energy when not boosting
-        if (!this.isBoosting) {
+        // Determine if we should be boosting (duration-based like original, but also check energy)
+        const shouldBeBoosting = this.boostDuration > 0 && this.boostEnergy > 0;
+
+        // Boost energy: drain while active, regen when not held (same as player ship)
+        if (shouldBeBoosting) {
+            // Continuously drain boost energy while boosting (same as player)
+            this.boostEnergy = Math.max(0, this.boostEnergy - dt / PHYSICS.boostDurationSec);
+            // If boost energy runs out, stop boosting
+            if (this.boostEnergy <= 0) {
+                this.boostDuration = 0;
+            }
+        } else {
+            // Regenerate boost energy when not boosting (same as player ship)
             this.boostEnergy = Math.min(1, this.boostEnergy + PHYSICS.boostRegenPerSec * dt);
         }
 
         // Decide whether to boost based on AI behavior and conditions
         const shouldBoost = this.shouldUseBoost();
 
-        if (shouldBoost && this.boostCooldown <= 0 && this.boostEnergy > 0.3) {
+        if (shouldBoost && this.boostCooldown <= 0 && this.boostEnergy > 0.3 && !shouldBeBoosting) {
             this.activateBoost();
         }
 
         // Update boost state
-        this.isBoosting = this.boostDuration > 0;
+        this.isBoosting = this.boostDuration > 0 && this.boostEnergy > 0;
         this.state.boosting = this.isBoosting;
 
         // Update rocket tail effect based on boost pad timer (like player ship)
@@ -323,21 +449,46 @@ export class NPCShip {
     }
 
     private shouldUseBoost(): boolean {
-        // Moderate boost frequency for competitive racing
-        const baseChance = this.aiBehavior === 'aggressive' ? 0.2 : 0.1; // Balanced boost frequency
-        const randomChance = Math.random();
+        // Competitive boost usage - NPCs should use boost strategically to stay competitive
+        // More likely to boost when:
+        // 1. They have enough energy (>0.3)
+        // 2. They're behind the player (need to catch up)
+        // 3. They're aggressive AI (more boost usage)
 
-        // Boost with moderate frequency for competitive racing
-        const boostChance = baseChance + (Math.random() * 0.15); // 0.1-0.35 for aggressive, 0.1-0.25 for conservative
+        // Check if we're behind player (encourage catch-up boosting)
+        const ourPosition = this.getTrackPosition();
+        const lapDiff = this.state.lapCurrent - this.playerLap;
+        let isBehind = false;
+        if (lapDiff < 0) {
+            isBehind = true; // Behind by laps
+        } else if (lapDiff === 0) {
+            const distance = ourPosition - this.playerPosition;
+            if (distance < 0) {
+                isBehind = true; // Behind on same lap
+            }
+        }
 
-        return randomChance < boostChance;
+        // Base boost chance based on behavior
+        let baseChance = this.aiBehavior === 'aggressive' ? 0.25 : 0.15;
+
+        // Increase chance if behind player (competitive catch-up)
+        if (isBehind) {
+            baseChance += 0.2;
+        }
+
+        // Boost more frequently when energy is high (can afford to boost)
+        if (this.boostEnergy > 0.7) {
+            baseChance += 0.1;
+        }
+
+        const boostChance = THREE.MathUtils.clamp(baseChance, 0, 0.6); // Cap at 60% max chance
+        return Math.random() < boostChance;
     }
 
     private activateBoost() {
         this.isBoosting = true;
-        this.boostDuration = PHYSICS.boostDurationSec * 0.8; // NPCs boost for 80% of player duration
-        this.boostEnergy = Math.max(0, this.boostEnergy - 0.4); // Use 40% of boost energy
-        this.boostCooldown = 2.0; // 2 second cooldown between boosts
+        this.boostDuration = PHYSICS.boostDurationSec; // Same boost duration as player
+        this.boostCooldown = 0.5; // Short cooldown to prevent immediate re-boost (but energy drain limits it naturally)
     }
 
     private updateTunnelBoost(dt: number) {
@@ -486,8 +637,8 @@ export class NPCShip {
     }
 
     private updatePhysics(dt: number) {
-        // Calculate base speed - slightly slower than player for competitive racing
-        const baseSpeed = PHYSICS.baseSpeed * 0.85; // 15% slower than player
+        // Calculate base speed - same as player ship
+        const baseSpeed = PHYSICS.baseSpeed;
 
         // Apply boost multiplier if boosting - same as player
         const boostMultiplier = this.isBoosting ? PHYSICS.boostMultiplier : 1.0;
@@ -498,13 +649,43 @@ export class NPCShip {
         // Apply boost pad multiplier - same as player
         const boostPadMultiplier = this.boostPadMultiplier;
 
-        // Add small speed variation for racing unpredictability
-        const variation = 1 + (Math.random() - 0.5) * this.speedVariation * 0.05; // Very small variation
-        const targetSpeed = baseSpeed * boostMultiplier * tunnelMultiplier * boostPadMultiplier * variation;
+        // Smoothly update rubber banding multiplier (prevent sudden changes)
+        const rubberBandingLerpSpeed = 3.0; // How fast to transition to target multiplier
+        this.rubberBandingMultiplier = THREE.MathUtils.lerp(
+            this.rubberBandingMultiplier,
+            this.targetRubberBandingMultiplier,
+            1 - Math.pow(0.001, dt * rubberBandingLerpSpeed)
+        );
 
-        // Smooth speed transitions
-        const speedLerp = 1 - Math.pow(0.01, dt);
+        // Apply rubber banding multiplier (slows NPCs when ahead, speeds up when behind)
+        const rubberBanding = this.rubberBandingMultiplier;
+
+        // Target speed calculation with rubber banding
+        let targetSpeed = baseSpeed * boostMultiplier * tunnelMultiplier * boostPadMultiplier * rubberBanding;
+
+        // Ensure minimum speed to prevent NPCs from getting completely stuck
+        // Minimum is 50% of base speed (allows rubber banding to slow them when ahead, but not stop them)
+        const minSpeed = PHYSICS.baseSpeed * 0.5;
+        targetSpeed = Math.max(targetSpeed, minSpeed);
+
+        // Smooth speed transitions (same lerp rate as player ship for consistency)
+        const speedLerp = 1 - Math.pow(0.001, dt);
+        const prevSpeed = this.state.speedKmh;
         this.state.speedKmh = THREE.MathUtils.lerp(this.state.speedKmh, targetSpeed, speedLerp);
+
+        // Debug logging for significant speed drops (>20% drop in one frame)
+        if (prevSpeed > 50 && this.state.speedKmh < prevSpeed * 0.8) {
+            const speedDrop = prevSpeed - this.state.speedKmh;
+            const dropPercent = (speedDrop / prevSpeed) * 100;
+            console.warn(`NPC ${this.racerId} speed drop: ${prevSpeed.toFixed(1)} -> ${this.state.speedKmh.toFixed(1)} km/h (${dropPercent.toFixed(1)}% drop)`, {
+                boostMultiplier,
+                tunnelMultiplier,
+                boostPadMultiplier,
+                isBoosting: this.isBoosting,
+                boostEnergy: this.boostEnergy,
+                targetSpeed
+            });
+        }
 
         // Update lateral movement
         const lateralAccel = PHYSICS.lateralAccel * 0.8; // Slightly slower than player
@@ -622,6 +803,8 @@ export class NPCShip {
         // Transition from pre-race (lap 0) to race start (lap 1)
         this.state.lapCurrent = 1;
         this.countdownMode = false; // Allow movement when race starts
+        this.raceStarted = true;
+        this.raceStartTime = 0; // Reset race start timer (will accumulate dt each frame)
     }
 
     public reset() {
@@ -653,6 +836,14 @@ export class NPCShip {
 
         // Reset race state
         this.countdownMode = false;
+
+        // Reset rubber banding
+        this.rubberBandingMultiplier = 1.0;
+        this.targetRubberBandingMultiplier = 1.0;
+        this.playerPosition = 0;
+        this.playerLap = 0;
+        this.raceStartTime = 0;
+        this.raceStarted = false;
 
         // Hide all boost effects
         this.rocketTail.visible = false;
@@ -693,6 +884,11 @@ export class NPCShip {
     }
 
     private checkIfStuck(dt: number): boolean {
+        // Don't check for stuck during countdown or if race hasn't started
+        if (this.countdownMode || !this.raceStarted) {
+            return false;
+        }
+
         const currentT = this.state.t;
         const positionChange = Math.abs(currentT - this.lastPositionT);
 
@@ -707,15 +903,26 @@ export class NPCShip {
     }
 
     private resetIfStuck() {
-        console.log(`NPC ${this.racerId} was stuck, resetting position`);
+        console.warn(`NPC ${this.racerId} was stuck for ${this.stuckThreshold}s, attempting recovery`, {
+            position: this.state.t,
+            speed: this.state.speedKmh,
+            targetSpeed: PHYSICS.baseSpeed * this.rubberBandingMultiplier,
+            rubberBanding: this.rubberBandingMultiplier
+        });
 
-        // Teleport forward by a small amount
+        // Teleport forward by a small amount to unstick
         this.state.t += 0.02;
         if (this.state.t > 1) this.state.t -= 1;
 
+        // Force speed to minimum to ensure movement
+        this.state.speedKmh = Math.max(this.state.speedKmh, PHYSICS.baseSpeed * 0.5);
+
         // Reset velocity to prevent immediate re-sticking
         this.lateralVelocity = 0;
-        this.speedMultiplier = 1.2; // Give a small speed boost
+
+        // Temporarily disable rubber banding to allow acceleration
+        this.rubberBandingMultiplier = 1.0;
+        this.targetRubberBandingMultiplier = 1.0;
 
         // Reset stuck detection
         this.stuckDetectionTimer = 0;

@@ -58,10 +58,10 @@
         /* Radio Player - Speedometer Style */
         .radio-container {
             position: absolute;
-            top: 12px;
+            top: 20px;
             left: 12px;
             width: 480px;
-            height: 70px;
+            height: 220px;
             pointer-events: auto;
             user-select: none;
             z-index: 1000;
@@ -70,14 +70,13 @@
         .radio-panel {
             position: relative;
             width: 100%;
-            height: 100%;
+            height: calc(100% - 40px);
             background: transparent;
             border-radius: 12px;
-            overflow: hidden;
-            display: flex;
-            align-items: center;
+            overflow: visible;
             padding: 0 16px;
-            gap: 8px;
+            margin-top: 0;
+            min-height: 70px;
         }
 
         /* Grid pattern overlay */
@@ -100,6 +99,7 @@
             gap: 4px;
             z-index: 2;
             min-width: 0;
+            flex-shrink: 0;
         }
 
         .radio-label {
@@ -164,8 +164,8 @@
             flex-direction: column;
             gap: 2px;
             min-width: 0;
-            flex: 0 0 auto;
-            margin-right: 4px;
+            flex: 1;
+            margin-right: 0;
         }
 
         .station-label {
@@ -203,6 +203,12 @@
             width: 140px;
             flex-shrink: 0;
             transition: opacity 0.3s ease, visibility 0.3s ease;
+            margin: 4px 0;
+        }
+
+        .mp3-mode .volume-control {
+            align-self: flex-start;
+            margin-left: 0;
         }
 
         .volume-control.hidden {
@@ -228,7 +234,7 @@
             border-radius: 4px;
             background: rgba(20, 18, 35, 0.9);
             box-shadow: 0 0 12px rgba(255, 0, 255, 0.25) inset;
-            overflow: hidden;
+            overflow: visible;
         }
 
         .volume-fill {
@@ -240,6 +246,7 @@
             background: #ff2bd6;
             box-shadow: 0 0 18px rgba(255, 43, 214, 0.7);
             transition: width 0.08s ease-out;
+            border-radius: 4px;
         }
 
         .radio-container input[type="range"] {
@@ -253,22 +260,26 @@
             background: transparent;
             cursor: pointer;
             z-index: 1;
+            margin: 0;
+            padding: 0;
         }
 
         .radio-container input[type="range"]::-webkit-slider-thumb {
             -webkit-appearance: none;
             appearance: none;
-            width: 14px;
-            height: 14px;
+            width: 8px;
+            height: 8px;
             border-radius: 50%;
             background: #ff2bd6;
             box-shadow:
                 0 0 10px rgba(255, 43, 214, 0.9),
                 0 0 20px rgba(255, 43, 214, 0.7),
                 0 2px 6px rgba(0, 0, 0, 0.4);
-            border: 2px solid rgba(255, 255, 255, 0.5);
+            border: 1px solid rgba(255, 255, 255, 0.5);
+            box-sizing: border-box;
             transition: all 0.2s ease;
-            margin-top: -3px;
+            margin-top: 0;
+            cursor: pointer;
         }
 
         .radio-container input[type="range"]::-webkit-slider-thumb:hover {
@@ -279,16 +290,18 @@
         }
 
         .radio-container input[type="range"]::-moz-range-thumb {
-            width: 14px;
-            height: 14px;
+            width: 8px;
+            height: 8px;
             border-radius: 50%;
             background: #ff2bd6;
             box-shadow:
                 0 0 10px rgba(255, 43, 214, 0.9),
                 0 0 20px rgba(255, 43, 214, 0.7),
                 0 2px 6px rgba(0, 0, 0, 0.4);
-            border: 2px solid rgba(255, 255, 255, 0.5);
+            border: 1px solid rgba(255, 255, 255, 0.5);
+            box-sizing: border-box;
             transition: all 0.2s ease;
+            cursor: pointer;
         }
 
         .radio-container input[type="range"]::-moz-range-thumb:hover {
@@ -298,14 +311,269 @@
             transform: scale(1.2);
         }
 
+        /* Tab buttons */
+        .radio-tabs {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 8px;
+            margin-top: 4px;
+            position: relative;
+            z-index: 3;
+            align-items: center;
+            width: 100%;
+        }
+
+        .radio-tab {
+            flex: 0 0 auto;
+            width: 80px;
+            padding: 6px 12px;
+            border: 2px solid rgba(255, 43, 214, 0.5);
+            border-radius: 8px;
+            background: rgba(20, 18, 35, 0.8);
+            font-family: 'Orbitron', monospace;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 2px;
+            color: rgba(255, 43, 214, 0.7);
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow:
+                0 0 10px rgba(255, 43, 214, 0.2) inset,
+                0 0 15px rgba(83, 215, 255, 0.1);
+        }
+
+        .radio-tab:hover {
+            border-color: rgba(255, 43, 214, 0.7);
+            color: rgba(255, 43, 214, 0.9);
+            box-shadow:
+                0 0 15px rgba(255, 43, 214, 0.3) inset,
+                0 0 20px rgba(83, 215, 255, 0.2);
+        }
+
+        .radio-tab.active {
+            border-color: rgba(83, 215, 255, 0.6);
+            background: rgba(83, 215, 255, 0.1);
+            color: rgba(83, 215, 255, 1);
+            box-shadow:
+                0 0 15px rgba(83, 215, 255, 0.4) inset,
+                0 0 20px rgba(83, 215, 255, 0.3),
+                0 0 30px rgba(83, 215, 255, 0.2);
+            text-shadow:
+                0 0 8px rgba(83, 215, 255, 1),
+                0 0 16px rgba(83, 215, 255, 0.7);
+        }
+
+        .radio-tabs-volume {
+            flex: 0 0 auto;
+            width: 80px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 4px;
+        }
+
+        /* Mode containers */
+        .radio-mode {
+            display: none;
+        }
+
+        .radio-mode.active {
+            display: flex;
+        }
+
+        .radio-mode.mp3-mode {
+            flex-direction: column;
+            gap: 8px;
+            height: 100%;
+            padding-top: 12px;
+        }
+
+        #radioMode {
+            flex-direction: row;
+            align-items: center;
+            gap: 16px;
+            padding: 12px 0 0 0;
+            margin: 0;
+            width: 100%;
+            justify-content: flex-start;
+        }
+
+        /* MP3 controls */
+        .mp3-controls {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-shrink: 0;
+            margin-bottom: 4px;
+        }
+
+        .mp3-control-buttons {
+            display: flex;
+            gap: 6px;
+            align-items: center;
+        }
+
+        .mp3-control-btn {
+            width: 32px;
+            height: 32px;
+            border: 2px solid rgba(255, 43, 214, 0.5);
+            border-radius: 50%;
+            background: rgba(20, 18, 35, 0.8);
+            color: rgba(255, 43, 214, 0.9);
+            font-size: 14px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s ease;
+            box-shadow:
+                0 0 10px rgba(255, 43, 214, 0.3) inset,
+                0 0 15px rgba(83, 215, 255, 0.1);
+            line-height: 1;
+            padding: 0;
+            margin: 0;
+            box-sizing: border-box;
+            position: relative;
+        }
+
+        .mp3-control-btn:hover {
+            border-color: rgba(255, 43, 214, 0.8);
+            color: rgba(255, 43, 214, 1);
+            box-shadow:
+                0 0 15px rgba(255, 43, 214, 0.5) inset,
+                0 0 20px rgba(83, 215, 255, 0.2);
+            transform: scale(1.1);
+        }
+
+        .mp3-control-btn.play-pause {
+            width: 40px;
+            height: 40px;
+            font-size: 16px;
+            line-height: 1;
+        }
+
+        .mp3-control-btn span {
+            display: inline-block;
+            line-height: 1;
+            margin: 0;
+            padding: 0;
+            vertical-align: middle;
+        }
+
+        .mp3-control-btn.active {
+            border-color: rgba(83, 215, 255, 0.6);
+            background: rgba(83, 215, 255, 0.15);
+            color: rgba(83, 215, 255, 1);
+            box-shadow:
+                0 0 15px rgba(83, 215, 255, 0.5) inset,
+                0 0 25px rgba(83, 215, 255, 0.3);
+        }
+
+        .mp3-track-info {
+            flex: 1;
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .mp3-track-label {
+            font-family: 'Orbitron', monospace;
+            font-size: 8px;
+            font-weight: 700;
+            letter-spacing: 2px;
+            color: rgba(255, 43, 214, 0.9);
+            text-shadow:
+                0 0 8px rgba(255, 43, 214, 1),
+                0 0 16px rgba(255, 43, 214, 0.7);
+        }
+
+        .mp3-track-name {
+            font-family: 'Orbitron', monospace;
+            font-size: 13px;
+            font-weight: 600;
+            color: #ffffff;
+            text-shadow:
+                0 0 10px rgba(255, 255, 255, 0.8),
+                0 0 20px rgba(83, 215, 255, 0.6),
+                0 0 30px rgba(255, 43, 214, 0.4);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        /* Track list */
+        .mp3-track-list {
+            flex: 1;
+            overflow-y: auto;
+            overflow-x: hidden;
+            max-height: 120px;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            padding-right: 4px;
+            margin-top: 4px;
+            min-height: 0;
+        }
+
+        .mp3-track-list::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .mp3-track-list::-webkit-scrollbar-track {
+            background: rgba(20, 18, 35, 0.5);
+            border-radius: 3px;
+        }
+
+        .mp3-track-list::-webkit-scrollbar-thumb {
+            background: rgba(255, 43, 214, 0.5);
+            border-radius: 3px;
+        }
+
+        .mp3-track-list::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 43, 214, 0.8);
+        }
+
+        .mp3-track-item {
+            padding: 6px 10px;
+            border-radius: 4px;
+            font-family: 'Orbitron', monospace;
+            font-size: 11px;
+            font-weight: 500;
+            color: rgba(255, 255, 255, 0.6);
+            cursor: pointer;
+            transition: all 0.2s ease;
+            background: transparent;
+        }
+
+        .mp3-track-item:hover {
+            background: rgba(83, 215, 255, 0.1);
+            color: rgba(255, 255, 255, 0.9);
+            text-shadow: 0 0 8px rgba(83, 215, 255, 0.8);
+        }
+
+        .mp3-track-item.active {
+            background: rgba(83, 215, 255, 0.2);
+            color: rgba(83, 215, 255, 1);
+            text-shadow:
+                0 0 8px rgba(83, 215, 255, 1),
+                0 0 16px rgba(83, 215, 255, 0.7);
+            border-left: 3px solid rgba(83, 215, 255, 0.8);
+        }
+
         .radio-container input[type="range"]::-moz-range-track {
             background: transparent;
+            height: 8px;
+            border: none;
         }
 
         .radio-container input[type="range"]::-webkit-slider-runnable-track {
             background: transparent;
             height: 8px;
-            margin: 3px 0;
+            margin: 0;
+            padding: 0;
+            border: none;
         }
 
         .hud .speed {
@@ -316,6 +584,46 @@
         .hud .lap {
             font-size: 14px;
             opacity: .8;
+        }
+
+        .race-info {
+            position: absolute;
+            left: 16px;
+            bottom: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            font-family: 'Orbitron', monospace;
+            color: #53d7ff;
+            text-shadow: 0 0 8px rgba(83, 215, 255, 0.6);
+            pointer-events: none;
+        }
+
+        .race-info-item {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            font-size: 12px;
+        }
+
+        .race-info-label {
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 1px;
+            color: rgba(83, 215, 255, 0.7);
+            text-transform: uppercase;
+        }
+
+        .race-info-value {
+            font-size: 28px;
+            font-weight: 800;
+            letter-spacing: 1px;
+            color: #53d7ff;
+        }
+
+        .race-info-value.position {
+            color: #ff2bd6;
+            text-shadow: 0 0 10px rgba(255, 43, 214, 0.6);
         }
 
         .meters {
@@ -611,6 +919,60 @@
             border-radius: 50%;
         }
 
+        .speedometer-label {
+            position: absolute;
+            left: 50%;
+            transform: translateX(-50%);
+            font-family: 'Orbitron', monospace;
+            font-size: 13px;
+            font-weight: 800;
+            letter-spacing: 2px;
+            pointer-events: none;
+            text-shadow: 0 0 8px currentColor, 0 0 16px currentColor;
+        }
+
+        .speedometer-label.boost-label {
+            top: -52px;
+            color: #53d7ff;
+            text-transform: uppercase;
+        }
+
+        .speedometer-label.boost-label.higher {
+            top: -76px;
+        }
+
+        .speedometer-label.flow-label {
+            top: -52px;
+            color: #ff2bd6;
+            text-transform: uppercase;
+        }
+
+        .speedometer-label.instruction-label {
+            top: -28px;
+            color: #ff2bd6;
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 1px;
+            white-space: nowrap;
+        }
+
+        /* Pulse animation for labels */
+        @keyframes labelPulse {
+
+            0%,
+            100% {
+                opacity: 0.8;
+            }
+
+            50% {
+                opacity: 1.0;
+            }
+        }
+
+        .speedometer-label:not(.hidden) {
+            animation: labelPulse 2s ease-in-out infinite;
+        }
+
         /* Countdown Styles */
         .countdown {
             position: absolute;
@@ -664,26 +1026,61 @@
     <div id="app"></div>
     <div class="hud" id="hud">
         <div class="radio-container">
-            <div class="radio-panel">
-                <div class="radio-content">
-                    <div class="radio-label">RADIO</div>
-                    <div class="radio-toggle" id="radioToggle"></div>
-                </div>
-                <div class="station-info">
-                    <div class="station-label">STATION</div>
-                    <div class="radio-station" id="radioStation">Nightride FM</div>
-                </div>
-                <div class="volume-control">
+            <div class="radio-tabs">
+                <div class="radio-tab" id="radioTab">RADIO</div>
+                <div class="radio-tab active" id="mp3Tab">MP3</div>
+                <div class="radio-tabs-volume">
                     <div class="volume-label">VOLUME</div>
                     <div class="volume-bar-container">
-                        <div class="volume-fill" id="volumeFill"></div>
-                        <input type="range" id="radioVol" min="0" max="1" step="0.01" value="0.6" />
+                        <div class="volume-fill" id="unifiedVolumeFill"></div>
+                        <input type="range" id="unifiedVol" min="0" max="1" step="0.01" value="0.6" />
                     </div>
+                </div>
+            </div>
+            <div class="radio-panel">
+                <!-- Radio Mode -->
+                <div class="radio-mode" id="radioMode">
+                    <div class="radio-content">
+                        <div class="radio-label">RADIO</div>
+                        <div class="radio-toggle" id="radioToggle"></div>
+                    </div>
+                    <div class="station-info">
+                        <div class="station-label">STATION</div>
+                        <div class="radio-station" id="radioStation">Nightride FM</div>
+                    </div>
+                </div>
+                <!-- MP3 Mode -->
+                <div class="radio-mode mp3-mode active" id="mp3Mode">
+                    <div class="mp3-controls">
+                        <div class="mp3-control-buttons">
+                            <div class="mp3-control-btn" id="mp3PrevBtn"><span>⏮</span></div>
+                            <div class="mp3-control-btn play-pause" id="mp3PlayPauseBtn"><span>▶</span></div>
+                            <div class="mp3-control-btn" id="mp3NextBtn"><span>⏭</span></div>
+                        </div>
+                        <div class="mp3-track-info">
+                            <div class="mp3-track-label">TRACK</div>
+                            <div class="mp3-track-name" id="mp3TrackName">-</div>
+                        </div>
+                    </div>
+                    <div class="mp3-track-list" id="mp3TrackList"></div>
                 </div>
             </div>
         </div>
         <div class="speedometer-container hidden">
+            <div class="speedometer-label boost-label hidden">BOOST</div>
+            <div class="speedometer-label flow-label hidden">MAX FLOW</div>
+            <div class="speedometer-label instruction-label hidden">PRESS 'F' TO RECHARGE BOOST</div>
             <canvas id="speedometerCanvas"></canvas>
+        </div>
+        <div class="race-info hidden" id="raceInfo">
+            <div class="race-info-item">
+                <div class="race-info-label">POSITION</div>
+                <div class="race-info-value position" id="racePosition">-</div>
+            </div>
+            <div class="race-info-item">
+                <div class="race-info-label">LAST LAP</div>
+                <div class="race-info-value" id="lastLapTime">-</div>
+            </div>
         </div>
     </div>
     <div class="title visible" id="start" style="z-index: 1000;">

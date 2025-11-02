@@ -18,6 +18,9 @@ export class Ship {
         boostLevel: 1,
         inTunnel: false,
         tunnelCenterBoost: 1.0, // multiplier from tunnel center alignment
+        lastLapTime: 0,
+        lapTimes: [] as number[],
+        onBoostPadEntry: false, // true when just entered a boost pad (resets after check)
     };
 
     private track: Track;
@@ -28,11 +31,16 @@ export class Ship {
     private velocityPitch = 0;
     private boostTimer = 0; // visual intensity for camera/shake
     private boostEnergy = 1; // 0..1 manual boost resource
+    private boostRechargeDelay = 0; // countdown timer for recharge delay (0 = can recharge)
+    private boostKeyWasPressed = false; // track previous frame's boost key state to detect release
+    private boostEnergyPrevious = 1; // track previous frame's boost energy to detect depletion
     private now = 0;
     // lap detection helpers
     private prevT = 0;
     private checkpointT = 0.0; // could move later; start line
     private hasCrossedCheckpointThisFrame = false;
+    private lapStartTime = 0; // Time when the current lap started
+    private lapTime = 0; // Time elapsed since the start of the current lap
 
     private mouseYawTarget = 0;
     private mousePitchTarget = 0;
@@ -48,6 +56,7 @@ export class Ship {
     private tunnelBoostAccumulator = 1.0; // tracks current tunnel boost multiplier
     private boostPadMultiplier = 1.0; // tracks current boost pad multiplier
     private boostPadTimer = 0; // remaining boost pad duration
+    private wasOnBoostPad = false; // track previous frame's boost pad state to detect entry
     private baseFov = CAMERA.fov;
     private currentFov = CAMERA.fov;
 
@@ -203,6 +212,8 @@ export class Ship {
         this.hasCrossedCheckpointThisFrame = false;
         // Ensure prevT is set correctly
         this.prevT = this.state.t;
+        this.lapStartTime = this.now; // Initialize lap start time
+        this.lapTime = 0; // Reset lap time
     }
 
     reset() {
@@ -223,6 +234,9 @@ export class Ship {
         this.velocityPitch = 0;
         this.boostTimer = 0;
         this.boostEnergy = 1;
+        this.boostRechargeDelay = 0;
+        this.boostKeyWasPressed = false;
+        this.boostEnergyPrevious = 1;
         this.now = 0;
         this.prevT = this.state.t; // Initialize to match starting position
         this.checkpointT = 0.0;
@@ -239,6 +253,8 @@ export class Ship {
         this.boostPadMultiplier = 1.0;
         this.boostPadTimer = 0;
         this.currentFov = this.baseFov;
+        this.lapStartTime = this.now; // Reset lap start time
+        this.lapTime = 0; // Reset lap time
 
         // Reset focus refill state
         this.focusRefillActive = false;
@@ -315,17 +331,44 @@ export class Ship {
         }
 
         // speed and boost
-        // Manual boost resource: drains while active, regens when not held
+        // Manual boost resource: drains while active, regens when not held (with delay)
         let isBoosting = false;
-        if (this.input.boost && this.boostEnergy > 0) {
+        const boostKeyCurrentlyPressed = this.input.boost;
+
+        // Check if we were boosting in the previous frame
+        const wasBoostingLastFrame = this.boostKeyWasPressed && this.boostEnergy > 0.01;
+
+        if (boostKeyCurrentlyPressed && this.boostEnergy > 0) {
             isBoosting = true;
             this.boostEnergy = Math.max(0, this.boostEnergy - dt / PHYSICS.boostDurationSec);
         }
 
-        // Always regenerate boost energy when not actively boosting
-        if (!isBoosting) {
+        // Detect if boost just ran out (energy drained to 0 while boosting)
+        const boostJustRanOut = this.boostEnergyPrevious > 0 && this.boostEnergy <= 0 && this.boostKeyWasPressed;
+
+        // Detect boost key release to start recharge delay
+        if (!boostKeyCurrentlyPressed && wasBoostingLastFrame) {
+            this.boostRechargeDelay = PHYSICS.boostRechargeDelaySec;
+        }
+
+        // If boost just ran out while holding, start recharge delay
+        if (boostJustRanOut && boostKeyCurrentlyPressed) {
+            this.boostRechargeDelay = PHYSICS.boostRechargeDelaySec;
+        }
+
+        // Decrement recharge delay timer
+        if (this.boostRechargeDelay > 0) {
+            this.boostRechargeDelay = Math.max(0, this.boostRechargeDelay - dt);
+        }
+
+        // Only regenerate boost energy when not actively boosting, delay has elapsed, and key is not pressed
+        if (!isBoosting && !boostKeyCurrentlyPressed && this.boostRechargeDelay <= 0) {
             this.boostEnergy = Math.min(1, this.boostEnergy + PHYSICS.boostRegenPerSec * dt);
         }
+
+        // Update previous frame's state
+        this.boostKeyWasPressed = boostKeyCurrentlyPressed;
+        this.boostEnergyPrevious = this.boostEnergy;
 
         const manual = isBoosting ? PHYSICS.boostMultiplier : 1;
 
@@ -353,6 +396,7 @@ export class Ship {
 
         // Boost pad logic: temporary speed boost when driving over pads
         const boostPadInfo = this.track.getBoostPadAtT(this.state.t);
+        const justEnteredBoostPad = boostPadInfo.onPad && !this.wasOnBoostPad;
         if (boostPadInfo.onPad) {
             // On a boost pad - activate boost and reset timer
             this.boostPadTimer = BOOST_PAD.boostDuration;
@@ -373,6 +417,12 @@ export class Ship {
             );
         }
 
+        // Store boost pad state for next frame (to detect entry)
+        this.wasOnBoostPad = boostPadInfo.onPad;
+
+        // Expose boost pad entry for audio trigger (set by Game.ts)
+        this.state.onBoostPadEntry = justEnteredBoostPad;
+
         // Auto-cruise: always move forward at base speed with all active multipliers
         const targetSpeed = PHYSICS.baseSpeed * manual * this.tunnelBoostAccumulator * this.boostPadMultiplier;
 
@@ -388,6 +438,9 @@ export class Ship {
         const mps = kmhToMps(this.state.speedKmh);
         const prevTBeforeUpdate = this.state.t;
         this.state.t += (mps * dt) / this.track.length; // normalize by length
+
+        // lap time calculation
+        this.lapTime = this.now - this.lapStartTime;
 
         // lap detection: crossing checkpoint at t=0
         // Count laps from the start (lapCurrent >= 0)
@@ -424,6 +477,16 @@ export class Ship {
                 // Race finishes when crossing at lap 3 (lapCurrent >= lapTotal after increment)
                 this.state.lapCurrent++;
                 this.hasCrossedCheckpointThisFrame = true;
+
+                // Store lap time before resetting
+                if (this.state.lapCurrent > 1) {
+                    // Lap times after lap 1 (don't count the pre-race countdown lap)
+                    this.state.lastLapTime = this.lapTime;
+                    this.state.lapTimes!.push(this.lapTime);
+                }
+
+                this.lapStartTime = this.now; // Update lap start time
+                this.lapTime = 0; // Reset lap time
             }
         }
 
@@ -672,6 +735,11 @@ export class Ship {
 
     public getFocusRefillProgress(): number {
         return this.focusRefillProgress;
+    }
+
+    // Getters for boost recharge delay
+    public getBoostRechargeDelay(): number {
+        return this.boostRechargeDelay;
     }
 }
 

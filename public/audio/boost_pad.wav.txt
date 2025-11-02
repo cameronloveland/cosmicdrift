@@ -1,0 +1,20 @@
+PLACEHOLDER: Track Boost Pad Sound
+===================================
+Replace this file with: boost_pad.wav
+
+DESCRIPTION:
+- Track boost pad activation sound (when driving over boost pads)
+- Should feel different from player boost - more mechanical/picked-up
+- Non-looping, triggered once per boost pad entry
+- Target volume: Similar to player boost (~60-70%)
+
+RECOMMENDATIONS:
+- Duration: 0.4-1.0 seconds (slightly longer than player boost)
+- Character: Mechanical, power-up, pad activation feel
+- Should convey "picked up speed from track feature"
+- Slightly less aggressive than player boost
+- Could include: Mechanical whirr, energy pickup sound, speed pad activation
+- Differentiate from boost.wav to avoid confusion
+
+NOTE: This sound will be automatically triggered when the ship enters a boost pad zone on the track.
+

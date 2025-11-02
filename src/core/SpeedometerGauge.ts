@@ -134,7 +134,14 @@ export class SpeedometerGauge {
         const arcEnd = Math.PI * 2.25;
         const totalAngle = arcEnd - arcStart;
         const segmentAngle = totalAngle / this.segments;
-        const filledSegments = Math.ceil(value * this.segments);
+
+        // Check if this is the boost arc and if it's drained
+        const isBoostArc = color === '#53d7ff';
+        const isDrained = isBoostArc && this.isBoostDrained();
+
+        // If drained, treat as 0 filled segments (all unfilled)
+        const effectiveValue = isDrained ? 0 : value;
+        const filledSegments = Math.ceil(effectiveValue * this.segments);
 
         // Check if this arc is full (boost or flow at 100%)
         const isFull = value >= 0.95; // Close to 100%
@@ -539,6 +546,10 @@ export class SpeedometerGauge {
         }
 
         this.ctx.restore();
+    }
+
+    public isBoostDrained(): boolean {
+        return this.targetBoost <= 0.01;
     }
 
     public destroy() {

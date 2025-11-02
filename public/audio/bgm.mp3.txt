@@ -1,0 +1,16 @@
+PLACEHOLDER: Background Music (BGM)
+====================================
+Replace this file with: bgm.mp3
+
+DESCRIPTION:
+- Loopable synthwave/electronic track
+- Atmospheric, cinematic space-racing vibe
+- Should loop seamlessly
+- Target volume: ~35% (set in Audio.ts)
+
+RECOMMENDATIONS:
+- 2-4 minute loop preferred
+- Genre: Synthwave, Cyberpunk, Retro Electro
+- BPM: 120-140 (driving tempo)
+- Mood: Energetic but not overwhelming
+

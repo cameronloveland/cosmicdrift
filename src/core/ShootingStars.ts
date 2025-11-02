@@ -70,9 +70,14 @@ export class ShootingStars {
             blending: THREE.AdditiveBlending,
             depthWrite: false,
             depthTest: false, // Disable depth test to ensure visibility
-            toneMapped: false
+            toneMapped: false,
+            vertexColors: true // Enable vertex colors for per-instance color control
         });
         this.trailMesh = new THREE.InstancedMesh(trailGeometry, trailMaterial, this.maxStars * SHOOTING_STARS.trailParticleCount);
+        
+        // Initialize instanceColor for per-trail fade effects
+        this.trailMesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(this.maxStars * SHOOTING_STARS.trailParticleCount * 3), 3);
+        this.trailMesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
     }
 
     update(dt: number) {
@@ -259,10 +264,19 @@ export class ShootingStars {
             this.trailMesh.setMatrixAt(i, this.tmpObj.matrix);
         }
 
-        this.starMesh.instanceMatrix.needsUpdate = true;
-        this.trailMesh.instanceMatrix.needsUpdate = true;
-        (this.starMesh.instanceColor as any).needsUpdate = true;
-        (this.trailMesh.instanceColor as any).needsUpdate = true;
+        // Only update if meshes exist and are initialized
+        if (this.starMesh && this.starMesh.instanceMatrix) {
+            this.starMesh.instanceMatrix.needsUpdate = true;
+        }
+        if (this.trailMesh && this.trailMesh.instanceMatrix) {
+            this.trailMesh.instanceMatrix.needsUpdate = true;
+        }
+        if (this.starMesh && this.starMesh.instanceColor) {
+            (this.starMesh.instanceColor as any).needsUpdate = true;
+        }
+        if (this.trailMesh && this.trailMesh.instanceColor) {
+            (this.trailMesh.instanceColor as any).needsUpdate = true;
+        }
     }
 
     private removeStar(index: number) {

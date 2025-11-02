@@ -2,7 +2,8 @@ Place static assets here.
 
 audio/
   - bgm.mp3 (placeholder synthwave loop)
-  - boost.wav (short whoosh)
+  - boost.wav (player manual boost - short aggressive whoosh)
+  - boost_pad.wav (track boost pad activation - mechanical pickup sound)
   - wind.wav (loopable wind hiss)
 
 textures/

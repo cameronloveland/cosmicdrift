@@ -1,0 +1,17 @@
+PLACEHOLDER: Wind Sound Effect
+================================
+Replace this file with: wind.wav
+
+DESCRIPTION:
+- Loopable wind/hiss sound effect
+- Speed-based volume (0-60% based on 80-260 km/h)
+- Should loop seamlessly without audible seams
+- Plays continuously during gameplay
+
+RECOMMENDATIONS:
+- White/pink noise based wind
+- Subtle, not too harsh
+- 2-5 seconds long for seamless loop
+- High-pass filtered to avoid low rumble
+- Gets louder as speed increases
+

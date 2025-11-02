@@ -17,6 +17,9 @@ export interface ShipState {
     boostLevel: number; // 0..1 visual intensity of manual boost
     inTunnel: boolean;
     tunnelCenterBoost: number; // multiplier from tunnel center alignment
+    lastLapTime?: number; // seconds for the last completed lap
+    lapTimes?: number[]; // array of all lap times
+    onBoostPadEntry: boolean; // true when just entered a boost pad (resets after check)
 }
 
 export interface TrackSystem {
@@ -89,6 +92,7 @@ export type RacePosition = {
     lapTotal: number;
     finished: boolean;
     finishTime?: number;
+    t?: number; // Track position [0..1]
 };
 
 export type RaceState = 'NOT_STARTED' | 'COUNTDOWN' | 'RACING' | 'FINISHED';

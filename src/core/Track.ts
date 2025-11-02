@@ -24,6 +24,12 @@ export class Track {
     private boostPads: BoostPadSegment[] = [];
     private boostPadGroup = new THREE.Group();
 
+    // Start line gate fade-out state
+    private gateMaterials: THREE.MeshBasicMaterial[] = [];
+    private gateBaseOpacities: number[] = []; // Store original opacities
+    private gateFadeStartTime: number | null = null;
+    private gateFadeDuration = 3.0; // 3 seconds fade (duration of countdown)
+
     private opts: TrackOptions = TRACK_OPTS;
 
     // sampled frames cache (exposed for wormhole tunnel generation)
@@ -326,11 +332,11 @@ export class Track {
         const mat = new THREE.MeshPhysicalMaterial({
             color: new THREE.Color(0x0e1130),
             roughness: 0.35,
-            metalness: 0.05,
+            metalness: 0.1, // Slightly increased for more reflection
             transparent: true,
             opacity: 0.98,
-            emissive: COLORS.deepBlue.clone().multiplyScalar(0.25),
-            envMapIntensity: 0.4,
+            emissive: COLORS.deepBlue.clone().multiplyScalar(0.4), // Increased from 0.25 for stronger glow
+            envMapIntensity: 1.2, // Increased from 0.4 for stronger reflective lighting
             vertexColors: true,
             alphaTest: 0.01 // Ensure alpha blending works properly
         });
@@ -418,6 +424,10 @@ export class Track {
             toneMapped: false
         });
 
+        // Store material reference and base opacity for fade-out animation
+        this.gateMaterials.push(gateMat);
+        this.gateBaseOpacities.push(1.0);
+
         // Gate dimensions
         const gateHeight = 12;
         const postRadius = 0.4; // Make poles thicker for better visibility
@@ -427,13 +437,23 @@ export class Track {
         // Create vertical posts (left and right) - position them directly at start line
         const postGeom = new THREE.CylinderGeometry(postRadius, postRadius, gateHeight, 12);
 
+        // Orient posts to be perpendicular to track surface (along track's up vector)
+        // CylinderGeometry is oriented along Y-axis by default, so we need to rotate it
+        // to align with the track's local up vector (normal)
+        const postX = new THREE.Vector3().copy(tan).normalize(); // X perpendicular to up and bin
+        const postY = new THREE.Vector3().copy(up).normalize(); // Y along track up (normal)
+        const postZ = new THREE.Vector3().copy(bin).normalize(); // Z along track width
+        const postM = new THREE.Matrix4().makeBasis(postX, postY, postZ);
+        const postQ = new THREE.Quaternion().setFromRotationMatrix(postM);
+
         // Left post - position at track edge at start line
         const leftPost = new THREE.Mesh(postGeom, gateMat);
         const leftPostPos = new THREE.Vector3()
             .copy(center)
             .addScaledVector(bin, -this.width * 0.5 - 0.1) // Just outside left track edge
-            .addScaledVector(up, gateHeight * 0.5);
+            .addScaledVector(up, gateHeight * 0.5); // Center vertically along track normal
         leftPost.position.copy(leftPostPos);
+        leftPost.quaternion.copy(postQ); // Orient perpendicular to track surface
         this.root.add(leftPost); // Add directly to root, not gate group
 
         // Right post - position at track edge at start line
@@ -441,22 +461,48 @@ export class Track {
         const rightPostPos = new THREE.Vector3()
             .copy(center)
             .addScaledVector(bin, this.width * 0.5 + 0.1) // Just outside right track edge
-            .addScaledVector(up, gateHeight * 0.5);
+            .addScaledVector(up, gateHeight * 0.5); // Center vertically along track normal
         rightPost.position.copy(rightPostPos);
+        rightPost.quaternion.copy(postQ); // Orient perpendicular to track surface
         this.root.add(rightPost); // Add directly to root, not gate group
 
 
         // Create gate group for text only
         const gateGroup = new THREE.Group();
 
-        // Horizontal crossbar connecting the posts - position directly at start line
-        const crossbarLength = this.width + 0.2; // Span the track width plus small margin
-        const crossbarGeom = new THREE.BoxGeometry(crossbarLength, crossbarHeight, crossbarWidth);
-        const crossbar = new THREE.Mesh(crossbarGeom, gateMat);
-        const crossbarPos = new THREE.Vector3()
+        // Calculate exact positions of post outer edges at top for flush alignment
+        const leftPostOuterEdge = new THREE.Vector3()
             .copy(center)
-            .addScaledVector(up, gateHeight);
+            .addScaledVector(bin, -this.width * 0.5 - 0.1 - postRadius) // Left post outer edge
+            .addScaledVector(up, gateHeight); // At top of posts
+        const rightPostOuterEdge = new THREE.Vector3()
+            .copy(center)
+            .addScaledVector(bin, this.width * 0.5 + 0.1 + postRadius) // Right post outer edge
+            .addScaledVector(up, gateHeight); // At top of posts
+
+        // Calculate exact distance between post outer edges for perfect flush alignment
+        const crossbarLength = leftPostOuterEdge.distanceTo(rightPostOuterEdge);
+
+        // Horizontal crossbar connecting the posts - position flush with post tops
+        const crossbarGeom = new THREE.BoxGeometry(crossbarHeight, crossbarWidth, crossbarLength);
+        const crossbar = new THREE.Mesh(crossbarGeom, gateMat);
+
+        // Position crossbar at midpoint between post outer edges, at top of posts
+        const crossbarPos = new THREE.Vector3()
+            .copy(leftPostOuterEdge)
+            .add(rightPostOuterEdge)
+            .multiplyScalar(0.5);
         crossbar.position.copy(crossbarPos);
+
+        // Orient crossbar: length is along Z-axis, span across track width (binormal)
+        // BoxGeometry(X=height, Y=width, Z=length) -> need Z along binormal
+        const crossbarX = new THREE.Vector3().copy(tan).normalize(); // X perpendicular to bin and up
+        const crossbarY = new THREE.Vector3().copy(up).normalize(); // Y up
+        const crossbarZ = new THREE.Vector3().copy(bin).normalize(); // Z along track width
+        const crossbarM = new THREE.Matrix4().makeBasis(crossbarX, crossbarY, crossbarZ);
+        const crossbarQ = new THREE.Quaternion().setFromRotationMatrix(crossbarM);
+        crossbar.quaternion.copy(crossbarQ);
+
         this.root.add(crossbar); // Add directly to root, not gate group
 
         // Create "START" text using simple box geometry letters
@@ -544,12 +590,12 @@ export class Track {
         const trackUp = new THREE.Vector3().copy(up).normalize(); // track up
 
         // Create rotation matrix where text is perpendicular to track direction
-        // Text should read left-to-right across the track width
-        const m = new THREE.Matrix4().makeBasis(trackForward, trackUp, trackRight.clone().negate());
+        // Text should read left-to-right across the track width (X = binormal, Y = up, Z = -tangent)
+        const m = new THREE.Matrix4().makeBasis(trackRight, trackUp, trackForward.clone().negate());
         const q = new THREE.Quaternion().setFromRotationMatrix(m);
 
         gateGroup.quaternion.copy(q);
-        gateGroup.position.copy(center).addScaledVector(up, textYOffset);
+        gateGroup.position.copy(center).addScaledVector(up, textYOffset + 2); // Move text up slightly
 
         this.root.add(gateGroup);
 
@@ -573,6 +619,98 @@ export class Track {
         stripeMesh.position.copy(center).addScaledVector(up, 0.5);
         stripeMesh.scale.set(this.width, 2.0, 1); // Make it thicker
         this.root.add(stripeMesh);
+
+        // Create glowing holographic wall at start line
+        // Width spans between the inner edges of the posts
+        const wallWidth = crossbarLength; // Match the crossbar span
+        const wallHeight = gateHeight; // Match the height of the side columns (posts)
+        const wallGeom = new THREE.PlaneGeometry(wallWidth, wallHeight);
+
+        // Create holographic glowing material
+        const wallMat = new THREE.MeshBasicMaterial({
+            color: 0x53d7ff, // Cyan blue
+            transparent: true,
+            opacity: 0.3, // Semi-transparent for holographic effect
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+            side: THREE.DoubleSide, // Visible from both sides
+            toneMapped: false
+        });
+
+        // Store wall materials and base opacity for fade-out animation
+        this.gateMaterials.push(wallMat);
+        this.gateBaseOpacities.push(0.3);
+
+        const wallMesh = new THREE.Mesh(wallGeom, wallMat);
+
+        // Position wall aligned with posts - bottom at track level, top at post top
+        const wallPos = new THREE.Vector3()
+            .copy(center)
+            .addScaledVector(up, gateHeight * 0.5); // Center vertically to match posts
+
+        // Orient wall perpendicular to track direction - standing upright like a barrier
+        // PlaneGeometry: default plane lies in XY, with +Z as normal (outward facing)
+        // For upright wall: width along X (bin), height along Y (up), normal along -Z (faces backward/opposite track)
+        // Since ships come from behind start line, wall faces backward (negative tangent)
+        const wallX = new THREE.Vector3().copy(bin).normalize(); // Width spans across track (X-axis)
+        const wallY = new THREE.Vector3().copy(up).normalize(); // Height goes up (Y-axis)  
+        const wallZ = new THREE.Vector3().copy(tan).negate().normalize(); // Normal faces backward (negative Z, opposite track direction)
+        const wallM = new THREE.Matrix4().makeBasis(wallX, wallY, wallZ);
+        const wallQ = new THREE.Quaternion().setFromRotationMatrix(wallM);
+        wallMesh.quaternion.copy(wallQ);
+        wallMesh.position.copy(wallPos);
+
+        this.root.add(wallMesh);
+
+        // Add edge glow effect with a slightly larger, brighter rectangle
+        const edgeGeom = new THREE.PlaneGeometry(wallWidth + 0.2, wallHeight + 0.2);
+        const edgeMat = new THREE.MeshBasicMaterial({
+            color: 0x00ffff, // Bright cyan
+            transparent: true,
+            opacity: 0.15, // Subtle edge glow
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+            side: THREE.DoubleSide,
+            toneMapped: false
+        });
+
+        // Store edge material and base opacity for fade-out animation
+        this.gateMaterials.push(edgeMat);
+        this.gateBaseOpacities.push(0.15);
+
+        const edgeMesh = new THREE.Mesh(edgeGeom, edgeMat);
+        edgeMesh.quaternion.copy(wallQ);
+        edgeMesh.position.copy(wallPos);
+        this.root.add(edgeMesh);
+    }
+
+    public startGateFade(currentTime: number) {
+        // Start the fade-out animation
+        if (this.gateFadeStartTime === null) {
+            // Store base opacities before starting fade
+            this.gateFadeStartTime = currentTime;
+        }
+    }
+
+    public updateGateFade(currentTime: number) {
+        if (this.gateFadeStartTime === null) return;
+
+        const elapsed = currentTime - this.gateFadeStartTime;
+        const fadeProgress = Math.min(elapsed / this.gateFadeDuration, 1.0);
+
+        // Calculate opacity (fade from base opacity to 0.0)
+        this.gateMaterials.forEach((mat, index) => {
+            const baseOpacity = this.gateBaseOpacities[index];
+            const opacity = baseOpacity * (1.0 - fadeProgress);
+            mat.opacity = opacity;
+        });
+
+        // If fade is complete, keep materials at 0 opacity
+        if (fadeProgress >= 1.0) {
+            this.gateMaterials.forEach(mat => {
+                mat.opacity = 0;
+            });
+        }
     }
 
     private buildTunnels() {
@@ -805,7 +943,7 @@ export class Track {
         const mat = new THREE.MeshBasicMaterial({
             color: color,
             transparent: true,
-            opacity: 0.95, // Slightly higher opacity for better visibility
+            opacity: 1.0, // Increased from 0.95 for stronger neon glow
             blending: THREE.AdditiveBlending,
             depthWrite: false,
             toneMapped: false,
@@ -859,7 +997,7 @@ export class Track {
         const mat = new THREE.MeshBasicMaterial({
             color: color,
             transparent: true,
-            opacity: 0.4, // Slightly higher opacity for better visibility
+            opacity: 0.5, // Increased from 0.4 for stronger edge glow
             blending: THREE.AdditiveBlending,
             depthWrite: false,
             toneMapped: false,
