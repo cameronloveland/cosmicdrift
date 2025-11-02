@@ -357,38 +357,42 @@ export class NPCShip {
         // Rubber banding thresholds and multipliers
         const closeDistance = 50; // meters - within this, no rubber banding
         const maxAheadDistance = 100; // meters - hard cap: NPCs cannot get more than this ahead
-        const farBehindDistance = 300; // meters - beyond this, maximum speedup effect (reduced from 400 for better catch-up)
+        const farBehindDistance = 300; // meters - beyond this, maximum speedup effect
         const veryFarBehindDistance = 400; // meters - beyond this, extra strong speedup
-        const maxSlowdown = 0.7; // Slow down to 70% when at max ahead distance (competitive but capped)
-        const maxSpeedup = 1.4; // Speed up to 140% when very far behind (increased for better catch-up)
-        const normalSpeedup = 1.3; // Speed up to 130% when moderately behind
+        const maxSlowdown = 0.75; // Slow down to 75% when at max ahead distance (slightly less aggressive)
+        const maxSpeedup = 1.25; // Speed up to 125% when very far behind (reduced to prevent pack formation)
+        const normalSpeedup = 1.15; // Speed up to 115% when moderately behind (reduced to prevent pack formation)
+
+        // Add individual variation to rubber banding so NPCs don't all get the same multiplier
+        // This creates natural spread instead of pack behavior
+        const rubberBandingVariation = 0.95 + (Math.random() * 0.1); // 0.95 to 1.05 variation
 
         // Calculate target rubber banding multiplier
         if (trackDistance > 0) {
             // NPC is ahead of player
             if (distanceMeters >= maxAheadDistance) {
                 // At or beyond hard cap - apply maximum slowdown to prevent getting further ahead
-                this.targetRubberBandingMultiplier = maxSlowdown;
+                this.targetRubberBandingMultiplier = maxSlowdown * rubberBandingVariation;
             } else if (distanceMeters > closeDistance) {
                 // Between close distance and max ahead - gradual slowdown
                 const t = THREE.MathUtils.clamp((distanceMeters - closeDistance) / (maxAheadDistance - closeDistance), 0, 1);
-                this.targetRubberBandingMultiplier = THREE.MathUtils.lerp(1.0, maxSlowdown, t);
+                this.targetRubberBandingMultiplier = THREE.MathUtils.lerp(1.0, maxSlowdown, t) * rubberBandingVariation;
             } else {
-                // Very close to player - no rubber banding
-                this.targetRubberBandingMultiplier = 1.0;
+                // Very close to player - no rubber banding, but still add variation
+                this.targetRubberBandingMultiplier = 1.0 * rubberBandingVariation;
             }
         } else {
             // NPC is behind player
             if (distanceMeters < closeDistance) {
-                // Close to player - no rubber banding
-                this.targetRubberBandingMultiplier = 1.0;
+                // Close to player - no rubber banding, but still add variation
+                this.targetRubberBandingMultiplier = 1.0 * rubberBandingVariation;
             } else if (distanceMeters >= veryFarBehindDistance) {
                 // Very far behind (>400m) - maximum speedup to catch up quickly
-                this.targetRubberBandingMultiplier = maxSpeedup;
+                this.targetRubberBandingMultiplier = maxSpeedup * rubberBandingVariation;
             } else {
                 // Moderately behind - gradual speedup
                 const t = THREE.MathUtils.clamp((distanceMeters - closeDistance) / (farBehindDistance - closeDistance), 0, 1);
-                this.targetRubberBandingMultiplier = THREE.MathUtils.lerp(1.0, normalSpeedup, t);
+                this.targetRubberBandingMultiplier = THREE.MathUtils.lerp(1.0, normalSpeedup, t) * rubberBandingVariation;
             }
         }
 
@@ -609,8 +613,12 @@ export class NPCShip {
         // Apply rubber banding multiplier (slows NPCs when ahead, speeds up when behind)
         const rubberBanding = this.rubberBandingMultiplier;
 
-        // Target speed calculation with rubber banding
-        let targetSpeed = baseSpeed * boostMultiplier * tunnelMultiplier * boostPadMultiplier * rubberBanding;
+        // Apply individual speed variation to create racing differences between NPCs
+        // Add random variation that changes slowly over time (more realistic than constant variation)
+        const speedVariationFactor = 1.0 + (Math.random() - 0.5) * this.speedVariation * 2;
+
+        // Target speed calculation with rubber banding and individual variation
+        let targetSpeed = baseSpeed * boostMultiplier * tunnelMultiplier * boostPadMultiplier * rubberBanding * speedVariationFactor;
 
         // Ensure minimum speed to prevent NPCs from getting completely stuck
         // Minimum is 50% of base speed (allows rubber banding to slow them when ahead, but not stop them)
@@ -680,11 +688,18 @@ export class NPCShip {
         const actualDelta = Math.max(positionDelta, minDelta);
 
         this.state.t += actualDelta;
+
+        // Update lap tracking BEFORE wrapping t (matches player ship logic)
+        // This ensures crossing detection uses unwrapped t values
+        this.updateLapTracking();
+
+        // Wrap t after checkpoint detection (matches player ship)
         if (this.state.t > 1) this.state.t -= 1;
         if (this.state.t < 0) this.state.t += 1;
 
-        // Update lap tracking
-        this.updateLapTracking();
+        // Update prevT AFTER wrapping (matches player ship - prevT stores wrapped values)
+        // But updateLapTracking already set prevT, so we need to update it here with wrapped value
+        this.prevT = this.state.t;
 
         // Update visual position
         this.updateVisualPosition();
@@ -692,39 +707,47 @@ export class NPCShip {
 
     private updateLapTracking() {
         // Proper lap detection - only count each crossing once per frame
-        // Uses the same logic as the player ship
+        // Uses the same logic as the player ship (check BEFORE wrapping t)
         if (this.state.lapCurrent >= 0 && !this.hasCrossedCheckpointThisFrame) {
             const prevT = this.prevT;
             let newT = this.state.t;
 
-            // Check if we'll wrap (t wraps from ~1 to ~0)
+            // Check if we'll wrap
             const willWrapForward = newT > 1;
-            if (willWrapForward) newT = newT % 1;
-
             const willWrapBackward = newT < 0;
-            if (willWrapBackward) newT = newT % 1;
 
-            // Checkpoint at t = 0
-            const checkpointT = 0.0;
+            // Normal case: crossed from negative to positive (without wrapping)
+            const normalCrossing = prevT < 0 && newT >= 0 && !willWrapForward && !willWrapBackward;
 
-            // Normal crossing: prevT < checkpointT < newT (or close to it)
-            const normalCrossing = prevT < checkpointT && newT >= checkpointT;
-
-            // Wrapping crossing: prevT > checkpointT but newT < checkpointT (wrapped around)
-            const wrappingCrossing = prevT > 0.9 && newT < 0.1 && !willWrapBackward;
+            // Wrapping case: detect if we're about to wrap or just wrapped
+            let wrappingCrossing = false;
+            if (willWrapForward) {
+                // We're about to wrap forward: prevT was > 0.5 means we crossed 0
+                wrappingCrossing = prevT > 0.5;
+                // Wrap now for detection
+                newT = newT - 1;
+            } else if (willWrapBackward) {
+                // Wrapping backward shouldn't happen, but handle it
+                wrappingCrossing = false;
+            } else {
+                // Check if we already wrapped (prevT high, newT low after wrap)
+                // This handles the case where wrapping happened in a previous step
+                // But since we wrap after detection, we can check: prevT > 0.9 and newT < 0.1
+                wrappingCrossing = prevT > 0.9 && newT < 0.1;
+            }
 
             if (normalCrossing || wrappingCrossing) {
                 // Increment lap count (0 -> 1, 1 -> 2, 2 -> 3)
                 if (this.state.lapCurrent < this.state.lapTotal) {
-                    console.log(`[${this.racerId}] LAP CROSSING: prevT=${prevT.toFixed(4)}, newT=${newT.toFixed(4)}, normalCrossing=${normalCrossing}, wrappingCrossing=${wrappingCrossing}, lap: ${this.state.lapCurrent} -> ${this.state.lapCurrent + 1}`);
+                    console.log(`[${this.racerId}] LAP CROSSING: prevT=${prevT.toFixed(4)}, newT=${this.state.t.toFixed(4)}, normalCrossing=${normalCrossing}, wrappingCrossing=${wrappingCrossing}, lap: ${this.state.lapCurrent} -> ${this.state.lapCurrent + 1}`);
                     this.state.lapCurrent++;
                     this.hasCrossedCheckpointThisFrame = true;
                 }
             }
         }
 
-        // Update prevT for next frame
-        this.prevT = this.state.t;
+        // Note: t wrapping is handled in updatePosition() after this method returns
+        // prevT is updated in updatePosition() after wrapping to match player ship logic
 
         // Reset checkpoint flag for next frame
         this.hasCrossedCheckpointThisFrame = false;
