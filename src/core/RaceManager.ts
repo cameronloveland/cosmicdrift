@@ -117,14 +117,8 @@ export class RaceManager {
             return [];
         }
 
-        // DEBUG: Log all racer progress before sorting
-        console.log('=== POSITION CALCULATION ===');
-        const progressMap = new Map<string, number>();
-        allRacers.forEach(racer => {
-            const progress = this.calculateTotalProgress(racer);
-            progressMap.set(racer.racerId, progress);
-            console.log(`  ${racer.racerId}: lap=${racer.lapCurrent}, t=${racer.t?.toFixed(4)}, totalProgress=${progress.toFixed(4)}`);
-        });
+        // Calculate progress per racer (used internally for sorting below)
+        // Note: detailed debug logging removed for performance and cleanliness
 
         // Sort by total progress through the race (racing game standard approach)
         allRacers.sort((a, b) => {
@@ -162,11 +156,7 @@ export class RaceManager {
             return diff;
         });
 
-        // DEBUG: Log sorted positions
-        console.log('Sorted order:');
-        allRacers.forEach((racer, index) => {
-            console.log(`  #${index + 1}: ${racer.racerId} (progress: ${progressMap.get(racer.racerId)?.toFixed(4)})`);
-        });
+        // Detailed sorted order logging removed
 
         // Assign positions (1 = first place, 2 = second, etc.)
         // Ensure position is always a valid number

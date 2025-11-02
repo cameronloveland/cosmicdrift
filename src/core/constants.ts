@@ -63,6 +63,21 @@ export const POST = {
     enableSMAA: true
 };
 
+// Camera director tuning for attract mode
+export const ATTRACT_CAMERA = {
+    blendDurationSec: 0.8,
+    cutMinSec: 5,
+    cutMaxSec: 9,
+    // Standard chase offsets
+    standard: { height: 3.6, back: 12.0 },
+    // Helicopter follow ranges
+    heli: { heightBase: 18, heightSway: 2, backBase: 20, backSway: 2, rightSway: 2, lookAheadMeters: 16 },
+    // Trackside offsets
+    trackside: { aheadT: 0.06, side: 10, up: 4, lookBack: 6 },
+    // User zoom via mouse wheel
+    zoom: { min: 0.6, max: 2.0, step: 0.1 }
+} as const;
+
 export const LAPS_TOTAL = 3;
 
 export const TRACK_SOURCE = 'procedural' as const; // 'procedural' | 'custom'
@@ -297,6 +312,16 @@ export const FOCUS_REFILL = {
     duration: 1.5, // seconds for refill animation
     pinkGlowColor: new Color(0xff2bd6), // pink/magenta glow color
     minFlowRequired: 0.95 // minimum flow needed to trigger (nearly full)
+};
+
+// Attract mode camera tuning
+export const CAMERA_DIRECTOR = {
+    blendTimeSec: 0.8,
+    standard: { back: 12, up: 3.6 },
+    heli: { back: 22, up: 18, swayAmp: 2.0, swaySpeed: 0.8 },
+    trackside: { aheadMeters: 480, side: 10, up: 4, lookBack: 6 },
+    cutMinSec: 5,
+    cutMaxSec: 9
 };
 
 

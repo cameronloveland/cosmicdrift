@@ -19,6 +19,7 @@ import type { RaceState } from './types';
 import { MainMenu } from './MainMenu';
 import { NEWS_ITEMS } from './news';
 import { ShipViewer } from './ShipViewer';
+import { CameraDirector } from './CameraDirector';
 
 export class Game {
     private container: HTMLElement;
@@ -60,6 +61,7 @@ export class Game {
     private npcShipBoosts: ShipBoost[] = [];
     private raceManager!: RaceManager;
     private raceState: RaceState = 'NOT_STARTED';
+    private minimapVisible = true; // Start visible by default
     private mode: 'MENU' | 'RACE' | 'VIEWER' = 'MENU';
     private mainMenu!: MainMenu;
     private shipViewer: ShipViewer | null = null;
@@ -68,6 +70,13 @@ export class Game {
     private menuNpcBoosts: ShipBoost[] = [];
     private menuPacerT = 0;
     private menuPacerSpeedKmh = 180;
+    private cameraDirector: CameraDirector | null = null;
+    private menuWheelBound = false;
+    private onMenuWheel = (e: WheelEvent) => {
+        if (this.mode !== 'MENU') return;
+        const delta = -Math.sign(e.deltaY) * 0.08; // step per wheel notch
+        this.cameraDirector?.adjustZoom(delta);
+    };
 
     // Camera intro state
     private cameraIntroActive = false;
@@ -190,6 +199,9 @@ export class Game {
         // Ensure pause menu is hidden on initialization
         this.ui.setPaused(false);
 
+        // Initialize minimap with track (but don't show until game starts)
+        this.ui.initializeMinimap(this.track);
+
         this.audio = new AudioSystem();
         this.audio.attach(this.camera);
         // initialize radio stream source
@@ -256,6 +268,9 @@ export class Game {
             this.mainMenu.showViewerOverlay(true);
             this.mode = 'VIEWER';
         });
+        // Pause-mode specific actions
+        this.mainMenu.on('restart', () => this.restart());
+        this.mainMenu.on('quit', () => this.quitToMenu());
 
         // Tab switching
         this.ui.onTabSwitch((mode) => {
@@ -413,22 +428,7 @@ export class Game {
             this.updateMp3UI();
         });
 
-        // Pause menu button handlers
-        this.ui.onRestartClick(() => {
-            this.restart();
-        });
-
-        this.ui.onQuitClick(() => {
-            this.quitToMenu();
-        });
-
-        this.ui.onControlsClick(() => {
-            this.ui.showControlsMenu();
-        });
-
-        this.ui.onBackToPauseClick(() => {
-            this.ui.showPauseMenu();
-        });
+        // Legacy pause menu handlers removed: pausing now shows main menu + news feed with PAUSED overlay
         // If current station errors, auto-advance
         this.audio.onRadioEvent('error', () => {
             this.radio.stationIndex = (this.radio.stationIndex + 1) % this.radio.stations.length;
@@ -473,6 +473,11 @@ export class Game {
         // Free flight mode toggle with '-' key
         if (e.code === 'Minus' && down && this.started) {
             this.toggleFreeFlying();
+        }
+
+        // Minimap toggle with 'm' key
+        if (e.code === 'KeyM' && down && this.started) {
+            this.toggleMinimap();
         }
 
         // Free camera movement (only when paused or free flying)
@@ -520,10 +525,11 @@ export class Game {
 
             // Slide in main menu + news feed
             try {
+                this.mainMenu.setMode('pause');
                 this.mainMenu.show();
                 document.getElementById('mainMenu')?.classList.add('enter');
                 document.getElementById('newsFeed')?.classList.add('enter');
-            } catch {}
+            } catch { }
         } else {
             // Exiting pause: restore camera state
             this.camera.position.copy(this.savedCamPos);
@@ -538,9 +544,19 @@ export class Game {
                 document.getElementById('mainMenu')?.classList.remove('enter');
                 document.getElementById('newsFeed')?.classList.remove('enter');
                 // hide after transition to allow slide-out
-                setTimeout(() => this.mainMenu.hide(), 650);
-            } catch {}
+                setTimeout(() => {
+                    this.mainMenu.hide();
+                    // Reset menu to main for next time it's shown outside pause
+                    const inRace = this.started && !this.paused;
+                    if (inRace) this.mainMenu.setMode('main');
+                }, 650);
+            } catch { }
         }
+    }
+
+    private toggleMinimap() {
+        this.minimapVisible = !this.minimapVisible;
+        this.ui.setMinimapVisible(this.minimapVisible);
     }
 
     private toggleFreeFlying() {
@@ -695,6 +711,15 @@ export class Game {
             }
         }
 
+        // Update minimap during countdown and racing
+        if ((this.raceState === 'COUNTDOWN' || this.raceState === 'RACING' || this.raceState === 'FINISHED') && this.npcShips.length > 0) {
+            const npcStatesForMinimap = this.npcShips.map(npc => ({
+                state: npc.state,
+                color: '#' + npc.color.getHexString()
+            }));
+            this.ui.updateMinimap(this.ship.state, npcStatesForMinimap);
+        }
+
         // Update player ship during countdown, racing, and after finish (for visuals)
         if (this.raceState === 'COUNTDOWN' || this.raceState === 'RACING' || this.raceState === 'FINISHED') {
             // Update gate fade-out during countdown and race
@@ -741,7 +766,6 @@ export class Game {
 
             // Calculate and update race positions
             const raceResults = this.raceManager.getRaceResults();
-            console.log(`Player position: ${raceResults.playerPosition}/${this.npcShips.length + 1} | t: ${this.ship.state.t?.toFixed(4)} | lap: ${this.ship.state.lapCurrent}`);
             this.ui.updateRaceInfo(raceResults.playerPosition, this.ship.state.lastLapTime ?? 0, this.npcShips.length + 1);
 
             this.audio.setSpeed(this.ship.state.speedKmh);
@@ -778,6 +802,13 @@ export class Game {
             this.shipViewer.stop();
             this.mainMenu.showViewerOverlay(false);
         }
+        // Dispose camera director
+        this.cameraDirector = null;
+        if (this.menuWheelBound) {
+            window.removeEventListener('wheel', this.onMenuWheel as any);
+            this.menuWheelBound = false;
+        }
+        this.cameraDirector = null;
 
         // Show HUD
         this.ui.setStarted(true);
@@ -847,7 +878,7 @@ export class Game {
         this.mode = 'RACE';
     }
 
-    // Basic attract mode: a few NPC ships circulate and the camera follows the first
+    // Attract mode with cinematic director
     private updateAttractMode(dt: number) {
         // Ensure setup
         if (this.menuNpcShips.length === 0) {
@@ -859,6 +890,12 @@ export class Game {
             this.menuNpcBoosts = [new ShipBoost(n1), new ShipBoost(n2), new ShipBoost(n3)];
             this.menuNpcBoosts.forEach(b => this.scene.add(b.root));
             this.menuPacerT = -12 / this.track.length;
+            // Create camera director
+            this.cameraDirector = new CameraDirector(this.track, this.camera);
+            if (!this.menuWheelBound) {
+                window.addEventListener('wheel', this.onMenuWheel, { passive: true });
+                this.menuWheelBound = true;
+            }
         }
 
         // Advance a simple pacer along the track to feed NPC AI
@@ -869,26 +906,11 @@ export class Game {
         // Update NPCs
         this.menuNpcShips.forEach(npc => npc.update(dt, this.menuPacerT, 1, this.menuPacerSpeedKmh, this.menuNpcShips));
         this.menuNpcBoosts.forEach(b => b.update(dt));
-
-        // Follow the lead NPC (first)
-        const lead = this.menuNpcShips[0];
-        const pos = new THREE.Vector3();
-        const normal = new THREE.Vector3();
-        const binormal = new THREE.Vector3();
-        const tangent = new THREE.Vector3();
-        this.track.getPointAtT(lead.state.t, pos);
-        this.track.getFrenetFrame(lead.state.t, normal, binormal, tangent);
-        const forward = tangent.clone().normalize();
-        const up = normal.clone().normalize();
-        const chasePos = new THREE.Vector3()
-            .copy(pos)
-            .addScaledVector(binormal, lead.state.lateralOffset)
-            .addScaledVector(up, 3.0)
-            .addScaledVector(forward, -10.0);
-        this.camera.position.lerp(chasePos, 1 - Math.pow(0.0001, dt));
-        const lookAt = new THREE.Vector3().copy(pos).addScaledVector(forward, 8).addScaledVector(up, 0.2);
-        this.camera.up.copy(up);
-        this.camera.lookAt(lookAt);
+        // Camera director controls the menu camera
+        if (this.cameraDirector) {
+            this.cameraDirector.setNPCs(this.menuNpcShips);
+            this.cameraDirector.update(dt);
+        }
     }
 
     private startCountdownSequence() {
@@ -918,6 +940,9 @@ export class Game {
 
             // Show race info display
             this.ui.setRaceInfoVisible(true);
+            // Show minimap by default when race starts
+            this.minimapVisible = true;
+            this.ui.setMinimapVisible(true);
 
             // Hide countdown after GO animation
             setTimeout(() => {

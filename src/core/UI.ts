@@ -1,8 +1,11 @@
 import { ShipState } from './types';
 import { SpeedometerGauge } from './SpeedometerGauge';
+import { MinimapGauge } from './MinimapGauge';
+import { Track } from './Track';
 
 export class UI {
     private speedometerGauge: SpeedometerGauge;
+    private minimapGauge: MinimapGauge | null = null;
     private startEl = document.getElementById('start')!;
     private pauseMenuEl = document.getElementById('pauseMenu')!;
     private controlsMenuEl = document.getElementById('controlsMenu')!;
@@ -439,6 +442,37 @@ export class UI {
         const mins = Math.floor(seconds / 60);
         const secs = seconds % 60;
         return `${mins}:${secs.toFixed(2).padStart(5, '0')}`;
+    }
+
+    initializeMinimap(track: Track) {
+        if (!this.minimapGauge) {
+            try {
+                this.minimapGauge = new MinimapGauge('minimapCanvas', track);
+            } catch (error) {
+                console.warn('Failed to initialize minimap:', error);
+            }
+        }
+    }
+
+    updateMinimap(playerState: ShipState, npcStates: Array<{ state: ShipState; color: string }>) {
+        if (this.minimapGauge) {
+            this.minimapGauge.updateShips(playerState, npcStates);
+        }
+    }
+
+    setMinimapVisible(visible: boolean) {
+        const minimapContainer = document.querySelector('.minimap-container');
+        if (minimapContainer) {
+            if (visible) {
+                minimapContainer.classList.remove('hidden');
+                minimapContainer.classList.add('visible');
+            } else {
+                minimapContainer.classList.remove('visible');
+                minimapContainer.classList.add('hidden');
+            }
+        } else {
+            console.warn('Minimap container not found in DOM');
+        }
     }
 
 }

@@ -1,15 +1,18 @@
 import type { NewsItem } from './news';
 
-type Action = 'race' | 'controls' | 'build-ship';
+type Action = 'race' | 'controls' | 'build-ship' | 'restart' | 'quit';
 
 export class MainMenu {
     private root: HTMLElement;
     private newsTrack: HTMLElement;
     private viewport: HTMLElement;
+    private mode: 'main' | 'pause' = 'main';
     private callbacks: Record<Action, Array<() => void>> = {
         race: [],
         controls: [],
-        'build-ship': []
+        'build-ship': [],
+        restart: [],
+        quit: []
     };
     private rafId: number | null = null;
     private scrolling = true;
@@ -29,6 +32,7 @@ export class MainMenu {
 
         this.bindMenuClicks();
         this.renderNews(opts.news);
+        this.setMode('main');
         this.startNewsScroll();
     }
 
@@ -53,6 +57,37 @@ export class MainMenu {
         } else {
             this.root.classList.remove('viewer-active');
             this.viewport.style.display = 'none';
+        }
+    }
+
+    setMode(mode: 'main' | 'pause') {
+        if (this.mode === mode) return;
+        this.mode = mode;
+        // Update subtitle label
+        const subtitle = this.root.querySelector('.menu-subtitle');
+        if (subtitle) subtitle.textContent = mode === 'pause' ? 'PAUSE MENU' : 'MAIN MENU';
+        this.renderMenuItems();
+        // Ensure viewer overlay is off in pause mode
+        if (mode === 'pause') this.showViewerOverlay(false);
+    }
+
+    private renderMenuItems() {
+        const list = this.root.querySelector('#menuItems') as HTMLElement | null;
+        if (!list) return;
+        if (this.mode === 'pause') {
+            list.innerHTML = [
+                `<li class="menu-item" data-action="controls">CONTROLS</li>`,
+                `<li class="menu-item" data-action="restart">RESTART RACE</li>`,
+                `<li class="menu-item" data-action="quit">QUIT GAME</li>`
+            ].join('');
+        } else {
+            list.innerHTML = [
+                `<li class="menu-item" data-action="race">RACE</li>`,
+                `<li class="menu-item" data-action="build-ship">SHIP</li>`,
+                `<li class="menu-item" data-action="controls">CONTROLS</li>`,
+                `<li class="menu-item disabled" data-action="multiplayer" aria-disabled="true">MULTIPLAYER</li>`,
+                `<li class="menu-item disabled" data-action="leaderboards" aria-disabled="true">LEADERBOARDS</li>`
+            ].join('');
         }
     }
 
