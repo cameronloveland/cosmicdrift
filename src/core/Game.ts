@@ -16,6 +16,9 @@ import { ShootingStars } from './ShootingStars';
 // import { Comets } from './Comets'; // Temporarily disabled
 import { COLORS } from './constants';
 import type { RaceState } from './types';
+import { MainMenu } from './MainMenu';
+import { NEWS_ITEMS } from './news';
+import { ShipViewer } from './ShipViewer';
 
 export class Game {
     private container: HTMLElement;
@@ -57,6 +60,14 @@ export class Game {
     private npcShipBoosts: ShipBoost[] = [];
     private raceManager!: RaceManager;
     private raceState: RaceState = 'NOT_STARTED';
+    private mode: 'MENU' | 'RACE' | 'VIEWER' = 'MENU';
+    private mainMenu!: MainMenu;
+    private shipViewer: ShipViewer | null = null;
+    // Attract mode
+    private menuNpcShips: NPCShip[] = [];
+    private menuNpcBoosts: ShipBoost[] = [];
+    private menuPacerT = 0;
+    private menuPacerSpeedKmh = 180;
 
     // Camera intro state
     private cameraIntroActive = false;
@@ -213,160 +224,38 @@ export class Game {
             this.composer.addPass(smaaPass);
         }
 
-        // Start screen interaction
+        // Replace splash interaction with a cyberpunk main menu
         const start = document.getElementById('start');
-        const begin = () => {
-            if (this.started) return;
-
-            // Hide splash screen
-            start?.classList.remove('visible');
-            start?.classList.add('hidden');
-
-            // Show HUD
-            this.ui.setStarted(true);
-            this.ui.setHudVisible(true);
-
-            // Create 4 competitive NPC ships with varied colors and behaviors
-            const npc1 = new NPCShip(this.track, 'npc1', COLORS.neonRed, 'aggressive', -8);
-            const npc2 = new NPCShip(this.track, 'npc2', COLORS.neonMagenta, 'aggressive', 8);
-            const npc3 = new NPCShip(this.track, 'npc3', COLORS.neonYellow, 'conservative', -4);
-            const npc4 = new NPCShip(this.track, 'npc4', COLORS.neonPurple, 'conservative', 4);
-
-            this.npcShips = [npc1, npc2, npc3, npc4];
-            this.scene.add(npc1.root);
-            this.scene.add(npc2.root);
-            this.scene.add(npc3.root);
-            this.scene.add(npc4.root);
-
-            // Create ShipBoost effects for each NPC (same as player ship)
-            this.npcShipBoosts = [
-                new ShipBoost(npc1),
-                new ShipBoost(npc2),
-                new ShipBoost(npc3),
-                new ShipBoost(npc4)
-            ];
-            this.npcShipBoosts.forEach(boost => this.scene.add(boost.root));
-
-            // Register NPCs with race manager
-            this.raceManager.addNPC('npc1');
-            this.raceManager.addNPC('npc2');
-            this.raceManager.addNPC('npc3');
-            this.raceManager.addNPC('npc4');
-
-            // Position all ships 12 meters behind the start line
-            const startT = -12 / this.track.length; // Ships start 12 meters behind start line
-            this.ship.state.t = startT;
-            this.ship.state.lateralOffset = 0; // Player ship in center lane
-            this.npcShips[0].state.t = startT; // NPC1 (Red) - left lane
-            this.npcShips[1].state.t = startT; // NPC2 (Pink) - right lane  
-            this.npcShips[2].state.t = startT; // NPC3 (Yellow) - left lane
-            this.npcShips[3].state.t = startT; // NPC4 (Purple) - right lane
-
-            // Immediately update visual positions to reflect new t values
-            this.ship.updatePositionAndCamera(0);
-            this.npcShips.forEach(npc => {
-                npc.updateVisualPosition();
-            });
-
-            // Disable ship camera control for intro animation
-            this.ship.setCameraControl(false);
-
-            // Initialize camera intro
-            this.cameraIntroActive = true;
-            this.cameraIntroTime = 0;
-
-            // Disable ship input during countdown
-            this.ship.disableInput();
-
-            // Set all NPCs to countdown mode (no movement)
-            this.npcShips.forEach(npc => npc.setCountdownMode(true));
-
-            // Position all ships immediately at the starting line
-            if (this.track.curve && this.track.curve.points && this.track.curve.points.length > 0) {
-                try {
-                    // Force multiple position updates to ensure ships are stable
-                    for (let i = 0; i < 3; i++) {
-                        this.ship.updatePositionAndCamera(0);
-                        this.npcShips.forEach((npc, index) => {
-                            npc.update(0, this.ship.state.t, this.ship.state.lapCurrent, this.ship.state.speedKmh, this.npcShips);
-                        });
-                    }
-
-                    this.npcShips.forEach((npc, index) => {
-                        console.log(`NPC ${index} positioned at t=${npc.state.t}, lateral=${npc.state.lateralOffset}`);
-                    });
-                    console.log('All ships positioned at starting line');
-                } catch (error) {
-                    console.error('Error positioning ships:', error);
-                    // Try to continue anyway
-                }
-            } else {
-                console.error('Track not ready - ships cannot be positioned');
-                // Try to initialize track again
-                setTimeout(() => {
-                    if (this.track.curve && this.track.curve.points && this.track.curve.points.length > 0) {
-                        console.log('Track ready on retry, positioning ships');
-                        try {
-                            this.ship.updatePositionAndCamera(0);
-                            this.npcShips.forEach(npc => {
-                                npc.update(0, this.ship.state.t, this.ship.state.lapCurrent, this.ship.state.speedKmh, this.npcShips);
-                            });
-                        } catch (error) {
-                            console.error('Error positioning ships on retry:', error);
-                        }
-                    }
-                }, 100);
-            }
-
-            // Start countdown sequence
-            this.raceState = 'COUNTDOWN';
-            // Start gate fade-out when countdown begins
-            const currentTime = this.clock.getElapsedTime();
-            this.track.startGateFade(currentTime);
-            this.startCountdownSequence();
-
-            this.audio.start();
-            // hide cursor only once the game actually starts
-            this.renderer.domElement.style.cursor = 'none';
-            // Only autoplay if radio tab is active (MP3 will autoplay if active)
-            if (!this.mp3Mode.active && this.radio.on) {
-                this.playOrAdvance().then(() => { /* state/UI updated in helper */ });
-            } else if (this.mp3Mode.active) {
-                // Ensure MP3 autoplays if tab is active and tracks are loaded
-                const tracks = this.audio.getMp3Tracks();
-                if (tracks.length > 0 && !this.audio.isMp3Playing()) {
-                    // Ensure track is loaded - playMp3 will handle loading if needed
-                    this.audio.playMp3().then((ok) => {
-                        this.mp3Mode.playing = ok;
-                        // Force UI update to reflect playing state
-                        this.updateMp3UI();
-                        if (!ok) {
-                            console.warn('MP3 autoplay failed - user may need to click play button');
-                        }
-                    }).catch((err) => {
-                        // Autoplay failed (browser restriction or error), update UI to show paused state
-                        console.error('MP3 autoplay error:', err);
-                        this.mp3Mode.playing = false;
-                        this.updateMp3UI();
-                    });
-                } else {
-                    // Already playing or no tracks, just update UI to ensure button state is correct
-                    this.updateMp3UI();
+        start?.classList.add('hidden');
+        this.mainMenu = new MainMenu({ news: NEWS_ITEMS });
+        this.mainMenu.setDisabled(['multiplayer', 'leaderboards']);
+        this.mainMenu.on('race', () => this.startFromMenu());
+        this.mainMenu.on('controls', () => {
+            // Show the existing controls overlay
+            const controls = document.getElementById('controlsMenu');
+            if (controls) {
+                controls.classList.remove('hidden');
+                controls.classList.add('visible');
+                // Wire back button to return to main menu instead of pause menu
+                const backBtn = document.getElementById('backToPauseBtn');
+                if (backBtn) {
+                    backBtn.onclick = () => {
+                        controls.classList.remove('visible');
+                        controls.classList.add('hidden');
+                    };
                 }
             }
-            window.removeEventListener('keydown', handler);
-            document.getElementById('beginBtn')?.removeEventListener('click', begin);
-            start?.removeEventListener('pointerdown', begin);
-            this.started = true;
-            // remove the splash after transition to ensure it's gone
-            setTimeout(() => start?.remove(), 450);
-        };
-        const handler = (e: KeyboardEvent) => {
-            if (e.code === 'Space' || e.code === 'Enter') { e.preventDefault(); begin(); }
-        };
-        window.addEventListener('keydown', handler);
-        document.getElementById('beginBtn')?.addEventListener('click', begin);
-        start?.addEventListener('pointerdown', begin);
+        });
+        this.mainMenu.on('build-ship', () => {
+            // Activate the ship viewer in the right viewport
+            const mount = document.getElementById('menuViewport')!;
+            if (!this.shipViewer) {
+                this.shipViewer = new ShipViewer(mount);
+            }
+            this.shipViewer.start();
+            this.mainMenu.showViewerOverlay(true);
+            this.mode = 'VIEWER';
+        });
 
         // Tab switching
         this.ui.onTabSwitch((mode) => {
@@ -626,8 +515,15 @@ export class Game {
             // Clear ship input to avoid stuck keys
             this.ship.clearInput();
 
-            // Request pointer lock for unlimited mouse movement
-            this.renderer.domElement.requestPointerLock();
+            // Do not auto-enable pointer lock so user can interact with the menu.
+            // They can enable free-fly pointer look by pressing '-' (freeFlying) or clicking canvas.
+
+            // Slide in main menu + news feed
+            try {
+                this.mainMenu.show();
+                document.getElementById('mainMenu')?.classList.add('enter');
+                document.getElementById('newsFeed')?.classList.add('enter');
+            } catch {}
         } else {
             // Exiting pause: restore camera state
             this.camera.position.copy(this.savedCamPos);
@@ -636,6 +532,14 @@ export class Game {
             // Exit pointer lock and hide cursor
             document.exitPointerLock();
             this.renderer.domElement.style.cursor = 'none';
+
+            // Slide out main menu + news feed
+            try {
+                document.getElementById('mainMenu')?.classList.remove('enter');
+                document.getElementById('newsFeed')?.classList.remove('enter');
+                // hide after transition to allow slide-out
+                setTimeout(() => this.mainMenu.hide(), 650);
+            } catch {}
         }
     }
 
@@ -750,6 +654,7 @@ export class Game {
 
 
         if (!this.started) {
+            if (this.mode === 'MENU') this.updateAttractMode(dt);
             this.ui.update(this.ship.state, this.ship.getFocusRefillActive(), this.ship.getFocusRefillProgress(), this.ship.getBoostRechargeDelay());
             return;
         }
@@ -790,8 +695,8 @@ export class Game {
             }
         }
 
-        // Update player ship during countdown and racing
-        if (this.raceState === 'COUNTDOWN' || this.raceState === 'RACING') {
+        // Update player ship during countdown, racing, and after finish (for visuals)
+        if (this.raceState === 'COUNTDOWN' || this.raceState === 'RACING' || this.raceState === 'FINISHED') {
             // Update gate fade-out during countdown and race
             const currentTime = this.clock.getElapsedTime();
             this.track.updateGateFade(currentTime);
@@ -825,6 +730,15 @@ export class Game {
                 this.raceManager.updateNPCState(npc.racerId, npc.state);
             });
 
+            // Check if player has finished the race
+            if (this.raceState === 'RACING' && this.ship.state.lapCurrent >= this.ship.state.lapTotal) {
+                this.raceManager.finishRace();
+                this.raceState = 'FINISHED';
+                // Disable ship input when race is finished
+                this.ship.disableInput();
+                console.log('Race finished! Final position and time will be shown.');
+            }
+
             // Calculate and update race positions
             const raceResults = this.raceManager.getRaceResults();
             console.log(`Player position: ${raceResults.playerPosition}/${this.npcShips.length + 1} | t: ${this.ship.state.t?.toFixed(4)} | lap: ${this.ship.state.lapCurrent}`);
@@ -845,6 +759,138 @@ export class Game {
         this.composer.render();
     }
 
+    // Start the actual race from the new main menu
+    public startFromMenu() {
+        if (this.started) return;
+
+        // Slide out menu + news feed, then hide
+        try {
+            const menuEl = document.getElementById('mainMenu');
+            const newsEl = document.getElementById('newsFeed');
+            menuEl?.classList.remove('enter');
+            newsEl?.classList.remove('enter');
+            setTimeout(() => {
+                this.mainMenu.hide();
+                if (newsEl) (newsEl as HTMLElement).style.display = 'none';
+            }, 650);
+        } catch { /* ignore */ }
+        if (this.shipViewer) {
+            this.shipViewer.stop();
+            this.mainMenu.showViewerOverlay(false);
+        }
+
+        // Show HUD
+        this.ui.setStarted(true);
+        this.ui.setHudVisible(true);
+
+        // Create four NPCs
+        const npc1 = new NPCShip(this.track, 'npc1', COLORS.neonRed, 'aggressive', -8);
+        const npc2 = new NPCShip(this.track, 'npc2', COLORS.neonMagenta, 'aggressive', 8);
+        const npc3 = new NPCShip(this.track, 'npc3', COLORS.neonYellow, 'conservative', -4);
+        const npc4 = new NPCShip(this.track, 'npc4', COLORS.neonPurple, 'conservative', 4);
+
+        this.npcShips = [npc1, npc2, npc3, npc4];
+        this.scene.add(npc1.root);
+        this.scene.add(npc2.root);
+        this.scene.add(npc3.root);
+        this.scene.add(npc4.root);
+
+        this.npcShipBoosts = [new ShipBoost(npc1), new ShipBoost(npc2), new ShipBoost(npc3), new ShipBoost(npc4)];
+        this.npcShipBoosts.forEach(b => this.scene.add(b.root));
+
+        // Register with race manager
+        this.raceManager.addNPC('npc1');
+        this.raceManager.addNPC('npc2');
+        this.raceManager.addNPC('npc3');
+        this.raceManager.addNPC('npc4');
+
+        // Place ships behind start line
+        const startT = -12 / this.track.length;
+        this.ship.state.t = startT;
+        this.ship.state.lateralOffset = 0;
+        this.npcShips[0].state.t = startT;
+        this.npcShips[1].state.t = startT;
+        this.npcShips[2].state.t = startT;
+        this.npcShips[3].state.t = startT;
+        this.ship.updatePositionAndCamera(0);
+        this.npcShips.forEach(n => n.updateVisualPosition());
+
+        // Camera intro
+        this.ship.setCameraControl(false);
+        this.cameraIntroActive = true;
+        this.cameraIntroTime = 0;
+
+        // Disable input during countdown
+        this.ship.disableInput();
+        this.npcShips.forEach(n => n.setCountdownMode(true));
+
+        // Countdown sequence
+        this.raceState = 'COUNTDOWN';
+        const currentTime = this.clock.getElapsedTime();
+        this.track.startGateFade(currentTime);
+        this.startCountdownSequence();
+
+        this.audio.start();
+        this.renderer.domElement.style.cursor = 'none';
+
+        // Autoplay MP3 if possible
+        if (this.mp3Mode.active) {
+            const tracks = this.audio.getMp3Tracks();
+            if (tracks.length > 0 && !this.audio.isMp3Playing()) {
+                this.audio.playMp3().then((ok) => { this.mp3Mode.playing = ok; this.updateMp3UI(); });
+            }
+        } else if (this.radio.on) {
+            this.playOrAdvance();
+        }
+
+        this.started = true;
+        this.mode = 'RACE';
+    }
+
+    // Basic attract mode: a few NPC ships circulate and the camera follows the first
+    private updateAttractMode(dt: number) {
+        // Ensure setup
+        if (this.menuNpcShips.length === 0) {
+            const n1 = new NPCShip(this.track, 'menu1', COLORS.neonMagenta, 'aggressive', -6);
+            const n2 = new NPCShip(this.track, 'menu2', COLORS.neonYellow, 'conservative', 0);
+            const n3 = new NPCShip(this.track, 'menu3', COLORS.neonPurple, 'aggressive', 6);
+            this.menuNpcShips = [n1, n2, n3];
+            this.menuNpcShips.forEach(n => { this.scene.add(n.root); n.startRace(); });
+            this.menuNpcBoosts = [new ShipBoost(n1), new ShipBoost(n2), new ShipBoost(n3)];
+            this.menuNpcBoosts.forEach(b => this.scene.add(b.root));
+            this.menuPacerT = -12 / this.track.length;
+        }
+
+        // Advance a simple pacer along the track to feed NPC AI
+        const mps = (this.menuPacerSpeedKmh / 3.6);
+        this.menuPacerT += (mps * dt) / this.track.length;
+        if (this.menuPacerT > 1) this.menuPacerT -= 1;
+
+        // Update NPCs
+        this.menuNpcShips.forEach(npc => npc.update(dt, this.menuPacerT, 1, this.menuPacerSpeedKmh, this.menuNpcShips));
+        this.menuNpcBoosts.forEach(b => b.update(dt));
+
+        // Follow the lead NPC (first)
+        const lead = this.menuNpcShips[0];
+        const pos = new THREE.Vector3();
+        const normal = new THREE.Vector3();
+        const binormal = new THREE.Vector3();
+        const tangent = new THREE.Vector3();
+        this.track.getPointAtT(lead.state.t, pos);
+        this.track.getFrenetFrame(lead.state.t, normal, binormal, tangent);
+        const forward = tangent.clone().normalize();
+        const up = normal.clone().normalize();
+        const chasePos = new THREE.Vector3()
+            .copy(pos)
+            .addScaledVector(binormal, lead.state.lateralOffset)
+            .addScaledVector(up, 3.0)
+            .addScaledVector(forward, -10.0);
+        this.camera.position.lerp(chasePos, 1 - Math.pow(0.0001, dt));
+        const lookAt = new THREE.Vector3().copy(pos).addScaledVector(forward, 8).addScaledVector(up, 0.2);
+        this.camera.up.copy(up);
+        this.camera.lookAt(lookAt);
+    }
+
     private startCountdownSequence() {
         // 3-2-1-GO countdown sequence
         this.ui.showCountdown(3);
@@ -861,6 +907,7 @@ export class Game {
             this.ui.showGo();
             // Start the race
             this.raceState = 'RACING';
+            this.raceManager.startRacing(); // Initialize race time tracking
             // Gate should already be faded out by now (fade started during countdown)
             this.ship.enableInput();
             // Camera control already enabled in begin() function

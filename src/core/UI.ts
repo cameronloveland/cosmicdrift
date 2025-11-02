@@ -35,6 +35,7 @@ export class UI {
     private raceInfoEl: HTMLElement | null = null;
     private racePositionEl: HTMLElement | null = null;
     private lastLapTimeEl: HTMLElement | null = null;
+    private pausedLabelEl: HTMLElement | null = null;
 
     constructor() {
         // Initialize speedometer gauge
@@ -49,6 +50,7 @@ export class UI {
         this.raceInfoEl = document.getElementById('raceInfo');
         this.racePositionEl = document.getElementById('racePosition');
         this.lastLapTimeEl = document.getElementById('lastLapTime');
+        this.pausedLabelEl = document.getElementById('pausedLabel');
 
         // Log if elements are not found (for debugging)
         if (!this.raceInfoEl) {
@@ -266,10 +268,18 @@ export class UI {
     }
 
     setPaused(paused: boolean) {
-        if (paused) {
-            this.pauseMenuEl.classList.remove('hidden');
-            this.pauseMenuEl.classList.add('visible');
-        } else {
+        // Do not show the legacy pause menu. Only toggle the blue PAUSED label.
+        if (this.pausedLabelEl) {
+            if (paused) {
+                this.pausedLabelEl.classList.remove('hidden');
+                this.pausedLabelEl.classList.add('visible');
+            } else {
+                this.pausedLabelEl.classList.remove('visible');
+                this.pausedLabelEl.classList.add('hidden');
+            }
+        }
+        // Always hide old pause menu
+        if (this.pauseMenuEl) {
             this.pauseMenuEl.classList.remove('visible');
             this.pauseMenuEl.classList.add('hidden');
         }

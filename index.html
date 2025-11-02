@@ -902,6 +902,20 @@
             transition: opacity .6s ease;
         }
 
+        /* Paused banner */
+        .paused-label {
+            position: absolute;
+            top: 14px;
+            right: 20px;
+            font-family: 'Orbitron', monospace;
+            font-size: 18px;
+            letter-spacing: 6px;
+            color: #53d7ff;
+            text-shadow: 0 0 12px rgba(83, 215, 255, .8), 0 0 24px rgba(83, 215, 255, .6);
+            pointer-events: none;
+            text-transform: uppercase;
+        }
+
         /* Speedometer Gauge Styles */
         .speedometer-container {
             position: absolute;
@@ -1019,12 +1033,323 @@
                 opacity: 1;
             }
         }
+
+        /* === Main Menu Layout === */
+        .main-menu {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: min(540px, 40vw);
+            height: 100%;
+            padding: 28px 22px 120px 0;
+            /* leave room for news strip */
+            display: grid;
+            grid-template-rows: auto 1fr;
+            gap: 18px;
+            pointer-events: auto;
+            color: #eaf6ff;
+            z-index: 1000;
+            background: #080616;
+            /* fill full left column */
+            border-top-right-radius: 0;
+            border-bottom-right-radius: 0;
+            overflow: visible;
+            /* allow title to sit over the border */
+            transform: translateX(-100%);
+            opacity: 0;
+            transition: transform 600ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity 400ms ease;
+            will-change: transform, opacity;
+        }
+
+        .main-menu.enter {
+            transform: translateX(0);
+            opacity: 1;
+        }
+
+        /* Right-edge 2px gradient border */
+        .main-menu::after {
+            content: "";
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            right: 0;
+            width: 2px;
+            background: linear-gradient(180deg, #53d7ff, #ff2bd6);
+            pointer-events: none;
+            z-index: 1;
+        }
+
+        /* Soft glow behind the border (teal->pink) */
+        .main-menu::before {
+            content: "";
+            position: absolute;
+            top: -12px;
+            bottom: -12px;
+            right: -18px;
+            width: 28px;
+            border-radius: 0;
+            background: linear-gradient(180deg, rgba(83, 215, 255, .55), rgba(255, 43, 214, .55));
+            filter: blur(18px);
+            opacity: .8;
+            z-index: 0;
+            pointer-events: none;
+        }
+
+        .main-menu .menu-header {
+            display: grid;
+            gap: 6px;
+            align-content: start;
+            padding-left: 16px;
+            position: relative;
+            z-index: 2;
+            /* above the border */
+        }
+
+        .main-menu .menu-logo {
+            font-size: clamp(38px, 4.8vw, 62px);
+            letter-spacing: 2px;
+            margin: 0;
+            line-height: 0.9;
+            font-weight: 800;
+            font-style: normal;
+            white-space: nowrap;
+            font-family: 'Orbitron', 'Oxanium', 'Ethnocentric', sans-serif;
+            color: #f5fbff;
+            text-shadow: 0 2px 0 rgba(255, 255, 255, .28), 0 0 24px rgba(83, 215, 255, .7), 0 0 48px rgba(195, 61, 255, .3);
+            -webkit-text-stroke: 0.35px rgba(255, 255, 255, .12);
+        }
+
+        .main-menu .menu-logo .accent {
+            position: relative;
+            display: inline-block;
+            padding-inline: 6px;
+            background: linear-gradient(180deg, #ffffff 0%, #e8f3ff 55%, #bcd6ff 100%);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+            text-shadow: 0 0 22px rgba(83, 215, 255, .7), 0 0 40px rgba(255, 43, 214, .35);
+            filter: drop-shadow(0 6px 18px rgba(83, 215, 255, .25));
+        }
+
+        .main-menu .menu-subtitle {
+            font-family: 'Orbitron', sans-serif;
+            font-size: clamp(12px, 1.5vw, 14px);
+            letter-spacing: 6px;
+            color: transparent;
+            background: linear-gradient(90deg, #53d7ff 0%, #00ffff 60%, #53d7ff 100%);
+            -webkit-background-clip: text;
+            background-clip: text;
+            background-size: 200% 100%;
+            animation: neonSweep 4s linear infinite;
+            text-shadow: 0 0 10px rgba(83, 215, 255, .6), 0 0 16px rgba(0, 255, 255, .45);
+            padding: 6px 8px;
+            margin-top: 6px;
+        }
+
+        .main-menu .panel {
+            position: relative;
+            background: transparent;
+            /* background handled by .main-menu */
+            padding: 10px 16px 18px 16px;
+        }
+
+        .main-menu .panel::after,
+        .main-menu .panel::before {
+            content: none;
+        }
+
+        .menu-items {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .menu-item {
+            font-family: 'Orbitron', sans-serif;
+            font-weight: 800;
+            letter-spacing: 2px;
+            font-size: 18px;
+            color: #ffffff;
+            padding: 12px 14px;
+            border-radius: 6px;
+            cursor: pointer;
+            position: relative;
+            background: linear-gradient(90deg, rgba(83, 215, 255, .12), rgba(255, 43, 214, .08));
+            border: 1px solid rgba(255, 255, 255, .08);
+            transition: transform .06s ease, background .2s ease, box-shadow .2s ease;
+            box-shadow: 0 0 0 0 rgba(83, 215, 255, .0);
+        }
+
+        .menu-item:hover {
+            box-shadow: 0 0 24px rgba(83, 215, 255, .25);
+        }
+
+        .menu-item:active {
+            transform: scale(.985);
+        }
+
+        .menu-item.disabled {
+            opacity: .45;
+            cursor: not-allowed;
+        }
+
+        .menu-item.active {
+            background: linear-gradient(90deg, rgba(255, 43, 214, .18), rgba(83, 215, 255, .18));
+            box-shadow: 0 0 28px rgba(83, 215, 255, .35);
+            border-color: rgba(255, 255, 255, .18);
+        }
+
+        .menu-hint {
+            display: none;
+        }
+
+        /* Right-side viewport for Build Ship viewer */
+        .menu-viewport {
+            position: absolute;
+            top: 0;
+            right: 0;
+            width: 60vw;
+            height: calc(100% - 220px);
+            margin-bottom: 220px;
+            /* keep space for news strip */
+            pointer-events: auto;
+            z-index: 999;
+            /* below menu */
+            display: none;
+            /* enabled when Build Ship is active */
+        }
+
+        /* News strip */
+        .news-feed {
+            position: absolute;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            height: 220px;
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            padding: 10px 16px;
+            pointer-events: auto;
+            z-index: 998;
+            background: linear-gradient(180deg, rgba(8, 6, 22, .0), rgba(8, 6, 22, .65));
+            overflow: hidden;
+            transform: translateY(120%);
+            opacity: 0;
+            transition: transform 600ms cubic-bezier(0.2, 0.8, 0.2, 1) 120ms, opacity 400ms ease 120ms;
+            will-change: transform, opacity;
+        }
+
+        .news-feed.enter {
+            transform: translateY(0);
+            opacity: 1;
+        }
+
+        .news-track {
+            display: flex;
+            gap: 14px;
+            will-change: transform;
+            height: 100%;
+            align-items: flex-end;
+        }
+
+        .news-card {
+            position: relative;
+            width: 380px;
+            height: 200px;
+            flex: 0 0 auto;
+            border-radius: 10px;
+            overflow: hidden;
+            border: 1px solid rgba(255, 255, 255, .12);
+            box-shadow: 0 10px 24px rgba(0, 0, 0, .35);
+            background: #0a0820;
+            cursor: pointer;
+            transition: height 520ms cubic-bezier(0.2, 0.8, 0.2, 1), transform 520ms cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 520ms ease;
+            z-index: 1;
+        }
+
+        .news-card img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+            filter: saturate(1.15) contrast(1.05);
+            background: #000;
+            transform: scale(1.08);
+            transition: transform 800ms ease;
+        }
+
+        .news-title {
+            position: absolute;
+            left: 8px;
+            right: 8px;
+            bottom: 6px;
+            font-family: 'Orbitron', sans-serif;
+            font-size: 12px;
+            letter-spacing: 1px;
+            color: #eaf6ff;
+            text-shadow: 0 0 12px rgba(83, 215, 255, .5);
+            background: linear-gradient(180deg, rgba(8, 6, 22, .85), rgba(8, 6, 22, .65));
+            padding: 6px 10px;
+            border-radius: 8px;
+            backdrop-filter: blur(2px);
+        }
+
+        .news-hover {
+            position: absolute;
+            inset: 0;
+            display: grid;
+            place-items: center;
+            background: linear-gradient(180deg, rgba(5, 3, 20, .0), rgba(5, 3, 20, .75));
+            color: #fff;
+            opacity: 0;
+            transition: opacity .2s ease;
+            font-family: 'Orbitron', sans-serif;
+            font-size: 12px;
+            text-align: center;
+            padding: 6px 10px;
+        }
+
+        .news-card:hover .news-hover {
+            opacity: 1;
+        }
+
+        /* Hover expansion: slow zoom-out, slight tile growth without bars */
+        .news-card:hover {
+            height: 215px;
+            transform: translateY(-4px);
+            box-shadow: 0 16px 36px rgba(0, 0, 0, .45);
+            z-index: 3;
+        }
+
+        .news-card:hover img {
+            transform: scale(1.0);
+        }
+
+        .viewer-active {
+            opacity: .75;
+            pointer-events: auto;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+
+            .main-menu,
+            .news-feed {
+                transition: none;
+                transform: none;
+                opacity: 1;
+            }
+        }
     </style>
 </head>
 
 <body>
     <div id="app"></div>
     <div class="hud" id="hud">
+        <div class="paused-label hidden" id="pausedLabel">PAUSED</div>
         <div class="radio-container">
             <div class="radio-tabs">
                 <div class="radio-tab" id="radioTab">RADIO</div>
@@ -1083,7 +1408,7 @@
             </div>
         </div>
     </div>
-    <div class="title visible" id="start" style="z-index: 1000;">
+    <div class="title hidden" id="start" style="z-index: 1000;">
         <div class="panel">
             <span class="panel-stars" aria-hidden="true"></span>
             <h1>COSMIC <span class="accent">DRIFT</span></h1>
@@ -1093,6 +1418,29 @@
                 <button class="btn" id="beginBtn">START</button>
             </div>
         </div>
+    </div>
+    <!-- Cyberpunk Main Menu (left) -->
+    <div id="mainMenu" class="main-menu visible" style="z-index: 1000;">
+        <div class="menu-header">
+            <h1 class="menu-logo">COSMIC <span class="accent">DRIFT</span></h1>
+            <div class="logo-jp">コズミック・ドリフト</div>
+            <div class="menu-subtitle">MAIN MENU</div>
+        </div>
+        <div class="panel">
+            <ul class="menu-items" id="menuItems">
+                <li class="menu-item" data-action="race">RACE</li>
+                <li class="menu-item" data-action="build-ship">SHIP</li>
+                <li class="menu-item" data-action="controls">CONTROLS</li>
+                <li class="menu-item disabled" data-action="multiplayer" aria-disabled="true">MULTIPLAYER</li>
+                <li class="menu-item disabled" data-action="leaderboards" aria-disabled="true">LEADERBOARDS</li>
+            </ul>
+        </div>
+    </div>
+    <!-- Right viewport for Ship Viewer -->
+    <div id="menuViewport" class="menu-viewport"></div>
+    <!-- Bottom news feed -->
+    <div id="newsFeed" class="news-feed">
+        <div class="news-track" id="newsTrack"></div>
     </div>
     <div class="title hidden" id="pauseMenu" style="z-index: 1001;">
         <div class="panel">
@@ -1149,6 +1497,18 @@
                     }
                     e.preventDefault();
                 }
+            });
+        })();
+
+        // Entry animations for menu and news feed on load
+        (function () {
+            const menu = document.getElementById('mainMenu');
+            const news = document.getElementById('newsFeed');
+            const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            if (prefersReduced) return; // respect user setting
+            requestAnimationFrame(() => {
+                setTimeout(() => menu && menu.classList.add('enter'), 50);
+                setTimeout(() => news && news.classList.add('enter'), 200);
             });
         })();
     </script>

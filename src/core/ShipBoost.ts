@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { Ship } from './Ship';
+import type { Group } from 'three';
 
 interface Particle {
     position: THREE.Vector3;
@@ -10,16 +10,18 @@ interface Particle {
     scale: number;
 }
 
+type Boostable = { root: Group; state: { boosting: boolean } };
+
 export class ShipBoost {
     public root = new THREE.Group();
-    private ship: Ship;
+    private ship: Boostable;
     private particles: Particle[] = [];
     private imesh: THREE.InstancedMesh;
     private tmpObj = new THREE.Object3D();
     private colors: THREE.Color[] = [];
     private maxParticles = 50;
 
-    constructor(ship: Ship) {
+    constructor(ship: Boostable) {
         this.ship = ship;
 
         // Create particle geometry (small spheres)
