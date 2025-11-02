@@ -19,6 +19,7 @@ import type { RaceState } from './types';
 import { MainMenu } from './MainMenu';
 import { NEWS_ITEMS } from './news';
 import { ShipViewer } from './ShipViewer';
+import { ControlsViewer } from './ControlsViewer';
 import { CameraDirector } from './CameraDirector';
 
 export class Game {
@@ -62,14 +63,15 @@ export class Game {
     private raceManager!: RaceManager;
     private raceState: RaceState = 'NOT_STARTED';
     private minimapVisible = true; // Start visible by default
-    private mode: 'MENU' | 'RACE' | 'VIEWER' = 'MENU';
+    private mode: 'MENU' | 'RACE' | 'VIEWER' | 'CONTROLS' = 'MENU';
     private mainMenu!: MainMenu;
     private shipViewer: ShipViewer | null = null;
+    private controlsViewer: ControlsViewer | null = null;
     // Attract mode
     private menuNpcShips: NPCShip[] = [];
     private menuNpcBoosts: ShipBoost[] = [];
     private menuPacerT = 0;
-    private menuPacerSpeedKmh = 180;
+    private menuPacerSpeedKmh = 80; // Relaxed speed for calm menu preview
     private cameraDirector: CameraDirector | null = null;
     private menuWheelBound = false;
     private onMenuWheel = (e: WheelEvent) => {
@@ -243,29 +245,25 @@ export class Game {
         this.mainMenu.setDisabled(['multiplayer', 'leaderboards']);
         this.mainMenu.on('race', () => this.startFromMenu());
         this.mainMenu.on('controls', () => {
-            // Show the existing controls overlay
-            const controls = document.getElementById('controlsMenu');
-            if (controls) {
-                controls.classList.remove('hidden');
-                controls.classList.add('visible');
-                // Wire back button to return to main menu instead of pause menu
-                const backBtn = document.getElementById('backToPauseBtn');
-                if (backBtn) {
-                    backBtn.onclick = () => {
-                        controls.classList.remove('visible');
-                        controls.classList.add('hidden');
-                    };
-                }
+            // Activate the controls viewer in the right viewport
+            const mount = document.getElementById('menuViewport')!;
+            // Show viewport first so ControlsViewer can get proper dimensions
+            this.mainMenu.showViewerOverlay(true);
+            if (!this.controlsViewer) {
+                this.controlsViewer = new ControlsViewer(mount);
             }
+            this.controlsViewer.start();
+            this.mode = 'CONTROLS';
         });
         this.mainMenu.on('build-ship', () => {
             // Activate the ship viewer in the right viewport
             const mount = document.getElementById('menuViewport')!;
+            // Show viewport first so ShipViewer can get proper dimensions
+            this.mainMenu.showViewerOverlay(true);
             if (!this.shipViewer) {
-                this.shipViewer = new ShipViewer(mount);
+                this.shipViewer = new ShipViewer(mount, this.ship);
             }
             this.shipViewer.start();
-            this.mainMenu.showViewerOverlay(true);
             this.mode = 'VIEWER';
         });
         // Pause-mode specific actions
@@ -800,6 +798,11 @@ export class Game {
         } catch { /* ignore */ }
         if (this.shipViewer) {
             this.shipViewer.stop();
+        }
+        if (this.controlsViewer) {
+            this.controlsViewer.stop();
+        }
+        if (this.shipViewer || this.controlsViewer) {
             this.mainMenu.showViewerOverlay(false);
         }
         // Dispose camera director
@@ -809,6 +812,16 @@ export class Game {
             this.menuWheelBound = false;
         }
         this.cameraDirector = null;
+
+        // Clean up menu preview NPCs before creating race NPCs
+        this.menuNpcShips.forEach(npc => {
+            this.scene.remove(npc.root);
+        });
+        this.menuNpcBoosts.forEach(boost => {
+            this.scene.remove(boost.root);
+        });
+        this.menuNpcShips = [];
+        this.menuNpcBoosts = [];
 
         // Show HUD
         this.ui.setStarted(true);
@@ -882,9 +895,9 @@ export class Game {
     private updateAttractMode(dt: number) {
         // Ensure setup
         if (this.menuNpcShips.length === 0) {
-            const n1 = new NPCShip(this.track, 'menu1', COLORS.neonMagenta, 'aggressive', -6);
-            const n2 = new NPCShip(this.track, 'menu2', COLORS.neonYellow, 'conservative', 0);
-            const n3 = new NPCShip(this.track, 'menu3', COLORS.neonPurple, 'aggressive', 6);
+            const n1 = new NPCShip(this.track, 'menu1', COLORS.neonMagenta, 'aggressive', -6, 0.25);
+            const n2 = new NPCShip(this.track, 'menu2', COLORS.neonYellow, 'conservative', 0, 0.25);
+            const n3 = new NPCShip(this.track, 'menu3', COLORS.neonPurple, 'aggressive', 6, 0.25);
             this.menuNpcShips = [n1, n2, n3];
             this.menuNpcShips.forEach(n => { this.scene.add(n.root); n.startRace(); });
             this.menuNpcBoosts = [new ShipBoost(n1), new ShipBoost(n2), new ShipBoost(n3)];

@@ -552,10 +552,8 @@ export class Ship {
         up.copy(normal).normalize();
 
         // apply lateral offset (side to side across the ribbon) and hover height
-        const hoverHeight = 0.3;
         pos.addScaledVector(right, this.state.lateralOffset);
-
-        pos.addScaledVector(up, hoverHeight);
+        pos.addScaledVector(up, PHYSICS.hoverHeight);
 
         // compute quaternion from basis vectors (forward, up)
         const m = new THREE.Matrix4();
@@ -631,9 +629,8 @@ export class Ship {
         up.copy(normal).normalize();
 
         // apply lateral offset (side to side across the ribbon) and hover height
-        const hoverHeight = 1.5; // Increased from 0.3 for better visual clearance
         pos.addScaledVector(binormal, this.state.lateralOffset);
-        pos.addScaledVector(up, hoverHeight);
+        pos.addScaledVector(up, PHYSICS.hoverHeight);
 
         // compute quaternion from basis vectors (forward, up)
         const m = new THREE.Matrix4();
@@ -671,9 +668,8 @@ export class Ship {
 
         // Create a local copy of position for camera calculations
         const camPos = pos.clone();
-        const hoverHeight = 0.3;
         camPos.addScaledVector(right, this.state.lateralOffset);
-        camPos.addScaledVector(up, hoverHeight);
+        camPos.addScaledVector(up, PHYSICS.hoverHeight);
 
         // Mario Kart-style camera: independent smoothed yaw with heavy damping
         this.cameraYawVelocity = THREE.MathUtils.damp(this.cameraYawVelocity, this.targetCameraYaw - this.cameraYaw, CAMERA.cameraYawDamping, dt);

@@ -6,7 +6,8 @@ export class ShipSpeedStars {
     public root = new THREE.Group();
     private ship: Ship;
     private imesh: THREE.InstancedMesh;
-    private max = 300; // Increased from 160 to fill larger space
+    private maxCapacity = 1000; // Maximum possible stars at 1000km/h
+    private max = 0; // Current active count (will be updated dynamically based on speed)
     private tmpObj = new THREE.Object3D();
     private velocities: Float32Array;
     private colors: THREE.Color[];
@@ -28,22 +29,23 @@ export class ShipSpeedStars {
             toneMapped: false
         });
 
-        this.imesh = new THREE.InstancedMesh(geo, mat, this.max);
+        this.imesh = new THREE.InstancedMesh(geo, mat, this.maxCapacity);
         this.imesh.renderOrder = 999; // Ensure stars render after other objects
 
         // CRITICAL FIX: Disable frustum culling to prevent intermittent visibility
         // InstancedMesh with dynamic positions can be incorrectly culled
         this.imesh.frustumCulled = false;
 
-        this.velocities = new Float32Array(this.max);
-        this.colors = new Array(this.max);
+        this.velocities = new Float32Array(this.maxCapacity);
+        this.colors = new Array(this.maxCapacity);
         this.root.add(this.imesh);
 
         // Initialize all stars
-        for (let i = 0; i < this.max; i++) this.respawn(i, true);
+        for (let i = 0; i < this.maxCapacity; i++) this.respawn(i, true);
 
         // CRITICAL FIX: Set count immediately - InstancedMesh defaults to count=0 which renders nothing!
-        this.imesh.count = this.max;
+        // Start with 0 visible stars since ship starts at 0 km/h
+        this.imesh.count = 0;
         this.imesh.instanceMatrix.needsUpdate = true;
 
         // CRITICAL FIX: Compute bounding volumes for proper rendering
@@ -52,7 +54,7 @@ export class ShipSpeedStars {
     }
 
     update(dt: number) {
-        // Only visible when boosting
+        // Only visible when boosting, but count scales with speed
         const isBoosting = this.ship.state.boosting;
         this.root.visible = isBoosting;
         this.imesh.visible = isBoosting;
@@ -61,6 +63,13 @@ export class ShipSpeedStars {
         this.ship.root.localToWorld(forward).sub(this.ship.root.position).normalize();
         const up = new THREE.Vector3(0, 1, 0).applyQuaternion(this.ship.root.quaternion);
         const right = new THREE.Vector3().crossVectors(up, forward).normalize();
+
+        // Calculate number of stars based on speed: 25 base + 25 per 100 km/h
+        // At 0 km/h: 25 stars, at 100 km/h: 25 stars, at 200 km/h: 50 stars, etc.
+        const speedMultiplier = Math.floor(this.ship.state.speedKmh / 100);
+        const desiredMax = Math.min(25 + (speedMultiplier * 25), 1000);
+        this.max = desiredMax;
+        this.imesh.count = this.max;
 
         const mps = this.ship.state.speedKmh / 3.6;
         const baseSpeed = Math.max(5, mps * 0.8); // Reduced base speed for more gradual movement
@@ -112,7 +121,6 @@ export class ShipSpeedStars {
 
         // CRITICAL FIX: Always maintain count at max
         // InstancedMesh requires count to be set - if it drops to 0, nothing renders
-        this.imesh.count = this.max;
         this.imesh.instanceMatrix.needsUpdate = true;
     }
 
@@ -155,7 +163,8 @@ export class ShipSpeedStars {
         const forward = new THREE.Vector3(0, 0, 1);
         this.ship.root.localToWorld(forward).sub(this.ship.root.position).normalize();
 
-        for (let i = 0; i < this.max; i++) {
+        // Check all capacity, not just currently active stars
+        for (let i = 0; i < this.maxCapacity; i++) {
             const pos = new THREE.Vector3();
             this.imesh.getMatrixAt(i, this.tmpObj.matrix);
             this.tmpObj.matrix.decompose(pos, this.tmpObj.quaternion, this.tmpObj.scale);

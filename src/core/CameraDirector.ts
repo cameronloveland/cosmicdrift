@@ -23,6 +23,7 @@ export class CameraDirector {
     private readonly blendDuration = ATTRACT_CAMERA.blendDurationSec;
     private fromPose: Pose = { position: new THREE.Vector3(), quaternion: new THREE.Quaternion(), up: new THREE.Vector3(0, 1, 0) };
     private toPose: Pose = { position: new THREE.Vector3(), quaternion: new THREE.Quaternion(), up: new THREE.Vector3(0, 1, 0) };
+    private fromUp = new THREE.Vector3(0, 1, 0); // Track up vector separately for smooth interpolation
 
     // Trackside pass-by bookkeeping
     private tracksideCamT = 0; // camera position on track
@@ -32,10 +33,11 @@ export class CameraDirector {
     // temp reuse
     private tmpVec = new THREE.Vector3();
     private tmpVec2 = new THREE.Vector3();
+    private tmpVec3 = new THREE.Vector3(); // For up vector blending
     private tmpQuat = new THREE.Quaternion();
     private zoom = 1; // 1 = default
     private leadIndex = 0; // which NPC we're following for shots that need a target
-    private heliOnly = true; // temporary: focus on helicopter camera only for tuning
+    private heliOnly = false; // Enable all camera shots with cuts
 
     constructor(track: Track, camera: THREE.PerspectiveCamera) {
         this.track = track;
@@ -57,6 +59,21 @@ export class CameraDirector {
 
         this.timeInShot += dt;
 
+        // Check if it's time to cut to the next shot
+        if (!this.heliOnly && !this.blending) {
+            if (this.current === 'trackside') {
+                // Trackside shot ends when all ships have passed the camera
+                if (this.allNPCsPassed()) {
+                    this.cutTo(this.nextShot());
+                }
+            } else {
+                // Other shots use time-based cuts
+                if (this.timeInShot >= this.nextCutTime) {
+                    this.cutTo(this.nextShot());
+                }
+            }
+        }
+
         // If we're focusing on heli only, skip cut logic entirely
         const target = this.heliOnly
             ? this.poseHeli()
@@ -64,26 +81,44 @@ export class CameraDirector {
 
         if (this.blending) {
             this.blendT = Math.min(1, this.blendT + dt / this.blendDuration);
-            // Smooth ease
-            const t = this.blendT < 0.5 ? 2 * this.blendT * this.blendT : 1 - Math.pow(-2 * this.blendT + 2, 2) / 2;
-            const pos = this.tmpVec.copy(this.fromPose.position).lerp(target.position, t);
+            // Ultra-smooth ease using smoothstep with cubic acceleration/deceleration
+            // This creates a much gentler S-curve for buttery smooth transitions
+            const t = this.blendT * this.blendT * (3 - 2 * this.blendT); // Smoothstep
+            // Additional smoothstep for even smoother transitions
+            const smoothT = t * t * (3 - 2 * t);
+
+            // Smooth position interpolation
+            const pos = this.tmpVec.copy(this.fromPose.position).lerp(target.position, smoothT);
             this.camera.position.copy(pos);
-            this.tmpQuat.copy(this.fromPose.quaternion).slerp(target.quaternion, t);
+
+            // Smooth quaternion interpolation
+            this.tmpQuat.copy(this.fromPose.quaternion).slerp(target.quaternion, smoothT);
             this.camera.quaternion.copy(this.tmpQuat);
-            if (this.blendT >= 1) this.blending = false;
+
+            // Smoothly interpolate up vector during blend
+            const blendedUp = this.tmpVec3.copy(this.fromUp).lerp(target.up, smoothT).normalize();
+            this.camera.up.copy(blendedUp);
+
+            if (this.blendT >= 1) {
+                this.blending = false;
+                this.fromUp.copy(target.up); // Finalize up vector
+            }
         } else {
             // Soft follow even within a shot for smoother motion
-            this.camera.position.lerp(target.position, 1 - Math.pow(0.0001, dt));
-            this.camera.quaternion.slerp(target.quaternion, 1 - Math.pow(0.0001, dt));
+            const followSpeed = 1 - Math.pow(0.0001, dt);
+            this.camera.position.lerp(target.position, followSpeed);
+            this.camera.quaternion.slerp(target.quaternion, followSpeed);
+            // Smooth up vector transition even when not blending
+            this.fromUp.lerp(target.up, followSpeed).normalize();
+            this.camera.up.copy(this.fromUp);
         }
-        // Always update camera up to the shot's up vector
-        this.camera.up.copy(target.up);
     }
 
     private cutTo(next: Shot) {
-        // Prepare blend
+        // Prepare blend - capture current camera state
         this.fromPose.position.copy(this.camera.position);
         this.fromPose.quaternion.copy(this.camera.quaternion);
+        this.fromUp.copy(this.camera.up); // Capture current up vector for smooth transition
 
         // Initialize trackside state upon entry
         if (next === 'trackside') this.initTrackside();

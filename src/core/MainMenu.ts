@@ -54,9 +54,19 @@ export class MainMenu {
         if (active) {
             this.root.classList.add('viewer-active');
             this.viewport.style.display = 'block';
+            // Hide newsfeed when ship viewer is active
+            const newsFeed = document.getElementById('newsFeed');
+            if (newsFeed) {
+                (newsFeed as HTMLElement).style.display = 'none';
+            }
         } else {
             this.root.classList.remove('viewer-active');
             this.viewport.style.display = 'none';
+            // Show newsfeed when ship viewer is inactive
+            const newsFeed = document.getElementById('newsFeed');
+            if (newsFeed) {
+                (newsFeed as HTMLElement).style.display = 'flex';
+            }
         }
     }
 
@@ -155,7 +165,7 @@ export class MainMenu {
             this.rafId = null;
         }
         this.newsTrack.innerHTML = '';
-        this.callbacks = { race: [], controls: [], 'build-ship': [] };
+        this.callbacks = { race: [], controls: [], 'build-ship': [], restart: [], quit: [] };
     }
 }
 

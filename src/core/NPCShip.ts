@@ -73,11 +73,12 @@ export class NPCShip {
     private hasCrossedCheckpointThisFrame = false;
     private prevT = 0;
 
-    constructor(track: Track, racerId: string, color: THREE.Color, behavior: 'aggressive' | 'conservative' = 'conservative', lateralOffset: number = 0) {
+    constructor(track: Track, racerId: string, color: THREE.Color, behavior: 'aggressive' | 'conservative' = 'conservative', lateralOffset: number = 0, speedMultiplier: number = 1.0) {
         this.track = track;
         this.racerId = racerId;
         this.color = color;
         this.aiBehavior = behavior;
+        this.speedMultiplier = speedMultiplier;
 
         this.state = {
             t: -12 / track.length, // Start 12 meters behind start line (matches player)
@@ -618,7 +619,7 @@ export class NPCShip {
         const speedVariationFactor = 1.0 + (Math.random() - 0.5) * this.speedVariation * 2;
 
         // Target speed calculation with rubber banding and individual variation
-        let targetSpeed = baseSpeed * boostMultiplier * tunnelMultiplier * boostPadMultiplier * rubberBanding * speedVariationFactor;
+        let targetSpeed = baseSpeed * this.speedMultiplier * boostMultiplier * tunnelMultiplier * boostPadMultiplier * rubberBanding * speedVariationFactor;
 
         // Ensure minimum speed to prevent NPCs from getting completely stuck
         // Minimum is 50% of base speed (allows rubber banding to slow them when ahead, but not stop them)
@@ -757,10 +758,9 @@ export class NPCShip {
         try {
             const { pos, tangent, normal, binormal } = this.getFrenetFrame();
 
-            // Apply lateral offset and hover height
-            const hoverHeight = 1.5; // Increased from 0.3 for better visual clearance
+            // Apply lateral offset and hover height (match player ship height)
             pos.addScaledVector(binormal, this.state.lateralOffset);
-            pos.addScaledVector(normal, hoverHeight);
+            pos.addScaledVector(normal, PHYSICS.hoverHeight);
 
             this.root.position.copy(pos);
 

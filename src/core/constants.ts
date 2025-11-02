@@ -46,7 +46,8 @@ export const PHYSICS = {
     pitchDamping: 3.0,
     flowFillSpeed: 0.12,
     flowDrainSpeed: 0.5,
-    highSpeedThreshold: 191 // reduced 25% from 255 to maintain proportional relationship
+    highSpeedThreshold: 191, // reduced 25% from 255 to maintain proportional relationship
+    hoverHeight: 0.3 // Height above track surface in meters
 };
 
 export const RENDER = {
@@ -65,7 +66,7 @@ export const POST = {
 
 // Camera director tuning for attract mode
 export const ATTRACT_CAMERA = {
-    blendDurationSec: 0.8,
+    blendDurationSec: 2.2, // Slow, cinematic transitions
     cutMinSec: 5,
     cutMaxSec: 9,
     // Standard chase offsets
