@@ -165,14 +165,11 @@ export class AudioSystem {
             const manifestRes = await fetch('/audio/background-tracks/manifest.json');
             if (manifestRes.ok) {
                 const manifest = await manifestRes.json() as { tracks: Array<{ path: string; artist: string; song: string }> };
-                const tracks: Mp3Track[] = [];
-                for (const track of manifest.tracks) {
-                    // Verify track exists
-                    const res = await fetch(`/audio/background-tracks/${track.path}`, { method: 'HEAD' });
-                    if (res.ok) {
-                        tracks.push({ path: track.path, artist: track.artist, song: track.song });
-                    }
-                }
+                const tracks: Mp3Track[] = manifest.tracks.map(track => ({
+                    path: track.path,
+                    artist: track.artist,
+                    song: track.song
+                }));
                 this.mp3Tracks = tracks;
                 return tracks;
             }
@@ -183,26 +180,20 @@ export class AudioSystem {
         // Fallback: Try known tracks with artist structure
         // Format: { artist: string, path: string, song: string }[]
         const knownTracks = [
+            { artist: 'NiKneT Art', path: 'NiKneT Art/Neon Reverie Electro Pop Synthwave Retro Ruturistic.mp3', song: 'Neon Reverie Electro Pop Synthwave Retro Ruturistic' },
+            { artist: 'NiKneT Art', path: 'NiKneT Art/Midnight Circuit Electro Pop Synthwave Retro Futuristic.mp3', song: 'Midnight Circuit Electro Pop Synthwave Retro Futuristic' },
             { artist: 'UsefulPix', path: 'UsefulPix/Retro Synthwave.mp3', song: 'Retro Synthwave' },
-            { artist: 'Evgeny Bardyuzha', path: 'UsefulPix/Evgeny Bardyuzha/Password Infinity.mp3', song: 'Password Infinity' }
+            { artist: 'UsefulPix', path: 'UsefulPix/Synthwave Background Beats.mp3', song: 'Synthwave Background Beats' },
+            { artist: 'Evgeny Bardyuzha', path: 'Evgeny Bardyuzha/Password Infinity.mp3', song: 'Password Infinity' },
+            { artist: 'lofi dreams', path: 'lofi dreams/Midnight Run.mp3', song: 'Midnight Run' }
         ];
 
-        // Try to verify tracks exist
-        const validTracks: Mp3Track[] = [];
-        for (const track of knownTracks) {
-            try {
-                const res = await fetch(`/audio/background-tracks/${track.path}`, { method: 'HEAD' });
-                if (res.ok) {
-                    validTracks.push({
-                        path: track.path,
-                        artist: track.artist,
-                        song: track.song
-                    });
-                }
-            } catch {
-                // Track not found, skip
-            }
-        }
+        // Use known tracks directly (paths are hardcoded, no verification needed)
+        const validTracks: Mp3Track[] = knownTracks.map(track => ({
+            path: track.path,
+            artist: track.artist,
+            song: track.song
+        }));
 
         this.mp3Tracks = validTracks;
         return validTracks;
@@ -250,15 +241,97 @@ export class AudioSystem {
 
     async playMp3(): Promise<boolean> {
         this.initMp3();
-        if (!this.mp3Media) return false;
+        if (!this.mp3Media) {
+            console.error('MP3 media element not initialized');
+            return false;
+        }
 
-        // If no track loaded, load first track
-        if (!this.mp3Media.src || this.mp3Media.src.endsWith('/')) {
-            if (this.mp3Tracks.length === 0) {
-                await this.scanMp3Tracks();
+        // Ensure we have tracks
+        if (this.mp3Tracks.length === 0) {
+            await this.scanMp3Tracks();
+        }
+
+        if (this.mp3Tracks.length === 0) {
+            console.warn('No MP3 tracks available to play');
+            return false;
+        }
+
+        // Check if a valid track is loaded by checking if src is a valid audio file path
+        const hasValidSrc = this.mp3Media.src &&
+            !this.mp3Media.src.endsWith('/') &&
+            this.mp3Media.src !== window.location.href &&
+            this.mp3Media.src.includes('/audio/background-tracks/');
+
+        // If no valid track loaded, load first track
+        if (!hasValidSrc) {
+            const loaded = this.loadMp3Track(0);
+            if (!loaded) {
+                console.error('Failed to load MP3 track');
+                return false;
             }
-            if (this.mp3Tracks.length > 0) {
-                this.loadMp3Track(0);
+
+            // Wait for the track to be ready to play
+            await new Promise<void>((resolve) => {
+                if (!this.mp3Media) {
+                    resolve();
+                    return;
+                }
+
+                const timeout = setTimeout(() => {
+                    this.mp3Media?.removeEventListener('canplay', onCanPlay);
+                    this.mp3Media?.removeEventListener('error', onError);
+                    console.warn('Timeout waiting for MP3 to be ready');
+                    resolve(); // Resolve anyway to allow play attempt
+                }, 3000); // 3 second timeout
+
+                const onError = (e: Event) => {
+                    clearTimeout(timeout);
+                    this.mp3Media?.removeEventListener('canplay', onCanPlay);
+                    this.mp3Media?.removeEventListener('error', onError);
+                    console.error('Error loading MP3 track:', e);
+                    resolve(); // Still resolve to allow play attempt
+                };
+
+                const onCanPlay = () => {
+                    clearTimeout(timeout);
+                    this.mp3Media?.removeEventListener('canplay', onCanPlay);
+                    this.mp3Media?.removeEventListener('error', onError);
+                    resolve();
+                };
+
+                this.mp3Media.addEventListener('canplay', onCanPlay, { once: true });
+                this.mp3Media.addEventListener('error', onError, { once: true });
+
+                // If already ready, resolve immediately
+                if (this.mp3Media.readyState >= 2) {
+                    clearTimeout(timeout);
+                    this.mp3Media.removeEventListener('canplay', onCanPlay);
+                    this.mp3Media.removeEventListener('error', onError);
+                    resolve();
+                }
+            });
+        } else {
+            // Track is loaded, make sure it's ready
+            if (this.mp3Media.readyState < 2) {
+                // Wait for canplay if not ready
+                await new Promise<void>((resolve) => {
+                    if (!this.mp3Media) {
+                        resolve();
+                        return;
+                    }
+                    const timeout = setTimeout(() => resolve(), 1000);
+                    const onCanPlay = () => {
+                        clearTimeout(timeout);
+                        this.mp3Media?.removeEventListener('canplay', onCanPlay);
+                        resolve();
+                    };
+                    this.mp3Media.addEventListener('canplay', onCanPlay, { once: true });
+                    if (this.mp3Media.readyState >= 2) {
+                        clearTimeout(timeout);
+                        this.mp3Media.removeEventListener('canplay', onCanPlay);
+                        resolve();
+                    }
+                });
             }
         }
 
@@ -266,6 +339,7 @@ export class AudioSystem {
             await this.mp3Media.play();
             return true;
         } catch (e) {
+            console.error('Failed to play MP3:', e);
             return false;
         }
     }

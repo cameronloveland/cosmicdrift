@@ -50,10 +50,11 @@ export class ShootingStars {
             blending: THREE.AdditiveBlending,
             depthWrite: false,
             depthTest: true, // Enable depth test for proper layering
-            toneMapped: false,
-            vertexColors: true // Enable vertex colors for per-instance color control
+            toneMapped: false
         });
         this.starMesh = new THREE.InstancedMesh(starGeometry, starMaterial, this.maxStars);
+        // Note: instanceColor works with InstancedMesh without vertexColors
+        this.starMesh.frustumCulled = false; // CRITICAL FIX: Disable frustum culling to prevent intermittent visibility
 
         // Initialize instanceColor for per-star fade effects
         this.starMesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(this.maxStars * 3), 3);
@@ -70,11 +71,12 @@ export class ShootingStars {
             blending: THREE.AdditiveBlending,
             depthWrite: false,
             depthTest: false, // Disable depth test to ensure visibility
-            toneMapped: false,
-            vertexColors: true // Enable vertex colors for per-instance color control
+            toneMapped: false
         });
         this.trailMesh = new THREE.InstancedMesh(trailGeometry, trailMaterial, this.maxStars * SHOOTING_STARS.trailParticleCount);
-        
+        // Note: instanceColor works with InstancedMesh without vertexColors
+        this.trailMesh.frustumCulled = false; // CRITICAL FIX: Disable frustum culling to prevent intermittent visibility
+
         // Initialize instanceColor for per-trail fade effects
         this.trailMesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(this.maxStars * SHOOTING_STARS.trailParticleCount * 3), 3);
         this.trailMesh.instanceColor.setUsage(THREE.DynamicDrawUsage);

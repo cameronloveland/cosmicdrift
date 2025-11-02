@@ -86,10 +86,13 @@ export class RaceManager {
         const lapCurrent = racer.lapCurrent || 0;
         let t = racer.t ?? 0;
 
-        // Handle negative t (before start line) - clamp to 0
-        // All racers before start are treated as at the start line for comparison
+        // If racer hasn't started (negative t), keep negative value for proper sorting
+        // Negative values represent distance behind start line
+        // More negative = further behind, so higher (less negative) is ahead
         if (t < 0) {
-            t = 0;
+            // For pre-race, use raw t value so racers can be properly sorted
+            // t = -0.01 is ahead of t = -0.02
+            return lapCurrent + t; // Keep negative, will sort correctly
         }
 
         // Normalize t to [0, 1) range (handle wrap-around beyond 1)
@@ -114,6 +117,15 @@ export class RaceManager {
             return [];
         }
 
+        // DEBUG: Log all racer progress before sorting
+        console.log('=== POSITION CALCULATION ===');
+        const progressMap = new Map<string, number>();
+        allRacers.forEach(racer => {
+            const progress = this.calculateTotalProgress(racer);
+            progressMap.set(racer.racerId, progress);
+            console.log(`  ${racer.racerId}: lap=${racer.lapCurrent}, t=${racer.t?.toFixed(4)}, totalProgress=${progress.toFixed(4)}`);
+        });
+
         // Sort by total progress through the race (racing game standard approach)
         allRacers.sort((a, b) => {
             // Ensure both racers have valid data
@@ -131,12 +143,29 @@ export class RaceManager {
             // Compare total progress (higher = ahead)
             const diff = progressB - progressA;
 
-            // If very close (within floating point error), maintain stability
+            // If very close (within floating point error), use tie-breaker
             if (Math.abs(diff) < 0.0001) {
-                return 0; // Maintain order
+                // Tie-breaker: compare raw t values for more precise sorting
+                const tA = a.t ?? 0;
+                const tB = b.t ?? 0;
+                const tDiff = tB - tA;
+
+                // If still tied, maintain stable order by racerId (consistent ordering)
+                if (Math.abs(tDiff) < 0.0001) {
+                    // Stable sort: compare racerIds alphabetically
+                    return a.racerId.localeCompare(b.racerId);
+                }
+
+                return tDiff;
             }
 
             return diff;
+        });
+
+        // DEBUG: Log sorted positions
+        console.log('Sorted order:');
+        allRacers.forEach((racer, index) => {
+            console.log(`  #${index + 1}: ${racer.racerId} (progress: ${progressMap.get(racer.racerId)?.toFixed(4)})`);
         });
 
         // Assign positions (1 = first place, 2 = second, etc.)

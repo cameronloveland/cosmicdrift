@@ -54,6 +54,7 @@ export class Game {
     private ui!: UI;
     private audio!: AudioSystem;
     private npcShips: NPCShip[] = [];
+    private npcShipBoosts: ShipBoost[] = [];
     private raceManager!: RaceManager;
     private raceState: RaceState = 'NOT_STARTED';
 
@@ -237,6 +238,15 @@ export class Game {
             this.scene.add(npc3.root);
             this.scene.add(npc4.root);
 
+            // Create ShipBoost effects for each NPC (same as player ship)
+            this.npcShipBoosts = [
+                new ShipBoost(npc1),
+                new ShipBoost(npc2),
+                new ShipBoost(npc3),
+                new ShipBoost(npc4)
+            ];
+            this.npcShipBoosts.forEach(boost => this.scene.add(boost.root));
+
             // Register NPCs with race manager
             this.raceManager.addNPC('npc1');
             this.raceManager.addNPC('npc2');
@@ -324,11 +334,24 @@ export class Game {
             } else if (this.mp3Mode.active) {
                 // Ensure MP3 autoplays if tab is active and tracks are loaded
                 const tracks = this.audio.getMp3Tracks();
-                if (tracks.length > 0 && !this.mp3Mode.playing) {
+                if (tracks.length > 0 && !this.audio.isMp3Playing()) {
+                    // Ensure track is loaded - playMp3 will handle loading if needed
                     this.audio.playMp3().then((ok) => {
                         this.mp3Mode.playing = ok;
+                        // Force UI update to reflect playing state
+                        this.updateMp3UI();
+                        if (!ok) {
+                            console.warn('MP3 autoplay failed - user may need to click play button');
+                        }
+                    }).catch((err) => {
+                        // Autoplay failed (browser restriction or error), update UI to show paused state
+                        console.error('MP3 autoplay error:', err);
+                        this.mp3Mode.playing = false;
                         this.updateMp3UI();
                     });
+                } else {
+                    // Already playing or no tracks, just update UI to ensure button state is correct
+                    this.updateMp3UI();
                 }
             }
             window.removeEventListener('keydown', handler);
@@ -418,16 +441,54 @@ export class Game {
 
         // MP3 controls
         this.ui.onMp3Control('play', () => {
-            if (this.mp3Mode.playing) {
+            const isPlaying = this.audio.isMp3Playing();
+            if (isPlaying) {
                 this.audio.pauseMp3();
                 this.mp3Mode.playing = false;
+                this.updateMp3UI();
             } else {
-                this.audio.playMp3().then((ok) => {
-                    this.mp3Mode.playing = ok;
-                    this.updateMp3UI();
-                });
+                // Ensure we have tracks loaded
+                const tracks = this.audio.getMp3Tracks();
+                if (tracks.length === 0) {
+                    // Try to scan tracks if we don't have any
+                    this.audio.scanMp3Tracks().then((scannedTracks) => {
+                        if (scannedTracks.length > 0) {
+                            const current = this.audio.getCurrentMp3Track();
+                            if (!current) {
+                                this.audio.loadMp3Track(0);
+                            }
+                            this.audio.playMp3().then((ok) => {
+                                this.mp3Mode.playing = ok;
+                                this.updateMp3UI();
+                            }).catch((err) => {
+                                console.error('Failed to play MP3:', err);
+                                this.mp3Mode.playing = false;
+                                this.updateMp3UI();
+                            });
+                        } else {
+                            console.warn('No MP3 tracks found');
+                            this.updateMp3UI();
+                        }
+                    }).catch((err) => {
+                        console.error('Failed to scan MP3 tracks:', err);
+                        this.updateMp3UI();
+                    });
+                } else {
+                    // Ensure track is loaded
+                    const current = this.audio.getCurrentMp3Track();
+                    if (!current) {
+                        this.audio.loadMp3Track(0);
+                    }
+                    this.audio.playMp3().then((ok) => {
+                        this.mp3Mode.playing = ok;
+                        this.updateMp3UI();
+                    }).catch((err) => {
+                        console.error('Failed to play MP3:', err);
+                        this.mp3Mode.playing = false;
+                        this.updateMp3UI();
+                    });
+                }
             }
-            this.updateMp3UI();
         });
 
         this.ui.onMp3Control('prev', () => {
@@ -754,6 +815,9 @@ export class Game {
                 npc.update(dt, this.ship.state.t, this.ship.state.lapCurrent, this.ship.state.speedKmh, this.npcShips);
             });
 
+            // Update NPC boost effects (same as player ship)
+            this.npcShipBoosts.forEach(boost => boost.update(dt));
+
             // Update race position and lap time info (after NPCs have been updated)
             this.raceManager.updatePlayerState(this.ship.state);
             // Update NPC states so positions can be calculated accurately
@@ -763,6 +827,7 @@ export class Game {
 
             // Calculate and update race positions
             const raceResults = this.raceManager.getRaceResults();
+            console.log(`Player position: ${raceResults.playerPosition}/${this.npcShips.length + 1} | t: ${this.ship.state.t?.toFixed(4)} | lap: ${this.ship.state.lapCurrent}`);
             this.ui.updateRaceInfo(raceResults.playerPosition, this.ship.state.lastLapTime ?? 0, this.npcShips.length + 1);
 
             this.audio.setSpeed(this.ship.state.speedKmh);

@@ -218,7 +218,7 @@ export class Ship {
 
     reset() {
         // Reset ship to starting position and state
-        this.state.t = -0.01; // Start further back for pre-race staging
+        this.state.t = -12 / this.track.length; // Start 12 meters behind start line (matches constructor)
         this.state.speedKmh = 0;
         this.state.lateralOffset = 0;
         this.state.pitch = 0;

@@ -27,7 +27,7 @@ export class NPCShip {
     // Stuck detection
     private stuckDetectionTimer = 0;
     private lastPositionT = 0;
-    private stuckThreshold = 3.0; // seconds
+    private stuckThreshold = 1.5; // seconds (reduced from 3.0 for faster detection)
     private positionChangeThreshold = 0.001; // minimum track distance change
 
     // NPC boost system
@@ -68,12 +68,10 @@ export class NPCShip {
     private speedStarsMax = 80; // Fewer stars for NPCs
     private tmpObj = new THREE.Object3D();
 
-    // Ship boost particle effect (like player ship)
-    private shipBoost!: THREE.Group;
-    private shipBoostMesh!: THREE.InstancedMesh;
-    private shipBoostColors!: Float32Array;
-    private shipBoostMax = 60; // Fewer particles for NPCs
-    private shipBoostCursor = 0;
+
+    // Add this field to the class properties (after line 55)
+    private hasCrossedCheckpointThisFrame = false;
+    private prevT = 0;
 
     constructor(track: Track, racerId: string, color: THREE.Color, behavior: 'aggressive' | 'conservative' = 'conservative', lateralOffset: number = 0) {
         this.track = track;
@@ -82,7 +80,7 @@ export class NPCShip {
         this.aiBehavior = behavior;
 
         this.state = {
-            t: -0.02, // Start well in front of the start line (staging area)
+            t: -12 / track.length, // Start 12 meters behind start line (matches player)
             speedKmh: 0,
             lateralOffset: lateralOffset, // Position NPCs at different lateral positions
             pitch: 0,
@@ -95,6 +93,10 @@ export class NPCShip {
             tunnelCenterBoost: 1.0,
             onBoostPadEntry: false,
         };
+
+        // Initialize lap tracking state
+        this.prevT = this.state.t;
+        this.hasCrossedCheckpointThisFrame = false;
 
         // NPCs start immediately when countdown ends (no random delay)
 
@@ -146,11 +148,7 @@ export class NPCShip {
         this.root.add(this.speedStars);
         this.speedStars.visible = false;
 
-        // Create ship boost particle effect (initially hidden) - like player
-        this.shipBoost = new THREE.Group();
-        this.createShipBoost();
-        this.root.add(this.shipBoost);
-        this.shipBoost.visible = false;
+        // Ship boost effect is handled externally by ShipBoost class (same as player)
     }
 
     private createRocketTail() {
@@ -258,13 +256,16 @@ export class NPCShip {
             this.resetIfStuck();
         }
 
+        // Update tunnel boost and boost pad every frame (same as player ship)
+        // These need continuous frame updates for proper decay/accumulation
+        this.updateTunnelBoost(dt);
+        this.updateBoostPad(dt);
+
         // Update AI behavior periodically
         if (this.aiUpdateTimer >= this.aiUpdateInterval) {
             this.updateAI(playerPosition, playerLap, playerSpeed);
             this.updateCollisionAvoidance(allNPCs);
             this.updateBoostBehavior(dt);
-            this.updateTunnelBoost(dt);
-            this.updateBoostPad(dt);
             this.aiUpdateTimer = 0;
         }
 
@@ -444,8 +445,7 @@ export class NPCShip {
         // Update speed stars effect based on boost state
         this.updateSpeedStars(dt);
 
-        // Update ship boost particle effect
-        this.updateShipBoost(dt);
+        // Ship boost particle effect is handled externally by ShipBoost class (same as player)
     }
 
     private shouldUseBoost(): boolean {
@@ -584,57 +584,6 @@ export class NPCShip {
         this.speedStarsColors[i] = this.color.clone();
     }
 
-    private createShipBoost() {
-        // Create ship boost particle effect (like player ship but with NPC color)
-        const geo = new THREE.CylinderGeometry(2.12, 0.04, 0.5, 6, 1, true);
-        const mat = new THREE.MeshBasicMaterial({
-            color: this.color,
-            transparent: true,
-            opacity: 0.8,
-            blending: THREE.AdditiveBlending,
-            depthWrite: false,
-            toneMapped: false
-        });
-        this.shipBoostMesh = new THREE.InstancedMesh(geo, mat, this.shipBoostMax);
-        this.shipBoostColors = new Float32Array(this.shipBoostMax * 3);
-        this.shipBoost.add(this.shipBoostMesh);
-    }
-
-    private updateShipBoost(dt: number) {
-        // Ship boost particle effect - only emit when NPC is actively boosting
-        const baseRate = 90; // Half the player rate for performance
-        let ratePerSec = 0;
-
-        if (this.isBoosting) {
-            ratePerSec = baseRate;
-        }
-
-        // Increase particle rate when in tunnel
-        if (this.state.inTunnel) {
-            ratePerSec = Math.max(ratePerSec, baseRate * 2.5);
-        }
-        if (ratePerSec === 0) return;
-
-        const count = Math.floor(ratePerSec * dt);
-        for (let i = 0; i < count; i++) this.spawnShipBoost();
-    }
-
-    private spawnShipBoost() {
-        const i = this.shipBoostCursor++ % this.shipBoostMax;
-        const base = this.root.position;
-        const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(this.root.quaternion);
-        this.tmpObj.position.copy(base).addScaledVector(dir, -0.8);
-        this.tmpObj.quaternion.copy(this.root.quaternion);
-        this.tmpObj.scale.setScalar(0.6 + Math.random() * 0.8);
-        this.tmpObj.updateMatrix();
-        this.shipBoostMesh.setMatrixAt(i, this.tmpObj.matrix);
-
-        // Set color
-        const color = this.color.clone();
-        this.shipBoostColors[i * 3] = color.r;
-        this.shipBoostColors[i * 3 + 1] = color.g;
-        this.shipBoostColors[i * 3 + 2] = color.b;
-    }
 
     private updatePhysics(dt: number) {
         // Calculate base speed - same as player ship
@@ -673,6 +622,15 @@ export class NPCShip {
         const prevSpeed = this.state.speedKmh;
         this.state.speedKmh = THREE.MathUtils.lerp(this.state.speedKmh, targetSpeed, speedLerp);
 
+        // Force minimum speed if somehow speed dropped too low (prevent getting stuck)
+        if (this.state.speedKmh < minSpeed * 0.8) {
+            console.warn(`NPC ${this.racerId} speed too low (${this.state.speedKmh.toFixed(1)} km/h), forcing minimum`, {
+                targetSpeed,
+                minSpeed
+            });
+            this.state.speedKmh = minSpeed;
+        }
+
         // Debug logging for significant speed drops (>20% drop in one frame)
         if (prevSpeed > 50 && this.state.speedKmh < prevSpeed * 0.8) {
             const speedDrop = prevSpeed - this.state.speedKmh;
@@ -707,7 +665,21 @@ export class NPCShip {
     private updatePosition(dt: number) {
         // Move along track
         const mps = (this.state.speedKmh / 3.6);
-        this.state.t += (mps * dt) / this.track.length;
+
+        // Safety check: ensure track.length is valid
+        if (this.track.length <= 0) {
+            console.error(`NPC ${this.racerId}: Invalid track length (${this.track.length}), skipping position update`);
+            return;
+        }
+
+        // Calculate position change (normalized track distance)
+        const positionDelta = (mps * dt) / this.track.length;
+
+        // Ensure we always move forward (even if very slowly) to prevent getting stuck
+        const minDelta = 0.000001; // Very small minimum to ensure continuous movement
+        const actualDelta = Math.max(positionDelta, minDelta);
+
+        this.state.t += actualDelta;
         if (this.state.t > 1) this.state.t -= 1;
         if (this.state.t < 0) this.state.t += 1;
 
@@ -719,13 +691,43 @@ export class NPCShip {
     }
 
     private updateLapTracking() {
-        // Simple lap detection - crossing t=0
-        const prevT = this.state.t - 0.001; // Approximate previous position
-        const crossedStartLine = (prevT < 0 && this.state.t >= 0) || (prevT > 0.9 && this.state.t < 0.1);
+        // Proper lap detection - only count each crossing once per frame
+        // Uses the same logic as the player ship
+        if (this.state.lapCurrent >= 0 && !this.hasCrossedCheckpointThisFrame) {
+            const prevT = this.prevT;
+            let newT = this.state.t;
 
-        if (crossedStartLine && this.state.lapCurrent < this.state.lapTotal) {
-            this.state.lapCurrent++;
+            // Check if we'll wrap (t wraps from ~1 to ~0)
+            const willWrapForward = newT > 1;
+            if (willWrapForward) newT = newT % 1;
+
+            const willWrapBackward = newT < 0;
+            if (willWrapBackward) newT = newT % 1;
+
+            // Checkpoint at t = 0
+            const checkpointT = 0.0;
+
+            // Normal crossing: prevT < checkpointT < newT (or close to it)
+            const normalCrossing = prevT < checkpointT && newT >= checkpointT;
+
+            // Wrapping crossing: prevT > checkpointT but newT < checkpointT (wrapped around)
+            const wrappingCrossing = prevT > 0.9 && newT < 0.1 && !willWrapBackward;
+
+            if (normalCrossing || wrappingCrossing) {
+                // Increment lap count (0 -> 1, 1 -> 2, 2 -> 3)
+                if (this.state.lapCurrent < this.state.lapTotal) {
+                    console.log(`[${this.racerId}] LAP CROSSING: prevT=${prevT.toFixed(4)}, newT=${newT.toFixed(4)}, normalCrossing=${normalCrossing}, wrappingCrossing=${wrappingCrossing}, lap: ${this.state.lapCurrent} -> ${this.state.lapCurrent + 1}`);
+                    this.state.lapCurrent++;
+                    this.hasCrossedCheckpointThisFrame = true;
+                }
+            }
         }
+
+        // Update prevT for next frame
+        this.prevT = this.state.t;
+
+        // Reset checkpoint flag for next frame
+        this.hasCrossedCheckpointThisFrame = false;
     }
 
     public updateVisualPosition() {
@@ -800,15 +802,20 @@ export class NPCShip {
     }
 
     public startRace() {
-        // Transition from pre-race (lap 0) to race start (lap 1)
-        this.state.lapCurrent = 1;
+        // Keep lap at 0 - we start before the start line
+        // Lap will increment to 1 when crossing the start line for the first time (matches player ship logic)
+        console.log(`[${this.racerId}] startRace() called, lapCurrent: ${this.state.lapCurrent}, prevT: ${this.prevT.toFixed(4)}, state.t: ${this.state.t.toFixed(4)}`);
+        // Don't set lapCurrent = 1 here! Let lap detection handle the first crossing naturally
         this.countdownMode = false; // Allow movement when race starts
         this.raceStarted = true;
         this.raceStartTime = 0; // Reset race start timer (will accumulate dt each frame)
+        // Make sure checkpoint flag is reset for clean detection
+        this.hasCrossedCheckpointThisFrame = false;
+        this.prevT = this.state.t;
     }
 
     public reset() {
-        this.state.t = -0.011; // Reset to pre-race staging position
+        this.state.t = -12 / this.track.length; // Reset to pre-race staging position (matches player)
         this.state.speedKmh = 0;
         this.state.lateralOffset = 0;
         this.state.lapCurrent = 0; // Reset to pre-race
@@ -818,6 +825,10 @@ export class NPCShip {
         this.speedMultiplier = 1.0;
         this.stuckDetectionTimer = 0;
         this.lastPositionT = this.state.t;
+
+        // Reset lap tracking state
+        this.prevT = this.state.t;
+        this.hasCrossedCheckpointThisFrame = false;
 
         // Reset boost system
         this.boostEnergy = 1.0;
@@ -848,7 +859,6 @@ export class NPCShip {
         // Hide all boost effects
         this.rocketTail.visible = false;
         this.speedStars.visible = false;
-        this.shipBoost.visible = false;
     }
 
     private updateCollisionAvoidance(allNPCs: NPCShip[]) {
@@ -903,19 +913,22 @@ export class NPCShip {
     }
 
     private resetIfStuck() {
-        console.warn(`NPC ${this.racerId} was stuck for ${this.stuckThreshold}s, attempting recovery`, {
+        console.warn(`NPC ${this.racerId} was stuck at t=${this.state.t.toFixed(4)} for ${this.stuckThreshold}s, attempting recovery`, {
             position: this.state.t,
             speed: this.state.speedKmh,
             targetSpeed: PHYSICS.baseSpeed * this.rubberBandingMultiplier,
-            rubberBanding: this.rubberBandingMultiplier
+            rubberBanding: this.rubberBandingMultiplier,
+            boostMultiplier: this.isBoosting ? PHYSICS.boostMultiplier : 1.0,
+            tunnelMultiplier: this.tunnelBoostAccumulator,
+            boostPadMultiplier: this.boostPadMultiplier
         });
 
-        // Teleport forward by a small amount to unstick
-        this.state.t += 0.02;
+        // Teleport forward by a larger amount to ensure we move past the stuck point
+        this.state.t += 0.05; // Increased from 0.02
         if (this.state.t > 1) this.state.t -= 1;
 
-        // Force speed to minimum to ensure movement
-        this.state.speedKmh = Math.max(this.state.speedKmh, PHYSICS.baseSpeed * 0.5);
+        // Force speed to base speed (100% instead of 50%) to ensure strong movement
+        this.state.speedKmh = PHYSICS.baseSpeed;
 
         // Reset velocity to prevent immediate re-sticking
         this.lateralVelocity = 0;
@@ -924,8 +937,15 @@ export class NPCShip {
         this.rubberBandingMultiplier = 1.0;
         this.targetRubberBandingMultiplier = 1.0;
 
+        // Reset all boost effects that might be causing issues
+        this.tunnelBoostAccumulator = 1.0;
+        this.boostPadMultiplier = 1.0;
+        this.boostPadTimer = 0;
+
         // Reset stuck detection
         this.stuckDetectionTimer = 0;
         this.lastPositionT = this.state.t;
+
+        console.log(`NPC ${this.racerId} recovery complete: t=${this.state.t.toFixed(4)}, speed=${this.state.speedKmh.toFixed(1)} km/h`);
     }
 }

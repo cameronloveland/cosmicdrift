@@ -29,8 +29,8 @@ export const CAMERA = {
 };
 
 export const PHYSICS = {
-    baseSpeed: 210, // km/h visualized in HUD (convert to m/s inside)
-    maxSpeed: 360,
+    baseSpeed: 236, // km/h visualized in HUD (convert to m/s inside) - reduced 25% from 315
+    maxSpeed: 405, // reduced 25% from 540 to maintain proportional relationship
     boostMultiplier: 1.8,
     // Manual boost resource
     boostDurationSec: 3.0, // full-to-empty hold duration
@@ -46,7 +46,7 @@ export const PHYSICS = {
     pitchDamping: 3.0,
     flowFillSpeed: 0.12,
     flowDrainSpeed: 0.5,
-    highSpeedThreshold: 170
+    highSpeedThreshold: 191 // reduced 25% from 255 to maintain proportional relationship
 };
 
 export const RENDER = {
