@@ -1,7 +1,6 @@
 import * as THREE from 'three';
-import { STARFIELD_MIN_RADIUS, PLANET_EFFECTS } from './constants';
-// import { AccretionDisk } from './AccretionDisk';
-// import { AccretionParticles } from './AccretionParticles';
+import { STARFIELD_MIN_RADIUS, PLANET_EFFECTS, BLACKHOLE } from './constants';
+import { AccretionParticles } from './AccretionParticles';
 
 export class Environment {
     public root = new THREE.Group();
@@ -10,15 +9,16 @@ export class Environment {
     private planets = new THREE.Group();
     private blackHole = new THREE.Group();
     private eventHorizonGlow!: THREE.Mesh;
-    // Temporarily disabled - moved to separate files
-    // private accretionDisk!: THREE.Mesh;
-    // private accretionParticles!: THREE.Points;
-    // private accretionDisk!: AccretionDisk;
-    // private accretionParticles!: AccretionParticles;
+    private blackHoleCore!: THREE.Mesh;
+    private accretionParticles!: AccretionParticles;
     private vortexLayers: THREE.Points[] = [];
     private jupiterRings: THREE.Points[] = [];
     private diskLights: THREE.PointLight[] = [];
     private time = 0;
+    private raceTime = 0; // Track race time for blackhole growth
+    private currentCoreRadius = BLACKHOLE.coreRadiusInitial;
+    private blackholeFadeProgress = 0; // 0 = visible, 1 = completely faded
+    private blackholeRemoved = false; // Track if blackhole has been removed
 
     constructor() {
         this.addStars();
@@ -81,18 +81,18 @@ export class Environment {
         this.blackHole.position.set(0, 0, 0);
 
         // 1. Black hole core - dark void sphere
-        const coreGeometry = new THREE.SphereGeometry(480, 64, 64);
+        const coreGeometry = new THREE.SphereGeometry(BLACKHOLE.coreRadiusInitial, 64, 64);
         const coreMaterial = new THREE.MeshBasicMaterial({
             color: 0x0a0015,
             transparent: true,
             opacity: 0.95,
             toneMapped: false
         });
-        const core = new THREE.Mesh(coreGeometry, coreMaterial);
-        this.blackHole.add(core);
+        this.blackHoleCore = new THREE.Mesh(coreGeometry, coreMaterial);
+        this.blackHole.add(this.blackHoleCore);
 
         // 2. Event horizon glow ring - subtle
-        const horizonGeometry = new THREE.SphereGeometry(500, 64, 64);
+        const horizonGeometry = new THREE.SphereGeometry(BLACKHOLE.coreRadiusInitial + BLACKHOLE.eventHorizonOffset, 64, 64);
         const horizonMaterial = new THREE.MeshBasicMaterial({
             color: 0x8844ff,
             transparent: true,
@@ -105,13 +105,9 @@ export class Environment {
         this.eventHorizonGlow = new THREE.Mesh(horizonGeometry, horizonMaterial);
         this.blackHole.add(this.eventHorizonGlow);
 
-        // 3. Accretion disk - temporarily disabled (moved to AccretionDisk.ts)
-        // this.accretionDisk = new AccretionDisk();
-        // this.blackHole.add(this.accretionDisk.root);
-
-        // 4. Accretion particles - temporarily disabled (moved to AccretionParticles.ts)
-        // this.accretionParticles = new AccretionParticles();
-        // this.blackHole.add(this.accretionParticles.root);
+        // 3. Accretion particles
+        this.accretionParticles = new AccretionParticles();
+        this.blackHole.add(this.accretionParticles.root);
 
         // 5. Add rotating point lights around vortex
         this.addVortexLights();
@@ -141,7 +137,210 @@ export class Environment {
         }
     }
 
+    // Calculate growth progress based on race time (0 to 1)
+    private calculateGrowthProgress(): number {
+        const progress = Math.min(this.raceTime / BLACKHOLE.growthDuration, 1.0);
+        // Apply easing for smooth growth
+        if (progress < 0.5) {
+            return 0.5 * Math.pow(progress * 2, 1 + BLACKHOLE.growthEasing);
+        } else {
+            return 0.5 + 0.5 * (1 - Math.pow(1 - (progress - 0.5) * 2, 1 + BLACKHOLE.growthEasing));
+        }
+    }
 
+    // Update blackhole size based on race time
+    private updateBlackholeSize() {
+        const growthProgress = this.calculateGrowthProgress();
+        this.currentCoreRadius = THREE.MathUtils.lerp(
+            BLACKHOLE.coreRadiusInitial,
+            BLACKHOLE.coreRadiusMax,
+            growthProgress
+        );
+
+        // Scale core
+        const coreScale = this.currentCoreRadius / BLACKHOLE.coreRadiusInitial;
+        this.blackHoleCore.scale.setScalar(coreScale);
+
+        // Scale event horizon glow
+        const eventHorizonRadius = this.currentCoreRadius + BLACKHOLE.eventHorizonOffset;
+        const horizonScale = eventHorizonRadius / (BLACKHOLE.coreRadiusInitial + BLACKHOLE.eventHorizonOffset);
+        this.eventHorizonGlow.scale.setScalar(horizonScale);
+
+        // Update particle system
+        this.accretionParticles.setBlackholeRadius(this.currentCoreRadius);
+
+        // Update vortex lights radius
+        const lightRadius = 600 * (1.0 + growthProgress * 4.0); // Lights move out as blackhole grows
+        this.diskLights.forEach((light, i) => {
+            const angle = (i / this.diskLights.length) * Math.PI * 2;
+            light.position.set(
+                Math.cos(angle) * lightRadius,
+                0,
+                Math.sin(angle) * lightRadius
+            );
+        });
+    }
+
+    // Check if a position is inside the event horizon (for effects activation)
+    public isInsideEventHorizon(position: THREE.Vector3): boolean {
+        if (this.blackholeRemoved) return false;
+        const distance = position.length();
+        // Use actual core radius (no margin) - effects should only activate when truly inside
+        return distance < this.currentCoreRadius;
+    }
+
+    // Get current blackhole radius (for other systems)
+    public getCurrentRadius(): number {
+        if (this.blackholeRemoved) return 0;
+        return this.currentCoreRadius;
+    }
+
+    // Get event horizon radius
+    public getEventHorizonRadius(): number {
+        if (this.blackholeRemoved) return 0;
+        return this.currentCoreRadius + BLACKHOLE.eventHorizonOffset;
+    }
+
+    // Check if blackhole has reached maximum size
+    public hasReachedMaxSize(): boolean {
+        if (this.blackholeRemoved) return true; // Consider consumed as max size reached
+        const growthProgress = this.calculateGrowthProgress();
+        return growthProgress >= 0.99; // Consider max size when 99% grown
+    }
+
+    // Set race time for growth calculation
+    public setRaceTime(raceTime: number) {
+        this.raceTime = raceTime;
+    }
+
+    // Set inside blackhole progress for enhanced particle effects
+    public setInsideBlackholeProgress(progress: number) {
+        if (this.accretionParticles) {
+            this.accretionParticles.setInsideProgress(progress);
+        }
+    }
+
+    // Set fade progress for blackhole disappearance (0 = visible, 1 = invisible)
+    public setBlackholeFadeProgress(progress: number) {
+        if (this.blackholeRemoved) return; // Don't update if already removed
+        this.blackholeFadeProgress = progress;
+        this.updateBlackholeFade();
+    }
+
+    private updateBlackholeFade() {
+        const fade = 1.0 - this.blackholeFadeProgress; // 1 = fully visible, 0 = invisible
+
+        // Fade out blackhole core
+        if (this.blackHoleCore && this.blackHoleCore.material instanceof THREE.MeshBasicMaterial) {
+            this.blackHoleCore.material.opacity = 0.95 * fade;
+            this.blackHoleCore.material.transparent = fade < 1.0;
+        }
+
+        // Fade out event horizon glow
+        if (this.eventHorizonGlow && this.eventHorizonGlow.material instanceof THREE.MeshBasicMaterial) {
+            this.eventHorizonGlow.material.opacity = 0.05 * fade;
+        }
+
+        // Fade out accretion particles
+        if (this.accretionParticles && this.accretionParticles.root) {
+            this.accretionParticles.root.traverse((object) => {
+                if (object instanceof THREE.Points) {
+                    if (object.material instanceof THREE.PointsMaterial) {
+                        const originalOpacity = object.userData.originalOpacity ?? 0.9;
+                        object.material.opacity = originalOpacity * fade;
+                    }
+                }
+            });
+            // Store original opacity on first traversal
+            if (this.accretionParticles.root.userData.opacityStored !== true) {
+                this.accretionParticles.root.traverse((object) => {
+                    if (object instanceof THREE.Points && object.material instanceof THREE.PointsMaterial) {
+                        object.userData.originalOpacity = object.material.opacity;
+                    }
+                });
+                this.accretionParticles.root.userData.opacityStored = true;
+            }
+        }
+
+        // Fade out vortex lights
+        this.diskLights.forEach((light) => {
+            light.intensity = 200 * fade;
+        });
+
+        // Fade out entire blackhole group opacity
+        this.blackHole.traverse((object) => {
+            if (object instanceof THREE.Mesh && object.material instanceof THREE.Material) {
+                if (!object.userData.fadeOriginalOpacity) {
+                    object.userData.fadeOriginalOpacity = object.material.opacity ?? 1.0;
+                }
+                if (object.material.transparent !== undefined) {
+                    object.material.transparent = fade < 1.0;
+                }
+                object.material.opacity = object.userData.fadeOriginalOpacity * fade;
+            } else if (object instanceof THREE.Points && object.material instanceof THREE.PointsMaterial) {
+                if (!object.userData.fadeOriginalOpacity) {
+                    object.userData.fadeOriginalOpacity = object.material.opacity ?? 1.0;
+                }
+                object.material.transparent = true;
+                object.material.opacity = object.userData.fadeOriginalOpacity * fade;
+            }
+        });
+    }
+
+    // Remove blackhole and all its effects from the scene after consumption
+    public removeBlackhole() {
+        if (!this.blackHole || !this.blackHole.parent || this.blackholeRemoved) return;
+        this.blackholeRemoved = true;
+
+        // Stop particle updates
+        if (this.accretionParticles) {
+            this.accretionParticles.root.traverse((object) => {
+                if (object instanceof THREE.Points) {
+                    if (object.geometry) {
+                        object.geometry.dispose();
+                    }
+                    if (object.material instanceof THREE.Material) {
+                        object.material.dispose();
+                    }
+                }
+            });
+        }
+
+        // Dispose of geometries and materials
+        this.blackHole.traverse((object) => {
+            if (object instanceof THREE.Mesh || object instanceof THREE.Points) {
+                if (object.geometry) {
+                    object.geometry.dispose();
+                }
+                if (object.material) {
+                    if (Array.isArray(object.material)) {
+                        object.material.forEach(mat => mat.dispose());
+                    } else {
+                        object.material.dispose();
+                    }
+                }
+            }
+        });
+
+        // Remove all lights from scene
+        this.diskLights.forEach((light) => {
+            if (light.parent) {
+                light.parent.remove(light);
+            }
+            light.dispose();
+        });
+        this.diskLights = [];
+
+        // Remove blackhole group from root
+        this.root.remove(this.blackHole);
+
+        // Clear references
+        this.blackHole = new THREE.Group();
+        this.eventHorizonGlow = null!;
+        this.blackHoleCore = null!;
+        this.accretionParticles = null!;
+        this.vortexLayers = [];
+    }
 
     private addPlanets() {
         // Planet 1: Massive Magenta/Pink glowing planet - North-West quadrant
@@ -245,6 +444,11 @@ export class Environment {
     update(dt: number) {
         this.time += dt;
 
+        // Update blackhole size based on race time (temporarily disabled)
+        // if (!this.blackholeRemoved) {
+        //     this.updateBlackholeSize();
+        // }
+
         // Animate planets orbiting around black hole
         this.planets.children.forEach((planet) => {
             if (planet.userData && planet.userData.orbitRadius) {
@@ -264,22 +468,10 @@ export class Environment {
 
         this.stars.rotation.z += dt * 0.005;
 
-        // Accretion disk and particles temporarily disabled (moved to separate files)
-        // if (this.accretionDisk) {
-        //     this.accretionDisk.update(dt);
-        // }
-        // if (this.accretionParticles) {
-        //     this.accretionParticles.update(dt);
-        // }
-
-        // No vortex layer animations - clean black hole
-
-        // No Jupiter rings animations - clean black hole
-
-        // No ring animations - clean black hole
-
-        // Static event horizon glow - no pulsing
-
+        // Update accretion particles (only if blackhole still exists)
+        if (!this.blackholeRemoved && this.accretionParticles) {
+            this.accretionParticles.update(dt);
+        }
     }
 
     // Allow the game to expand starfield to enclose the track fully

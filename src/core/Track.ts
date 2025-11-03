@@ -1125,6 +1125,57 @@ export class Track {
         return this.tunnelSegments;
     }
 
+    // Check if any track segments are inside the event horizon
+    public isTrackInsideEventHorizon(eventHorizonRadius: number, sampleCount: number = 100): boolean {
+        // Sample track positions to check if any are inside
+        const step = 1.0 / sampleCount;
+        for (let i = 0; i <= sampleCount; i++) {
+            const t = i * step;
+            const idx = Math.floor(THREE.MathUtils.euclideanModulo(t, 1) * this.samples) % this.samples;
+            const position = this.cachedPositions[idx];
+            const distance = position.length();
+
+            if (distance < eventHorizonRadius) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Check if the entire track is completely engulfed by the blackhole
+    public isTrackFullyEngulfed(coreRadius: number, sampleCount: number = 200): boolean {
+        // Sample track positions more densely to check if ALL are inside
+        const step = 1.0 / sampleCount;
+        for (let i = 0; i <= sampleCount; i++) {
+            const t = i * step;
+            const idx = Math.floor(THREE.MathUtils.euclideanModulo(t, 1) * this.samples) % this.samples;
+            const position = this.cachedPositions[idx];
+            const distance = position.length();
+
+            // If any point is outside, track is not fully engulfed
+            if (distance >= coreRadius) {
+                return false;
+            }
+        }
+        // All sampled points are inside
+        return true;
+    }
+
+    // Get ship world position based on track position
+    public getShipWorldPosition(t: number, lateralOffset: number, target: THREE.Vector3): THREE.Vector3 {
+        const normalizedT = THREE.MathUtils.euclideanModulo(t, 1);
+        const idx = Math.floor(normalizedT * this.samples) % this.samples;
+        const center = this.cachedPositions[idx];
+        const binormal = this.cachedBinormals[idx];
+        const normal = this.cachedNormals[idx];
+
+        target.copy(center)
+            .addScaledVector(binormal, lateralOffset)
+            .addScaledVector(normal, 0.3); // Ship hovers above track
+
+        return target;
+    }
+
     private buildBoostPads() {
         // Clear old boost pads
         if (this.boostPadGroup.parent) this.root.remove(this.boostPadGroup);

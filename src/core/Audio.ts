@@ -368,6 +368,16 @@ export class AudioSystem {
         }
     }
 
+    shuffleMp3Tracks() {
+        // Fisher-Yates shuffle algorithm
+        for (let i = this.mp3Tracks.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [this.mp3Tracks[i], this.mp3Tracks[j]] = [this.mp3Tracks[j], this.mp3Tracks[i]];
+        }
+        // Reset current index to start of shuffled playlist
+        this.mp3CurrentIndex = 0;
+    }
+
     getMp3Tracks(): Mp3Track[] {
         return [...this.mp3Tracks];
     }

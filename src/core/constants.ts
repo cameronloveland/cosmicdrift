@@ -325,5 +325,32 @@ export const CAMERA_DIRECTOR = {
     cutMaxSec: 9
 };
 
+// Blackhole growth configuration
+export const BLACKHOLE = {
+    coreRadiusInitial: 480,
+    coreRadiusMax: 3000, // Maximum core radius (should engulf track)
+    eventHorizonOffset: 20, // Event horizon is core + offset
+    growthDuration: 180, // seconds to reach max size (3 minutes)
+    growthEasing: 0.3, // easing factor for smooth growth (0-1, lower = smoother)
+    // Accretion disk scaling
+    diskInnerRadiusBase: 600,
+    diskOuterRadiusBase: 1000,
+    diskRadiusMultiplierMax: 5.0, // Disk can grow 5x base size
+    // Particle system scaling
+    particleSpawnRadiusBase: 700,
+    particleSpawnRadiusRange: 300,
+    particleMinRadius: 480,
+    // Inside detection
+    insideDetectionMargin: 0, // No margin - check against actual core radius
+    // Effect transitions
+    effectTransitionDuration: 1.5, // seconds for effects to lerp in/out
+    // Time dilation
+    timeDilationMin: 0.6, // Minimum time scale (0.6x = 60% speed, less dramatic slow motion)
+    timeDilationSmoothness: 0.5, // How smoothly time dilates (lower = smoother)
+    // Blackhole consumption and fade
+    consumptionFadeDuration: 5.0, // seconds for blackhole and effects to fade away after consuming track
+    trackEngulfedCheckInterval: 0.5 // seconds between checks if track is fully engulfed
+};
+
 
 

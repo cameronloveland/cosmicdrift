@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import Stats from 'stats.js';
 import { EffectComposer, RenderPass, EffectPass, BloomEffect, ChromaticAberrationEffect, VignetteEffect, SMAAEffect } from 'postprocessing';
-import { CAMERA, POST, RENDER } from './constants';
+import { CAMERA, POST, RENDER, BLACKHOLE } from './constants';
 import { Ship } from './Ship';
 import { Track } from './Track';
 import { UI } from './UI';
@@ -26,6 +26,9 @@ export class Game {
     private container: HTMLElement;
     private renderer: THREE.WebGLRenderer;
     private composer!: EffectComposer;
+    private chromaticAberrationEffect!: ChromaticAberrationEffect;
+    private vignetteEffect!: VignetteEffect;
+    private bloomEffect!: BloomEffect;
     private scene: THREE.Scene;
     private camera: THREE.PerspectiveCamera;
     private stats: Stats;
@@ -87,6 +90,17 @@ export class Game {
     // Background darkening for tunnels
     private tunnelDarkenTarget = 0; // 0 = normal, 1 = almost black
     private tunnelDarkenCurrent = 0; // smoothly interpolated value
+
+    // Blackhole inside detection state
+    private insideBlackhole = false;
+    private insideBlackholeTarget = false; // Target state (for smooth transitions)
+    private insideBlackholeProgress = 0; // 0-1 lerp progress for effects
+    private timeDilationScale = 1.0; // Current time scale (1.0 = normal, <1.0 = slow motion)
+
+    // Blackhole consumption and fade state
+    private consumptionActive = false;
+    private consumptionFadeProgress = 0; // 0-1 fade progress (1 = fully faded away)
+    private consumptionFadeStartTime = 0;
 
     private radio = {
         on: false, // Start off - only plays when radio tab is active
@@ -228,6 +242,10 @@ export class Game {
         const bloom = new BloomEffect({ intensity: POST.bloomStrength, luminanceThreshold: POST.bloomThreshold, luminanceSmoothing: 0.2, radius: POST.bloomRadius });
         const chroma = new ChromaticAberrationEffect();
         const vignette = new VignetteEffect();
+        // Store effect references for dynamic modification
+        this.chromaticAberrationEffect = chroma;
+        this.vignetteEffect = vignette;
+        this.bloomEffect = bloom;
         const effects = new EffectPass(this.camera, bloom, chroma, vignette);
         this.composer.addPass(renderPass);
         this.composer.addPass(effects);
@@ -724,12 +742,16 @@ export class Game {
             const currentTime = this.clock.getElapsedTime();
             this.track.updateGateFade(currentTime);
 
+            // Ship updates use normal dt for responsive controls
             this.ship.update(dt);
-            this.shipBoost.update(dt);
-            this.speedStars.update(dt);
-            this.wormholeTunnel.update(dt);
-            this.shootingStars.update(dt); // Ensure shooting stars continue during race
-            this.env.update(dt);
+
+            // Visual effects use dilated dt for time dilation effect
+            const visualDt = this.getEffectiveDt(dt);
+            this.shipBoost.update(visualDt);
+            this.speedStars.update(visualDt, this.insideBlackholeProgress);
+            this.wormholeTunnel.update(visualDt);
+            this.shootingStars.update(visualDt); // Ensure shooting stars continue during race
+            this.env.update(visualDt);
             this.ui.update(this.ship.state, this.ship.getFocusRefillActive(), this.ship.getFocusRefillProgress(), this.ship.getBoostRechargeDelay());
 
             // Update debug overlay
@@ -739,12 +761,13 @@ export class Game {
             // this.ui.updateDebugOverlay(gameTime, starStats.ahead, starStats.behind, starStats.distant, starStats.total, this.ship.state.speedKmh);
 
             // Update NPCs FIRST so their state is current when calculating positions
+            // NPCs use normal dt for gameplay consistency
             this.npcShips.forEach(npc => {
                 npc.update(dt, this.ship.state.t, this.ship.state.lapCurrent, this.ship.state.speedKmh, this.npcShips);
             });
 
-            // Update NPC boost effects (same as player ship)
-            this.npcShipBoosts.forEach(boost => boost.update(dt));
+            // Update NPC boost effects (visual, use dilated dt)
+            this.npcShipBoosts.forEach(boost => boost.update(visualDt));
 
             // Update race position and lap time info (after NPCs have been updated)
             this.raceManager.updatePlayerState(this.ship.state);
@@ -774,7 +797,196 @@ export class Game {
 
             // Update tunnel background darkening
             this.updateTunnelBackground(dt);
+
+            // Update blackhole growth based on race time
+            if (this.raceState === 'RACING' || this.raceState === 'FINISHED') {
+                const raceTime = this.raceManager.getRaceTime();
+                this.env.setRaceTime(raceTime);
+            }
+
+            // Check if ship and track are inside blackhole event horizon
+            this.updateBlackholeInsideDetection(dt);
+
+            // Update particle effects with inside progress
+            this.env.setInsideBlackholeProgress(this.insideBlackholeProgress);
+
+            // Check for consumption condition (blackhole fully engulfs track)
+            this.checkAndStartConsumption(dt);
         }
+    }
+
+    private checkAndStartConsumption(dt: number) {
+        // Only check if not already in consumption phase
+        if (this.consumptionActive) {
+            this.updateConsumptionFade(dt);
+            return;
+        }
+
+        // Check if blackhole has reached max size and track is fully engulfed
+        const coreRadius = this.env.getCurrentRadius();
+        const hasReachedMaxSize = this.env.hasReachedMaxSize();
+        const isTrackFullyEngulfed = this.track.isTrackFullyEngulfed(coreRadius);
+
+        if (hasReachedMaxSize && isTrackFullyEngulfed) {
+            // Start consumption fade - blackhole and effects will disappear
+            this.consumptionActive = true;
+            this.consumptionFadeProgress = 0;
+            this.consumptionFadeStartTime = this.clock.getElapsedTime();
+            console.log('Track fully consumed - blackhole and effects fading away');
+        }
+    }
+
+    private updateConsumptionFade(dt: number) {
+        if (!this.consumptionActive) return;
+
+        // Update fade progress (0 = start, 1 = completely faded)
+        const elapsed = this.clock.getElapsedTime() - this.consumptionFadeStartTime;
+        this.consumptionFadeProgress = Math.min(1.0, elapsed / BLACKHOLE.consumptionFadeDuration);
+
+        // Check if ship is still inside - effects should stop immediately if ship exits
+        const shipWorldPos = new THREE.Vector3();
+        this.track.getShipWorldPosition(
+            this.ship.state.t,
+            this.ship.state.lateralOffset,
+            shipWorldPos
+        );
+        const shipInside = this.env.isInsideEventHorizon(shipWorldPos);
+
+        // Only apply visual impairments if ship is still inside during consumption
+        if (!shipInside) {
+            // Ship exited during consumption - immediately stop effects
+            this.insideBlackholeProgress = 0.0;
+            this.insideBlackholeTarget = false;
+            this.insideBlackhole = false;
+        } else {
+            // Ship still inside - fade out visual impairments as blackhole fades
+            // Effects should fade away along with blackhole
+            const impairmentFade = 1.0 - this.consumptionFadeProgress; // 1 = full effects, 0 = normal
+            this.insideBlackholeProgress = Math.max(0, this.insideBlackholeProgress * impairmentFade);
+        }
+
+        // Update gravitational lensing effects (will fade to normal)
+        this.updateGravitationalLensing(dt);
+
+        // Fade out time dilation (return to normal speed)
+        this.updateTimeDilation(dt);
+
+        // Fade out blackhole itself (core, event horizon, particles, lights)
+        this.env.setBlackholeFadeProgress(this.consumptionFadeProgress);
+
+        // When fade is complete, blackhole has completely disappeared
+        if (this.consumptionFadeProgress >= 1.0) {
+            // Blackhole and all effects are gone - track consumed, universe returns to normal
+            console.log('Blackhole consumed track and vanished - universe returns to normal');
+            // Remove blackhole and all its effects from the scene
+            this.env.removeBlackhole();
+        }
+    }
+
+    private updateBlackholeInsideDetection(dt: number) {
+        // Only update during racing or finished states
+        if (this.raceState !== 'RACING' && this.raceState !== 'FINISHED') {
+            // Reset to normal immediately when not racing
+            this.insideBlackholeTarget = false;
+            this.insideBlackholeProgress = 0;
+            this.insideBlackhole = false;
+            // Reset effects to normal immediately
+            this.updateGravitationalLensing(dt);
+            this.updateTimeDilation(dt);
+            return;
+        }
+
+        // Check if ship is inside the blackhole core (actual sphere)
+        const shipWorldPos = new THREE.Vector3();
+        this.track.getShipWorldPosition(
+            this.ship.state.t,
+            this.ship.state.lateralOffset,
+            shipWorldPos
+        );
+        const shipInside = this.env.isInsideEventHorizon(shipWorldPos);
+
+        // Update target state - effects only active when ship is inside the sphere
+        this.insideBlackholeTarget = shipInside;
+
+        // Smoothly lerp IN when entering, but immediately stop when exiting
+        const lerpSpeed = 1.0 / BLACKHOLE.effectTransitionDuration;
+        if (this.insideBlackholeTarget) {
+            // Smoothly lerp towards full effects (1.0) when entering
+            this.insideBlackholeProgress = THREE.MathUtils.lerp(
+                this.insideBlackholeProgress,
+                1.0,
+                lerpSpeed * dt
+            );
+        } else {
+            // Immediately stop effects when exiting (no smooth fade out)
+            this.insideBlackholeProgress = 0.0;
+        }
+
+        // Update actual state
+        this.insideBlackhole = this.insideBlackholeProgress > 0.01;
+
+        // Always update effects (they lerp between normal and enhanced based on progress)
+        this.updateGravitationalLensing(dt);
+        this.updateTimeDilation(dt);
+    }
+
+    private updateTimeDilation(dt: number) {
+        // Calculate target time scale based on inside progress
+        const targetTimeScale = THREE.MathUtils.lerp(
+            1.0,
+            BLACKHOLE.timeDilationMin,
+            this.insideBlackholeProgress
+        );
+
+        // Smoothly lerp to target time scale
+        const lerpSpeed = 1.0 / BLACKHOLE.timeDilationSmoothness;
+        this.timeDilationScale = THREE.MathUtils.lerp(
+            this.timeDilationScale,
+            targetTimeScale,
+            lerpSpeed * dt
+        );
+    }
+
+    // Get effective dt with time dilation applied
+    private getEffectiveDt(rawDt: number): number {
+        return rawDt * this.timeDilationScale;
+    }
+
+    private updateGravitationalLensing(dt: number) {
+        // Normal values (when NOT inside blackhole)
+        const normalChromaOffset = 0.0; // No chromatic aberration normally
+        const normalVignetteOffset = 0.5; // Default vignette
+        const normalVignetteDarkness = 0.5; // Default darkness
+        const normalBloomIntensity = POST.bloomStrength; // Normal bloom
+
+        // Enhanced values when inside blackhole (reduced intensity for less eye strain)
+        // Chromatic aberration disabled - keeping only vignette and bloom
+        const maxChromaOffset = 0.0; // Disabled - no chromatic aberration
+        const maxVignetteOffset = 0.65; // Moderate vignette (reduced from 0.8)
+        const maxVignetteDarkness = 0.7; // Moderate edge darkening (reduced from 0.9)
+        const maxBloomIntensity = POST.bloomStrength * 1.2; // Slight bloom increase (reduced from 1.5x)
+
+        // Lerp based on inside progress (0 = normal, 1 = max effects)
+        const chromaOffset = THREE.MathUtils.lerp(normalChromaOffset, maxChromaOffset, this.insideBlackholeProgress);
+        const vignetteOffset = THREE.MathUtils.lerp(normalVignetteOffset, maxVignetteOffset, this.insideBlackholeProgress);
+        const vignetteDarkness = THREE.MathUtils.lerp(normalVignetteDarkness, maxVignetteDarkness, this.insideBlackholeProgress);
+        const bloomIntensity = THREE.MathUtils.lerp(normalBloomIntensity, maxBloomIntensity, this.insideBlackholeProgress);
+
+        // Apply effects (chromatic aberration always stays at 0)
+        this.chromaticAberrationEffect.offset.set(0, 0);
+        this.vignetteEffect.offset = vignetteOffset;
+        this.vignetteEffect.darkness = vignetteDarkness;
+        this.bloomEffect.intensity = bloomIntensity;
+    }
+
+    // Get current inside blackhole state (for other systems)
+    public isInsideBlackhole(): boolean {
+        return this.insideBlackhole;
+    }
+
+    // Get inside blackhole progress (0-1) for effect intensity
+    public getInsideBlackholeProgress(): number {
+        return this.insideBlackholeProgress;
     }
 
     private render() {
@@ -877,11 +1089,30 @@ export class Game {
         this.audio.start();
         this.renderer.domElement.style.cursor = 'none';
 
-        // Autoplay MP3 if possible
+        // Randomize MP3 playlist each game
         if (this.mp3Mode.active) {
             const tracks = this.audio.getMp3Tracks();
-            if (tracks.length > 0 && !this.audio.isMp3Playing()) {
-                this.audio.playMp3().then((ok) => { this.mp3Mode.playing = ok; this.updateMp3UI(); });
+            if (tracks.length > 0) {
+                this.audio.shuffleMp3Tracks();
+                // Load the first track of the shuffled playlist
+                this.audio.loadMp3Track(0);
+                // Autoplay after shuffling
+                if (!this.audio.isMp3Playing()) {
+                    this.audio.playMp3().then((ok) => { this.mp3Mode.playing = ok; this.updateMp3UI(); });
+                }
+            } else {
+                // Ensure tracks are scanned before shuffling
+                this.audio.scanMp3Tracks().then((scannedTracks) => {
+                    if (scannedTracks.length > 0) {
+                        this.audio.shuffleMp3Tracks();
+                        // Load the first track of the shuffled playlist
+                        this.audio.loadMp3Track(0);
+                        // Autoplay after shuffling
+                        if (!this.audio.isMp3Playing()) {
+                            this.audio.playMp3().then((ok) => { this.mp3Mode.playing = ok; this.updateMp3UI(); });
+                        }
+                    }
+                });
             }
         } else if (this.radio.on) {
             this.playOrAdvance();

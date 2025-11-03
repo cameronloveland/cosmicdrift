@@ -53,11 +53,14 @@ export class ShipSpeedStars {
         this.imesh.geometry.computeBoundingBox();
     }
 
-    update(dt: number) {
+    update(dt: number, timeDilationProgress: number = 0) {
         // Only visible when boosting, but count scales with speed
         const isBoosting = this.ship.state.boosting;
         this.root.visible = isBoosting;
         this.imesh.visible = isBoosting;
+
+        // Elongate trails when inside blackhole (spacetime warping) - more subtle
+        const trailElongation = 1.0 + timeDilationProgress * 1.5; // Up to 2.5x length (reduced from 4x)
 
         const forward = new THREE.Vector3(0, 0, 1);
         this.ship.root.localToWorld(forward).sub(this.ship.root.position).normalize();
@@ -112,7 +115,7 @@ export class ShipSpeedStars {
             // orient elongated along forward
             const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), forward);
             this.tmpObj.quaternion.copy(q);
-            const len = this.lengthBase * (0.6 + 0.4 * this.velocities[i]) * (0.8 + 0.4 * (mps / 80));
+            const len = this.lengthBase * (0.6 + 0.4 * this.velocities[i]) * (0.8 + 0.4 * (mps / 80)) * trailElongation;
             this.tmpObj.scale.set(1, len, 1);
             this.tmpObj.updateMatrix();
             this.imesh.setMatrixAt(i, this.tmpObj.matrix);

@@ -1,8 +1,12 @@
 import * as THREE from 'three';
+import { BLACKHOLE } from './constants';
 
 export class AccretionDisk {
     public root = new THREE.Group();
     private disk!: THREE.Mesh;
+    private baseInnerRadius = BLACKHOLE.diskInnerRadiusBase;
+    private baseOuterRadius = BLACKHOLE.diskOuterRadiusBase;
+    private currentScale = 1.0;
 
     constructor() {
         this.createDisk();
@@ -40,7 +44,7 @@ export class AccretionDisk {
         alphaGradient.addColorStop(0.85, 'rgba(255, 255, 255, 0.8)'); // Start fading
         alphaGradient.addColorStop(0.95, 'rgba(255, 255, 255, 0.4)'); // More fade
         alphaGradient.addColorStop(1, 'rgba(255, 255, 255, 0)'); // Fully transparent at edge
-        
+
         // Use destination-in to apply alpha mask
         ctx.globalCompositeOperation = 'destination-in';
         ctx.fillStyle = alphaGradient;
@@ -50,8 +54,13 @@ export class AccretionDisk {
         texture.needsUpdate = true;
 
         // Create ring geometry - wider disk: inner radius 600, outer radius 1000
-        const ringGeometry = new THREE.RingGeometry(600, 1000, 128, 1);
-        
+        const ringGeometry = new THREE.RingGeometry(
+            this.baseInnerRadius,
+            this.baseOuterRadius,
+            128,
+            1
+        );
+
         // Create material with enhanced opacity and emissive glow
         const diskMaterial = new THREE.MeshBasicMaterial({
             map: texture,
@@ -64,16 +73,30 @@ export class AccretionDisk {
         });
 
         this.disk = new THREE.Mesh(ringGeometry, diskMaterial);
-        
+
         // Tilt the disk for warped appearance (gravitational lensing effect)
         this.disk.rotation.x = Math.PI / 2 - 0.4; // Tilted ~23 degrees from horizontal
         this.disk.renderOrder = -1; // Render behind black hole core but visible
-        
+
         this.root.add(this.disk);
     }
 
     update(dt: number) {
         // Disk is static - no rotation needed
+    }
+
+    // Set scale for disk growth
+    setScale(scale: number) {
+        if (Math.abs(scale - this.currentScale) < 0.001) return; // Avoid unnecessary updates
+
+        this.currentScale = scale;
+        const innerRadius = this.baseInnerRadius * scale;
+        const outerRadius = this.baseOuterRadius * scale;
+
+        // Recreate geometry with new radius
+        const ringGeometry = new THREE.RingGeometry(innerRadius, outerRadius, 128, 1);
+        this.disk.geometry.dispose();
+        this.disk.geometry = ringGeometry;
     }
 }
 

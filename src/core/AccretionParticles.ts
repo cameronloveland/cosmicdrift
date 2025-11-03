@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { BLACKHOLE } from './constants';
 
 interface ParticleData {
     angle: number;
@@ -12,6 +13,10 @@ export class AccretionParticles {
     public root = new THREE.Group();
     private particles!: THREE.Points;
     private particleData: ParticleData[] = [];
+    private blackHoleRadius = BLACKHOLE.coreRadiusInitial;
+    private baseSpawnRadius = BLACKHOLE.particleSpawnRadiusBase;
+    private baseSpawnRange = BLACKHOLE.particleSpawnRadiusRange;
+    private insideBlackholeProgress = 0; // 0-1 progress for inside effects
 
     constructor() {
         this.createParticles();
@@ -25,7 +30,7 @@ export class AccretionParticles {
         // Initialize particles at various distances and angles
         for (let i = 0; i < particleCount; i++) {
             const angle = Math.random() * Math.PI * 2;
-            const radius = 700 + Math.random() * 300; // Start between 700-1000
+            const radius = this.baseSpawnRadius + Math.random() * this.baseSpawnRange;
             const y = (Math.random() - 0.5) * 200; // Slight vertical spread
 
             positions[i * 3 + 0] = Math.cos(angle) * radius;
@@ -41,7 +46,7 @@ export class AccretionParticles {
                 color.setHex(0x53d7ff); // Cyan
             }
             // Fade based on distance (further = brighter)
-            const brightness = 0.4 + (radius - 700) / 300 * 0.6;
+            const brightness = 0.4 + (radius - this.baseSpawnRadius) / this.baseSpawnRange * 0.6;
             color.multiplyScalar(brightness);
 
             colors[i * 3 + 0] = color.r;
@@ -83,21 +88,32 @@ export class AccretionParticles {
         const positions = this.particles.geometry.attributes.position.array as Float32Array;
         const colors = this.particles.geometry.attributes.color.array as Float32Array;
 
+        // Enhanced effects when inside blackhole
+        const spiralIntensity = 1.0 + this.insideBlackholeProgress * 2.0; // Up to 3x spiral intensity
+        const pullIntensity = 1.0 + this.insideBlackholeProgress * 1.5; // Up to 2.5x pull strength
+        const brightnessBoost = 1.0 + this.insideBlackholeProgress * 1.5; // Up to 2.5x brightness
+
+        // Calculate max spawn radius once
+        const maxSpawnRadius = this.baseSpawnRadius + this.baseSpawnRange;
+
         for (let i = 0; i < this.particleData.length; i++) {
             const particle = this.particleData[i];
 
             // Calculate spiral motion - particles spiral inward while rotating
-            const spiralFactor = 1.0 + (1000 - particle.radius) / 1000 * 0.6; // Moderate spiral near center
+            // Enhanced spiral when inside (vortex effect)
+            const spiralFactor = (1.0 + (maxSpawnRadius - particle.radius) / maxSpawnRadius * 0.6) * spiralIntensity;
             particle.angle += dt * 0.04 * spiralFactor;
 
-            // Radial velocity increases as particle gets closer (gravitational pull) - moderate
-            const pullStrength = Math.pow((1000 - particle.radius) / 300, 1.8) + 0.7; // Reduced pull strength
+            // Radial velocity increases as particle gets closer (gravitational pull)
+            // Enhanced pull when inside blackhole (spacetime warping)
+            const basePull = Math.pow((maxSpawnRadius - particle.radius) / this.baseSpawnRange, 1.8) + 0.7;
+            const pullStrength = basePull * pullIntensity;
             particle.radius -= dt * particle.speed * pullStrength;
 
             // If particle gets too close to black hole, respawn it at outer edge
-            if (particle.radius < 480) {
+            if (particle.radius < this.blackHoleRadius) {
                 particle.angle = Math.random() * Math.PI * 2;
-                particle.radius = 700 + Math.random() * 300;
+                particle.radius = this.baseSpawnRadius + Math.random() * this.baseSpawnRange;
                 particle.speed = 25 + Math.random() * 30;
                 particle.y = (Math.random() - 0.5) * 200;
 
@@ -116,7 +132,9 @@ export class AccretionParticles {
             positions[i * 3 + 2] = Math.sin(particle.angle) * particle.radius;
 
             // Update color brightness based on distance
-            const brightness = Math.max(0.3, Math.min(1.0, (particle.radius - 480) / 400));
+            // Enhanced brightness when inside blackhole
+            const baseBrightness = Math.max(0.3, Math.min(1.0, (particle.radius - this.blackHoleRadius) / (maxSpawnRadius - this.blackHoleRadius)));
+            const brightness = Math.min(1.0, baseBrightness * brightnessBoost);
             colors[i * 3 + 0] = particle.color.r * brightness;
             colors[i * 3 + 1] = particle.color.g * brightness;
             colors[i * 3 + 2] = particle.color.b * brightness;
@@ -125,5 +143,18 @@ export class AccretionParticles {
         this.particles.geometry.attributes.position.needsUpdate = true;
         this.particles.geometry.attributes.color.needsUpdate = true;
     }
-}
 
+    // Update blackhole radius (affects particle respawn threshold)
+    setBlackholeRadius(radius: number) {
+        this.blackHoleRadius = radius;
+        // Update spawn radius to scale with blackhole (keep proportional)
+        const scaleFactor = radius / BLACKHOLE.coreRadiusInitial;
+        this.baseSpawnRadius = BLACKHOLE.particleSpawnRadiusBase * scaleFactor;
+        this.baseSpawnRange = BLACKHOLE.particleSpawnRadiusRange * scaleFactor;
+    }
+
+    // Set inside blackhole progress for enhanced effects
+    setInsideProgress(progress: number) {
+        this.insideBlackholeProgress = progress;
+    }
+}

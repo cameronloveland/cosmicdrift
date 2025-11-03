@@ -22,6 +22,9 @@ export class SpeedometerGauge {
     private focusRefillActive: boolean = false;
     private focusRefillProgress: number = 0;
 
+    // Boost recharge delay state
+    private boostRechargeDelay: number = 0;
+
     constructor(canvasId: string) {
         this.canvas = document.getElementById(canvasId) as HTMLCanvasElement;
         this.ctx = this.canvas.getContext('2d')!;
@@ -68,6 +71,10 @@ export class SpeedometerGauge {
     public setFocusRefill(active: boolean, progress: number) {
         this.focusRefillActive = active;
         this.focusRefillProgress = progress;
+    }
+
+    public setBoostRechargeDelay(delay: number) {
+        this.boostRechargeDelay = delay;
     }
 
     private animate() {
@@ -221,6 +228,11 @@ export class SpeedometerGauge {
             this.drawFocusRefillGlow(radius, lineWidth);
         }
 
+        // Draw pink glow for boost recharge delay (only on boost arc)
+        if (this.boostRechargeDelay > 0 && color === '#53d7ff') {
+            this.drawBoostRechargeGlow(radius, lineWidth);
+        }
+
         // Reset alpha and composite operation
         this.ctx.globalAlpha = 1.0;
         this.ctx.globalCompositeOperation = 'source-over';
@@ -282,6 +294,67 @@ export class SpeedometerGauge {
             this.ctx.lineWidth = lineWidth;
             this.ctx.strokeStyle = pinkColor;
             this.ctx.globalAlpha = 0.8 * glowIntensity * progressIntensity;
+            this.ctx.stroke();
+        }
+
+        this.ctx.restore();
+    }
+
+    private drawBoostRechargeGlow(radius: number, lineWidth: number) {
+        this.ctx.save();
+
+        const arcStart = Math.PI * 0.75;
+        const arcEnd = Math.PI * 2.25;
+        const totalAngle = arcEnd - arcStart;
+        const segmentAngle = totalAngle / this.segments;
+
+        // Calculate how many segments should show the pink glow based on current boost level
+        const glowSegments = Math.ceil(this.boost * this.segments);
+
+        // Pink glow color
+        const pinkColor = '#ff2bd6';
+
+        // Subtle gentle glow, no pulse
+        const glowIntensity = 0.6;
+
+        for (let i = 0; i < glowSegments; i++) {
+            const segmentStartAngle = arcStart + (i * segmentAngle);
+            const segmentEndAngle = segmentStartAngle + segmentAngle * 0.85;
+
+            // Multiple glow layers for gentle pink glow
+            this.ctx.globalCompositeOperation = 'screen';
+
+            // Outer pink glow
+            this.ctx.beginPath();
+            this.ctx.arc(this.centerX, this.centerY, radius, segmentStartAngle, segmentEndAngle);
+            this.ctx.lineWidth = lineWidth + 16;
+            this.ctx.strokeStyle = pinkColor;
+            this.ctx.globalAlpha = 0.08 * glowIntensity;
+            this.ctx.stroke();
+
+            // Middle pink glow
+            this.ctx.beginPath();
+            this.ctx.arc(this.centerX, this.centerY, radius, segmentStartAngle, segmentEndAngle);
+            this.ctx.lineWidth = lineWidth + 10;
+            this.ctx.strokeStyle = pinkColor;
+            this.ctx.globalAlpha = 0.12 * glowIntensity;
+            this.ctx.stroke();
+
+            // Inner pink glow
+            this.ctx.beginPath();
+            this.ctx.arc(this.centerX, this.centerY, radius, segmentStartAngle, segmentEndAngle);
+            this.ctx.lineWidth = lineWidth + 6;
+            this.ctx.strokeStyle = pinkColor;
+            this.ctx.globalAlpha = 0.2 * glowIntensity;
+            this.ctx.stroke();
+
+            // Core pink overlay
+            this.ctx.globalCompositeOperation = 'lighter';
+            this.ctx.beginPath();
+            this.ctx.arc(this.centerX, this.centerY, radius, segmentStartAngle, segmentEndAngle);
+            this.ctx.lineWidth = lineWidth;
+            this.ctx.strokeStyle = pinkColor;
+            this.ctx.globalAlpha = 0.4 * glowIntensity;
             this.ctx.stroke();
         }
 

@@ -97,6 +97,9 @@ export class UI {
         // Update focus refill state
         this.speedometerGauge.setFocusRefill(focusRefillActive, focusRefillProgress);
 
+        // Update boost recharge delay state
+        this.speedometerGauge.setBoostRechargeDelay(boostRechargeDelay);
+
         // Update label visibility
         // Show BOOST label when boost is active
         if (state.boosting) {
