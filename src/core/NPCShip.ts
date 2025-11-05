@@ -1,7 +1,8 @@
 import * as THREE from 'three';
-import { COLORS, PHYSICS, BOOST_PAD, TUNNEL } from './constants';
+import { COLORS, PHYSICS, BOOST_PAD, TUNNEL, CAMERA, NPC } from './constants';
 import { Track } from './Track';
 import type { ShipState, RacePosition } from './types';
+import { ShipRocketTail } from './ShipRocketTail';
 
 export class NPCShip {
     public root = new THREE.Group();
@@ -23,6 +24,10 @@ export class NPCShip {
     private targetLateralOffset = 0;
     private lateralSwayTimer = 0;
     private speedVariation = 0;
+    private preferredLateralOffset = 0;
+    private laneSwayPhase = Math.random() * Math.PI * 2;
+    private laneSwayAmplitude = NPC.laneSwayAmplitude;
+    private laneStickiness = NPC.laneStickiness;
 
     // Stuck detection
     private stuckDetectionTimer = 0;
@@ -51,13 +56,16 @@ export class NPCShip {
     private targetRubberBandingMultiplier = 1.0; // target multiplier (smoothly lerped to)
     private playerPosition = 0;
     private playerLap = 0;
+    private latestPlayerSpeedKmh = 0;
     private raceStartTime = 0; // Track elapsed game time since race started (in seconds)
     private raceStarted = false; // Track if race has started
 
     // Rocket tail effect (like player ship)
-    private rocketTail!: THREE.Group;
-    private rocketTailMaterials: THREE.MeshBasicMaterial[] = [];
-    private rocketTailBaseOpacities: number[] = [];
+    public rocketTail!: ShipRocketTail;
+
+    // Engine glow effect (like player ship)
+    private glowMaterial!: THREE.MeshBasicMaterial;
+    private engineGlow!: THREE.Mesh;
 
     // Speed stars effect (like player ship)
     private speedStars!: THREE.Group;
@@ -93,6 +101,9 @@ export class NPCShip {
             inTunnel: false,
             tunnelCenterBoost: 1.0,
             onBoostPadEntry: false,
+            isDrifting: false,
+            driftDuration: 0,
+            driftLength: 0
         };
 
         // Initialize lap tracking state
@@ -104,44 +115,322 @@ export class NPCShip {
         this.createShipModel();
         this.setupAIBehavior();
 
+        // Establish preferred lane from initial lateralOffset
+        const half = this.track.width * 0.5;
+        const lateralLimit = half * 0.95;
+        this.preferredLateralOffset = THREE.MathUtils.clamp(this.state.lateralOffset, -lateralLimit, lateralLimit);
+
         // Set initial position immediately so NPCs are visible
         this.updateVisualPosition();
+    }
+
+    private addEdgeLines(mesh: THREE.Mesh): void {
+        // Create edge geometry from the mesh geometry
+        const edgesGeometry = new THREE.EdgesGeometry(mesh.geometry);
+        const edgeMaterial = new THREE.LineBasicMaterial({
+            color: 0x000000
+        });
+        const edges = new THREE.LineSegments(edgesGeometry, edgeMaterial);
+        // Add as child of mesh so it inherits all transformations (position, rotation, scale)
+        mesh.add(edges);
+    }
+
+    private createShipHullGeometry(): THREE.BufferGeometry {
+        // Create simple wedge hull - basic triangular prism shape
+        // Same geometry as player ship
+        const vertices: number[] = [];
+        const indices: number[] = [];
+
+        const length = 1.2;
+        const frontWidth = 0.08;   // Small width at front tip (not a pure point)
+        const rearWidth = 0.5;
+        const frontHeight = 0.05;  // Front height (lower - slanted hood)
+        const rearHeight = 0.25;   // Rear height (taller - kept high)
+
+        const frontZ = length * 0.5;
+        const rearZ = -length * 0.5;
+
+        const addVertex = (v: THREE.Vector3): number => {
+            const idx = vertices.length / 3;
+            vertices.push(v.x, v.y, v.z);
+            return idx;
+        };
+
+        // Front face (small width at nose, not a pure point)
+        const frontTopLeft = addVertex(new THREE.Vector3(-frontWidth * 0.5, frontHeight * 0.5, frontZ));
+        const frontTopRight = addVertex(new THREE.Vector3(frontWidth * 0.5, frontHeight * 0.5, frontZ));
+        const frontBottomLeft = addVertex(new THREE.Vector3(-frontWidth * 0.5, -frontHeight * 0.5, frontZ));
+        const frontBottomRight = addVertex(new THREE.Vector3(frontWidth * 0.5, -frontHeight * 0.5, frontZ));
+        const rearTopLeft = addVertex(new THREE.Vector3(-rearWidth * 0.5, rearHeight * 0.5, rearZ));
+        const rearTopRight = addVertex(new THREE.Vector3(rearWidth * 0.5, rearHeight * 0.5, rearZ));
+        const rearBottomLeft = addVertex(new THREE.Vector3(-rearWidth * 0.5, -rearHeight * 0.5, rearZ));
+        const rearBottomRight = addVertex(new THREE.Vector3(rearWidth * 0.5, -rearHeight * 0.5, rearZ));
+
+        // Top face (quadrilateral from front to rear)
+        indices.push(frontTopLeft, frontTopRight, rearTopLeft);
+        indices.push(frontTopRight, rearTopRight, rearTopLeft);
+        // Bottom face (quadrilateral from front to rear)
+        indices.push(frontBottomLeft, rearBottomLeft, frontBottomRight);
+        indices.push(frontBottomRight, rearBottomLeft, rearBottomRight);
+        // Left side (complete)
+        indices.push(frontTopLeft, frontBottomLeft, rearTopLeft);
+        indices.push(frontBottomLeft, rearBottomLeft, rearTopLeft);
+        // Right side (complete)
+        indices.push(frontTopRight, rearTopRight, frontBottomRight);
+        indices.push(frontBottomRight, rearTopRight, rearBottomRight);
+        // Rear face (complete)
+        indices.push(rearTopLeft, rearBottomLeft, rearTopRight);
+        indices.push(rearBottomLeft, rearBottomRight, rearTopRight);
+        // Front face (nose) - flat face with width (not a pure point)
+        indices.push(frontTopLeft, frontBottomLeft, frontTopRight);
+        indices.push(frontBottomLeft, frontBottomRight, frontTopRight);
+
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+        geometry.setIndex(indices);
+        geometry.computeVertexNormals();
+
+        return geometry;
     }
 
     private createShipModel() {
         // Create ship geometry exactly like player ship but with NPC color
         const body = new THREE.Group();
-        const geo = new THREE.ConeGeometry(0.45, 1.2, 16); // Same size as player ship
+
+        // Create custom low-poly hull geometry (sleek wedge/arrowhead shape)
+        const hullGeometry = this.createShipHullGeometry();
+
         const shipMaterial = new THREE.MeshStandardMaterial({
             color: this.color,
             metalness: 0.3,
             roughness: 0.2,
-            emissive: this.color.clone().multiplyScalar(0.8) // Same emissive as player
+            emissive: this.color.clone().multiplyScalar(0.8),
+            transparent: false,
+            opacity: 1.0,
+            side: THREE.DoubleSide
         });
-        const mesh = new THREE.Mesh(geo, shipMaterial);
-        mesh.rotation.x = Math.PI / 2;
-        body.add(mesh);
+        const hullMesh = new THREE.Mesh(hullGeometry, shipMaterial);
+        body.add(hullMesh);
+        this.addEdgeLines(hullMesh);
 
-        // Add glow effect exactly like player ship
-        const glowMaterial = new THREE.MeshBasicMaterial({
-            color: this.color,
+        // Jet wings (swept-back angular wings) - 20% height, lowered on wedge body
+        const wingMaterial = shipMaterial.clone();
+        const wingTop = -0.01;    // Top of wing (lowered on body)
+        const wingBottom = -0.05; // Bottom of wing (lower on body)
+
+        // Left wing - swept back with blunt/square tip (touching center wedge, thin)
+        const leftWingGeo = new THREE.BufferGeometry();
+        const leftWingVerts = new Float32Array([
+            // Root at fuselage (top vertices)
+            -0.15, wingTop, 0,
+            -0.2, wingTop, -0.5,
+            // Wing tip - blunt/square edge
+            -0.7, wingTop - 0.004, -0.35,  // Tip leading edge
+            -0.68, wingTop - 0.004, -0.45, // Tip trailing edge
+            // Root at fuselage (bottom vertices)
+            -0.15, wingBottom, 0,
+            -0.2, wingBottom, -0.5,
+            // Wing tip bottom - blunt/square edge
+            -0.7, wingBottom - 0.004, -0.35,
+            -0.68, wingBottom - 0.004, -0.45
+        ]);
+        leftWingGeo.setAttribute('position', new THREE.BufferAttribute(leftWingVerts, 3));
+        leftWingGeo.setIndex([
+            // Top surface (quad with blunt tip)
+            0, 2, 1,
+            1, 2, 3,
+            // Bottom surface
+            4, 6, 5,
+            5, 6, 7,
+            // Front edge (leading edge)
+            0, 4, 2,
+            2, 4, 6,
+            // Rear edge (trailing edge)
+            1, 5, 3,
+            3, 5, 7,
+            // Outboard edge (blunt tip)
+            2, 6, 3,
+            3, 6, 7,
+            // Root edge
+            0, 4, 1,
+            1, 4, 5
+        ]);
+        leftWingGeo.computeVertexNormals();
+
+        const leftWing = new THREE.Mesh(leftWingGeo, wingMaterial);
+        body.add(leftWing);
+        this.addEdgeLines(leftWing);
+
+        // Right wing - swept back with blunt/square tip (touching center wedge, thin)
+        const rightWingGeo = new THREE.BufferGeometry();
+        const rightWingVerts = new Float32Array([
+            // Root at fuselage (top vertices)
+            0.15, wingTop, 0,
+            0.2, wingTop, -0.5,
+            // Wing tip - blunt/square edge
+            0.7, wingTop - 0.004, -0.35,  // Tip leading edge
+            0.68, wingTop - 0.004, -0.45, // Tip trailing edge
+            // Root at fuselage (bottom vertices)
+            0.15, wingBottom, 0,
+            0.2, wingBottom, -0.5,
+            // Wing tip bottom - blunt/square edge
+            0.7, wingBottom - 0.004, -0.35,
+            0.68, wingBottom - 0.004, -0.45
+        ]);
+        rightWingGeo.setAttribute('position', new THREE.BufferAttribute(rightWingVerts, 3));
+        rightWingGeo.setIndex([
+            // Top surface (quad with blunt tip)
+            0, 1, 2,
+            1, 3, 2,
+            // Bottom surface
+            4, 5, 6,
+            5, 7, 6,
+            // Front edge (leading edge)
+            0, 2, 4,
+            2, 6, 4,
+            // Rear edge (trailing edge)
+            1, 3, 5,
+            3, 7, 5,
+            // Outboard edge (blunt tip)
+            2, 3, 6,
+            3, 7, 6,
+            // Root edge
+            0, 1, 4,
+            1, 5, 4
+        ]);
+        rightWingGeo.computeVertexNormals();
+
+        const rightWing = new THREE.Mesh(rightWingGeo, wingMaterial);
+        body.add(rightWing);
+        this.addEdgeLines(rightWing);
+
+        // Tail fins (vertical stabilizers) - triangular shape, wider at bottom, tapering to top
+        const tailFinMaterial = shipMaterial.clone();
+
+        // Left tail fin - swept-back design like modern jet aircraft
+        const leftTailFinGeo = new THREE.BufferGeometry();
+        const leftTailFinVerts = new Float32Array([
+            -0.2, 0.05, -0.35,   // Bottom front outer (more forward)
+            -0.18, 0.05, -0.75,  // Bottom rear outer (more backward)
+            -0.12, 0.05, -0.35,  // Bottom front inner (more forward)
+            -0.1, 0.05, -0.75,   // Bottom rear inner (more backward)
+            -0.28, 0.25, -0.55,  // Top front point (swept back from bottom front)
+            -0.26, 0.25, -0.90   // Top rear point (slightly further back than bottom rear)
+        ]);
+        leftTailFinGeo.setAttribute('position', new THREE.BufferAttribute(leftTailFinVerts, 3));
+        leftTailFinGeo.setIndex([
+            0, 1, 4,
+            1, 5, 4,
+            2, 4, 3,
+            3, 4, 5,
+            0, 2, 1,
+            1, 2, 3,
+            0, 2, 4,
+            1, 5, 3,
+            // Top edge is formed by outer/inner faces connecting the two top points (4, 5)
+            0, 1, 2
+        ]);
+        leftTailFinGeo.computeVertexNormals();
+
+        const leftTailFin = new THREE.Mesh(leftTailFinGeo, tailFinMaterial);
+        leftTailFin.rotation.z = -0.15;
+        body.add(leftTailFin);
+        this.addEdgeLines(leftTailFin);
+
+        // Right tail fin - swept-back design like modern jet aircraft
+        const rightTailFinGeo = new THREE.BufferGeometry();
+        const rightTailFinVerts = new Float32Array([
+            0.2, 0.05, -0.35,   // Bottom front outer (more forward)
+            0.18, 0.05, -0.75,  // Bottom rear outer (more backward)
+            0.12, 0.05, -0.35,  // Bottom front inner (more forward)
+            0.1, 0.05, -0.75,   // Bottom rear inner (more backward)
+            0.28, 0.25, -0.55,  // Top front point (swept back from bottom front)
+            0.26, 0.25, -0.90   // Top rear point (slightly further back than bottom rear)
+        ]);
+        rightTailFinGeo.setAttribute('position', new THREE.BufferAttribute(rightTailFinVerts, 3));
+        rightTailFinGeo.setIndex([
+            // Outer face (quad - has top edge length)
+            0, 4, 1,
+            1, 4, 5,
+            // Inner face (quad)
+            2, 3, 4,
+            3, 5, 4,
+            // Bottom edge (quad)
+            0, 1, 2,
+            1, 3, 2,
+            // Front edge (triangle)
+            0, 4, 2,
+            // Rear edge (triangle)
+            1, 3, 5,
+            // Top edge is formed by outer/inner faces connecting the two top points (4, 5)
+            // Right edge (triangles)
+            0, 2, 1
+        ]);
+        rightTailFinGeo.computeVertexNormals();
+
+        const rightTailFin = new THREE.Mesh(rightTailFinGeo, tailFinMaterial);
+        rightTailFin.rotation.z = 0.15;
+        body.add(rightTailFin);
+        this.addEdgeLines(rightTailFin);
+
+        // Rocket booster on the back (smaller) - using ship base color but slightly darker
+        const boosterColor = this.color.clone().multiplyScalar(0.4); // Darker version of ship color
+        const boosterMaterial = new THREE.MeshStandardMaterial({
+            color: boosterColor,
+            metalness: 0.8,
+            roughness: 0.2,
+            emissive: boosterColor.clone().multiplyScalar(0.3)
+        });
+
+        const boosterBody = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.1, 0.12, 0.2, 12),
+            boosterMaterial
+        );
+        boosterBody.rotation.x = Math.PI / 2;
+        boosterBody.position.set(0, 0, -0.65);
+        body.add(boosterBody);
+        this.addEdgeLines(boosterBody);
+
+        const boosterNozzle = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.15, 0.1, 0.1, 12),
+            boosterMaterial
+        );
+        boosterNozzle.rotation.x = Math.PI / 2;
+        boosterNozzle.position.set(0, 0, -0.72);
+        body.add(boosterNozzle);
+        this.addEdgeLines(boosterNozzle);
+
+        // Engine glow effect (from rocket booster) - glowing blue
+        this.glowMaterial = new THREE.MeshBasicMaterial({
+            color: new THREE.Color(0.2, 0.6, 1.0), // Bright blue
             transparent: true,
-            opacity: 0.9,
+            opacity: 0.85,
             blending: THREE.AdditiveBlending,
             depthWrite: false,
             toneMapped: false
         });
-        const glow = new THREE.Mesh(new THREE.SphereGeometry(0.25, 16, 16), glowMaterial); // Same size as player
-        glow.position.set(0, -0.15, -0.3);
-        body.add(glow);
+
+        // Create rocket booster flame - simple blue cone
+        this.engineGlow = new THREE.Mesh(
+            new THREE.ConeGeometry(0.12, 0.3, 16),
+            this.glowMaterial
+        );
+        this.engineGlow.position.set(0, 0, -0.9); // Start at nozzle
+        this.engineGlow.rotation.x = -Math.PI / 2; // Point backward
+        body.add(this.engineGlow);
 
         this.root.add(body);
 
         // Create rocket tail boost effect (initially hidden) - exactly like player
-        this.rocketTail = new THREE.Group();
-        this.createRocketTail();
-        this.root.add(this.rocketTail);
-        this.rocketTail.visible = false;
+        // Position at jet engine nozzle opening (z=-0.72) so tail starts right at the nozzle
+        const nozzleRadius = 0.15;
+        const baseClipOffset = -nozzleRadius * 0.15; // Small backward offset to clip base
+        this.rocketTail = new ShipRocketTail(
+            this,
+            new THREE.Vector3(0, 0, -0.72),
+            baseClipOffset
+        );
+        this.root.add(this.rocketTail.root);
 
         // Create speed stars effect (initially hidden) - like player
         this.speedStars = new THREE.Group();
@@ -149,59 +438,12 @@ export class NPCShip {
         this.root.add(this.speedStars);
         this.speedStars.visible = false;
 
+        // Double the ship size
+        this.root.scale.set(3, 3, 3);
+
         // Ship boost effect is handled externally by ShipBoost class (same as player)
     }
 
-    private createRocketTail() {
-        // Create a glowing rocket tail effect with multiple cone segments (exactly like player)
-        const particleCount = BOOST_PAD.tailParticleCount;
-        const tailLength = BOOST_PAD.tailLength;
-
-        for (let i = 0; i < particleCount; i++) {
-            const progress = i / particleCount;
-            const size = 0.4 * (1 - progress); // taper from wide to narrow
-            const length = tailLength / particleCount;
-
-            // Create cone geometry for each particle
-            const geometry = new THREE.ConeGeometry(size, length, 8);
-            const baseOpacity = 0.8 * (1 - progress * 0.5); // fade toward the back
-            const material = new THREE.MeshBasicMaterial({
-                color: new THREE.Color().lerpColors(BOOST_PAD.colorStart, BOOST_PAD.colorEnd, progress),
-                transparent: true,
-                opacity: baseOpacity,
-                blending: THREE.AdditiveBlending,
-                depthWrite: false,
-                toneMapped: false
-            });
-
-            const cone = new THREE.Mesh(geometry, material);
-            // Position along the tail, pointing backward
-            cone.position.set(0, 0, -(progress * tailLength + length * 0.5));
-            cone.rotation.x = Math.PI * 0.5; // point backward
-
-            this.rocketTail.add(cone);
-            this.rocketTailMaterials.push(material);
-            this.rocketTailBaseOpacities.push(baseOpacity);
-        }
-
-        // Add central glow core
-        const coreGeometry = new THREE.CylinderGeometry(0.15, 0.05, tailLength, 8);
-        const coreOpacity = 0.9;
-        const coreMaterial = new THREE.MeshBasicMaterial({
-            color: BOOST_PAD.colorStart,
-            transparent: true,
-            opacity: coreOpacity,
-            blending: THREE.AdditiveBlending,
-            depthWrite: false,
-            toneMapped: false
-        });
-        const core = new THREE.Mesh(coreGeometry, coreMaterial);
-        core.position.set(0, 0, -tailLength * 0.5);
-        core.rotation.x = Math.PI * 0.5;
-        this.rocketTail.add(core);
-        this.rocketTailMaterials.push(coreMaterial);
-        this.rocketTailBaseOpacities.push(coreOpacity);
-    }
 
     private createSpeedStars() {
         // Create speed stars effect (like player ship but with NPC color)
@@ -231,14 +473,21 @@ export class NPCShip {
         // Set up AI behavior parameters based on type
         if (this.aiBehavior === 'aggressive') {
             this.speedVariation = 0.1;
+            this.laneSwayAmplitude = NPC.laneSwayAmplitude * 1.3;
+            this.laneStickiness = Math.max(0.5, NPC.laneStickiness - 0.1);
         } else {
             this.speedVariation = 0.05;
+            this.laneSwayAmplitude = NPC.laneSwayAmplitude * 0.9;
+            this.laneStickiness = Math.min(0.9, NPC.laneStickiness + 0.1);
         }
     }
 
     public update(dt: number, playerPosition: number, playerLap: number, playerSpeed: number, allNPCs: NPCShip[] = []) {
         // Update visual position even during countdown
         this.updateVisualPosition();
+
+        // Store latest player state for speed capping / drift logic
+        this.latestPlayerSpeedKmh = playerSpeed;
 
         // Don't move during countdown
         if (this.countdownMode) {
@@ -274,6 +523,14 @@ export class NPCShip {
         this.updatePhysics(dt);
         this.updatePosition(dt);
 
+        // Simple drift detection: turning (lateralVelocity) + boosting
+        const isTurning = Math.abs(this.lateralVelocity) > 0.2;
+        const isDriftingNow = isTurning && this.isBoosting;
+        this.state.isDrifting = isDriftingNow;
+        if (isDriftingNow) {
+            this.state.driftDuration += dt;
+        }
+
     }
 
     private updateAI(playerPosition: number, playerLap: number, playerSpeed: number) {
@@ -288,18 +545,19 @@ export class NPCShip {
         // Calculate rubber banding multiplier based on distance from player
         this.updateRubberBanding();
 
-        // AI lateral movement - follow track center with slight variation
-        this.lateralSwayTimer += this.aiUpdateInterval;
-        const swayAmount = Math.sin(this.lateralSwayTimer * 0.5) * 0.3; // Gentle sway
-        const trackCenterOffset = (Math.random() - 0.5) * 0.2; // Small random variation
+        // AI lateral movement - bias around a preferred lane with gentle sway and jitter
+        this.lateralSwayTimer += this.aiUpdateInterval * NPC.laneSwaySpeed;
 
-        this.targetLateralOffset = swayAmount + trackCenterOffset;
+        const sway = Math.sin(this.lateralSwayTimer + this.laneSwayPhase) * this.laneSwayAmplitude;
+        const jitter = (Math.random() - 0.5) * NPC.laneJitterRange * (this.aiBehavior === 'aggressive' ? 1.2 : 1.0);
 
-        // Adjust target based on behavior
-        if (this.aiBehavior === 'aggressive') {
-            // More erratic movement
-            this.targetLateralOffset += (Math.random() - 0.5) * 0.4;
-        }
+        // Compute target around preferred lane and clamp to track bounds
+        const half = this.track.width * 0.5;
+        const lateralLimit = half * 0.95;
+        const desired = THREE.MathUtils.clamp(this.preferredLateralOffset + sway + jitter, -lateralLimit, lateralLimit);
+
+        // Stick towards the desired lane-biased target
+        this.targetLateralOffset = THREE.MathUtils.lerp(this.targetLateralOffset, desired, this.laneStickiness);
     }
 
     private updateRubberBanding() {
@@ -433,24 +691,41 @@ export class NPCShip {
         this.state.boosting = this.isBoosting;
 
         // Update rocket tail effect based on boost pad timer (like player ship)
-        const hasBoostPadEffect = this.boostPadTimer > 0;
-        this.rocketTail.visible = hasBoostPadEffect;
-
-        if (this.rocketTail.visible) {
-            // Animate tail intensity based on boost pad timer
-            const tailIntensity = Math.min(1, this.boostPadTimer / BOOST_PAD.boostDuration);
-            const pulseEffect = 0.9 + 0.1 * Math.sin(Date.now() * 0.015); // fast pulse
-
-            for (let i = 0; i < this.rocketTailMaterials.length; i++) {
-                const baseOpacity = this.rocketTailBaseOpacities[i];
-                this.rocketTailMaterials[i].opacity = baseOpacity * tailIntensity * pulseEffect * BOOST_PAD.tailIntensity;
-            }
-        }
+        this.rocketTail.update(dt);
 
         // Update speed stars effect based on boost state
         this.updateSpeedStars(dt);
 
+        // Animate engine glow - realistic jet boost effect
+        this.updateEngineGlow(dt, this.isBoosting);
+
         // Ship boost particle effect is handled externally by ShipBoost class (same as player)
+    }
+
+    private updateEngineGlow(dt: number, isBoosting: boolean) {
+        // Static glow - blue flame effect
+        // Core color (bright blue)
+        const coreColor = new THREE.Color(0.2, 0.6, 1.0);
+        // Brighter blue tint when boosting
+        const boostColor = new THREE.Color(0.4, 0.8, 1.0);
+
+        // Lerp between colors based on boost state - subtle transition
+        const finalColor = coreColor.clone();
+        if (isBoosting) {
+            finalColor.lerp(boostColor, 0.3); // Brighter blue when boosting
+        }
+
+        // Update material color
+        this.glowMaterial.color.copy(finalColor);
+
+        // Constant opacity - static size
+        this.glowMaterial.opacity = 0.85;
+
+        // Static size - no scale animation
+        this.engineGlow.scale.set(1.0, 1.0, 1.0);
+
+        // Always visible
+        this.engineGlow.visible = true;
     }
 
     private shouldUseBoost(): boolean {
@@ -621,6 +896,23 @@ export class NPCShip {
         // Target speed calculation with rubber banding and individual variation
         let targetSpeed = baseSpeed * this.speedMultiplier * boostMultiplier * tunnelMultiplier * boostPadMultiplier * rubberBanding * speedVariationFactor;
 
+        // When ahead of player, cap speed to ~92% of player to avoid runaway
+        // Recompute ahead/behind based on stored player state
+        const ourPosition = this.getTrackPosition();
+        const lapDiff = this.state.lapCurrent - this.playerLap;
+        let isAhead = false;
+        if (lapDiff > 0) {
+            isAhead = true;
+        } else if (lapDiff === 0) {
+            let trackDistance = ourPosition - this.playerPosition;
+            if (Math.abs(trackDistance) > 0.5) trackDistance = trackDistance > 0 ? trackDistance - 1 : trackDistance + 1;
+            isAhead = trackDistance > 0;
+        }
+        if (isAhead && this.latestPlayerSpeedKmh > 1) {
+            const cap = this.latestPlayerSpeedKmh * 0.92;
+            targetSpeed = Math.min(targetSpeed, cap);
+        }
+
         // Ensure minimum speed to prevent NPCs from getting completely stuck
         // Minimum is 50% of base speed (allows rubber banding to slow them when ahead, but not stop them)
         const minSpeed = PHYSICS.baseSpeed * 0.5;
@@ -776,9 +1068,17 @@ export class NPCShip {
             const x = new THREE.Vector3().crossVectors(up, z).normalize();
             const y = new THREE.Vector3().crossVectors(z, x).normalize();
             m.makeBasis(x, y, z);
-            const q = new THREE.Quaternion().setFromRotationMatrix(m);
+            const baseQ = new THREE.Quaternion().setFromRotationMatrix(m);
 
-            this.root.quaternion.copy(q);
+            // Apply input-like yaw and bank based on lateral velocity (match player feel)
+            const yawRatio = THREE.MathUtils.clamp(this.lateralVelocity / PHYSICS.lateralAccel, -1, 1);
+            const shipYaw = -yawRatio * CAMERA.shipYawFromInput;
+            const bankAngle = THREE.MathUtils.degToRad(22) * yawRatio;
+            const inputEuler = new THREE.Euler(this.state.pitch || 0, shipYaw, -bankAngle, 'YXZ');
+            const inputQ = new THREE.Quaternion().setFromEuler(inputEuler);
+
+            baseQ.multiply(inputQ);
+            this.root.quaternion.copy(baseQ);
         } catch (error) {
             console.warn(`NPC ${this.racerId} visual position update failed:`, error);
         }
@@ -798,6 +1098,16 @@ export class NPCShip {
 
     private getTrackPosition(): number {
         return this.state.t;
+    }
+
+    public getBoostPadTimer(): number {
+        return this.boostPadTimer;
+    }
+
+    public getNow(): number {
+        // Convert Date.now() (milliseconds) to seconds to match Ship's now property
+        // This ensures the pulse animation matches Ship's pattern
+        return Date.now() * 0.001;
     }
 
     public getPosition(): RacePosition {
@@ -880,7 +1190,7 @@ export class NPCShip {
         this.raceStarted = false;
 
         // Hide all boost effects
-        this.rocketTail.visible = false;
+        this.rocketTail.root.visible = false;
         this.speedStars.visible = false;
     }
 

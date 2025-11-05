@@ -105,9 +105,9 @@ export class Environment {
         this.eventHorizonGlow = new THREE.Mesh(horizonGeometry, horizonMaterial);
         this.blackHole.add(this.eventHorizonGlow);
 
-        // 3. Accretion particles
-        this.accretionParticles = new AccretionParticles();
-        this.blackHole.add(this.accretionParticles.root);
+        // 3. Accretion particles (temporarily disabled)
+        // this.accretionParticles = new AccretionParticles();
+        // this.blackHole.add(this.accretionParticles.root);
 
         // 5. Add rotating point lights around vortex
         this.addVortexLights();
@@ -166,8 +166,8 @@ export class Environment {
         const horizonScale = eventHorizonRadius / (BLACKHOLE.coreRadiusInitial + BLACKHOLE.eventHorizonOffset);
         this.eventHorizonGlow.scale.setScalar(horizonScale);
 
-        // Update particle system
-        this.accretionParticles.setBlackholeRadius(this.currentCoreRadius);
+        // Update particle system (temporarily disabled)
+        // this.accretionParticles.setBlackholeRadius(this.currentCoreRadius);
 
         // Update vortex lights radius
         const lightRadius = 600 * (1.0 + growthProgress * 4.0); // Lights move out as blackhole grows
@@ -215,9 +215,10 @@ export class Environment {
 
     // Set inside blackhole progress for enhanced particle effects
     public setInsideBlackholeProgress(progress: number) {
-        if (this.accretionParticles) {
-            this.accretionParticles.setInsideProgress(progress);
-        }
+        // Temporarily disabled
+        // if (this.accretionParticles) {
+        //     this.accretionParticles.setInsideProgress(progress);
+        // }
     }
 
     // Set fade progress for blackhole disappearance (0 = visible, 1 = invisible)
@@ -241,26 +242,26 @@ export class Environment {
             this.eventHorizonGlow.material.opacity = 0.05 * fade;
         }
 
-        // Fade out accretion particles
-        if (this.accretionParticles && this.accretionParticles.root) {
-            this.accretionParticles.root.traverse((object) => {
-                if (object instanceof THREE.Points) {
-                    if (object.material instanceof THREE.PointsMaterial) {
-                        const originalOpacity = object.userData.originalOpacity ?? 0.9;
-                        object.material.opacity = originalOpacity * fade;
-                    }
-                }
-            });
-            // Store original opacity on first traversal
-            if (this.accretionParticles.root.userData.opacityStored !== true) {
-                this.accretionParticles.root.traverse((object) => {
-                    if (object instanceof THREE.Points && object.material instanceof THREE.PointsMaterial) {
-                        object.userData.originalOpacity = object.material.opacity;
-                    }
-                });
-                this.accretionParticles.root.userData.opacityStored = true;
-            }
-        }
+        // Fade out accretion particles (temporarily disabled)
+        // if (this.accretionParticles && this.accretionParticles.root) {
+        //     this.accretionParticles.root.traverse((object) => {
+        //         if (object instanceof THREE.Points) {
+        //             if (object.material instanceof THREE.PointsMaterial) {
+        //                 const originalOpacity = object.userData.originalOpacity ?? 0.9;
+        //                 object.material.opacity = originalOpacity * fade;
+        //             }
+        //         }
+        //     });
+        //     // Store original opacity on first traversal
+        //     if (this.accretionParticles.root.userData.opacityStored !== true) {
+        //         this.accretionParticles.root.traverse((object) => {
+        //             if (object instanceof THREE.Points && object.material instanceof THREE.PointsMaterial) {
+        //                 object.userData.originalOpacity = object.material.opacity;
+        //             }
+        //         });
+        //         this.accretionParticles.root.userData.opacityStored = true;
+        //     }
+        // }
 
         // Fade out vortex lights
         this.diskLights.forEach((light) => {
@@ -292,19 +293,19 @@ export class Environment {
         if (!this.blackHole || !this.blackHole.parent || this.blackholeRemoved) return;
         this.blackholeRemoved = true;
 
-        // Stop particle updates
-        if (this.accretionParticles) {
-            this.accretionParticles.root.traverse((object) => {
-                if (object instanceof THREE.Points) {
-                    if (object.geometry) {
-                        object.geometry.dispose();
-                    }
-                    if (object.material instanceof THREE.Material) {
-                        object.material.dispose();
-                    }
-                }
-            });
-        }
+        // Stop particle updates (temporarily disabled)
+        // if (this.accretionParticles) {
+        //     this.accretionParticles.root.traverse((object) => {
+        //         if (object instanceof THREE.Points) {
+        //             if (object.geometry) {
+        //                 object.geometry.dispose();
+        //             }
+        //             if (object.material instanceof THREE.Material) {
+        //                 object.material.dispose();
+        //             }
+        //         }
+        //     });
+        // }
 
         // Dispose of geometries and materials
         this.blackHole.traverse((object) => {
@@ -468,10 +469,10 @@ export class Environment {
 
         this.stars.rotation.z += dt * 0.005;
 
-        // Update accretion particles (only if blackhole still exists)
-        if (!this.blackholeRemoved && this.accretionParticles) {
-            this.accretionParticles.update(dt);
-        }
+        // Update accretion particles (temporarily disabled)
+        // if (!this.blackholeRemoved && this.accretionParticles) {
+        //     this.accretionParticles.update(dt);
+        // }
     }
 
     // Allow the game to expand starfield to enclose the track fully

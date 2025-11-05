@@ -1,6 +1,7 @@
 import * as THREE from 'three';
-import { CAMERA, COLORS, LAPS_TOTAL, PHYSICS, TUNNEL, BOOST_PAD, FOCUS_REFILL } from './constants';
+import { CAMERA, COLORS, LAPS_TOTAL, PHYSICS, TUNNEL, BOOST_PAD, FOCUS_REFILL, DRIFT } from './constants';
 import { Track } from './Track';
+import { ShipRocketTail } from './ShipRocketTail';
 
 function kmhToMps(kmh: number) { return kmh / 3.6; }
 
@@ -21,6 +22,9 @@ export class Ship {
         lastLapTime: 0,
         lapTimes: [] as number[],
         onBoostPadEntry: false, // true when just entered a boost pad (resets after check)
+        isDrifting: false, // true when drifting (turning + boosting)
+        driftDuration: 0, // accumulated drift time in seconds
+        driftLength: 0, // accumulated drift distance in meters
     };
 
     private track: Track;
@@ -30,6 +34,7 @@ export class Ship {
     private velocitySide = 0;
     private velocityPitch = 0;
     private boostTimer = 0; // visual intensity for camera/shake
+    private wasDrifting = false; // track previous frame's drift state
     private boostEnergy = 1; // 0..1 manual boost resource
     private boostRechargeDelay = 0; // countdown timer for recharge delay (0 = can recharge)
     private boostKeyWasPressed = false; // track previous frame's boost key state to detect release
@@ -67,9 +72,8 @@ export class Ship {
 
     private shipMaterial!: THREE.MeshStandardMaterial;
     private glowMaterial!: THREE.MeshBasicMaterial;
-    private rocketTail!: THREE.Group;
-    private rocketTailMaterials: THREE.MeshBasicMaterial[] = [];
-    private rocketTailBaseOpacities: number[] = [];
+    private engineGlow!: THREE.Mesh;
+    public rocketTail!: ShipRocketTail;
 
     private tmp = {
         pos: new THREE.Vector3(),
@@ -81,42 +85,373 @@ export class Ship {
         forward: new THREE.Vector3()
     };
 
+    private addEdgeLines(mesh: THREE.Mesh): void {
+        // Create edge geometry from the mesh geometry
+        const edgesGeometry = new THREE.EdgesGeometry(mesh.geometry);
+        const edgeMaterial = new THREE.LineBasicMaterial({
+            color: 0x000000
+        });
+        const edges = new THREE.LineSegments(edgesGeometry, edgeMaterial);
+        // Add as child of mesh so it inherits all transformations (position, rotation, scale)
+        mesh.add(edges);
+    }
+
+    private createShipHullGeometry(): THREE.BufferGeometry {
+        // Create simple wedge hull - basic triangular prism shape
+        // Points defined in local space (ship faces forward along +Z)
+
+        const vertices: number[] = [];
+        const indices: number[] = [];
+
+        // Simple wedge dimensions
+        const length = 1.2;        // Ship length
+        const frontWidth = 0.08;   // Small width at front tip (not a pure point)
+        const rearWidth = 0.5;     // Wider rear
+        const frontHeight = 0.05;  // Front height (lower - slanted hood)
+        const rearHeight = 0.25;   // Rear height (taller - kept high)
+
+        const frontZ = length * 0.5;
+        const rearZ = -length * 0.5;
+
+        // Helper to add vertex and return index
+        const addVertex = (v: THREE.Vector3): number => {
+            const idx = vertices.length / 3;
+            vertices.push(v.x, v.y, v.z);
+            return idx;
+        };
+
+        // Front face (small width at nose, not a pure point - lower slanted hood effect)
+        const frontTopLeft = addVertex(new THREE.Vector3(-frontWidth * 0.5, frontHeight * 0.5, frontZ));
+        const frontTopRight = addVertex(new THREE.Vector3(frontWidth * 0.5, frontHeight * 0.5, frontZ));
+        const frontBottomLeft = addVertex(new THREE.Vector3(-frontWidth * 0.5, -frontHeight * 0.5, frontZ));
+        const frontBottomRight = addVertex(new THREE.Vector3(frontWidth * 0.5, -frontHeight * 0.5, frontZ));
+
+        // Rear face (wider, taller - top stays high for slanted hood)
+        const rearTopLeft = addVertex(new THREE.Vector3(-rearWidth * 0.5, rearHeight * 0.5, rearZ));
+        const rearTopRight = addVertex(new THREE.Vector3(rearWidth * 0.5, rearHeight * 0.5, rearZ));
+        const rearBottomLeft = addVertex(new THREE.Vector3(-rearWidth * 0.5, -rearHeight * 0.5, rearZ));
+        const rearBottomRight = addVertex(new THREE.Vector3(rearWidth * 0.5, -rearHeight * 0.5, rearZ));
+
+        // Build wedge with front face (not a pure point) - all sides properly enclosed
+        // Top face (quadrilateral from front to rear)
+        indices.push(frontTopLeft, frontTopRight, rearTopLeft);
+        indices.push(frontTopRight, rearTopRight, rearTopLeft);
+
+        // Bottom face (quadrilateral from front to rear)
+        indices.push(frontBottomLeft, rearBottomLeft, frontBottomRight);
+        indices.push(frontBottomRight, rearBottomLeft, rearBottomRight);
+
+        // Left side (two triangles to form quadrilateral)
+        indices.push(frontTopLeft, frontBottomLeft, rearTopLeft);
+        indices.push(frontBottomLeft, rearBottomLeft, rearTopLeft);
+
+        // Right side (two triangles to form quadrilateral)
+        indices.push(frontTopRight, rearTopRight, frontBottomRight);
+        indices.push(frontBottomRight, rearTopRight, rearBottomRight);
+
+        // Rear face (two triangles to form quadrilateral)
+        indices.push(rearTopLeft, rearBottomLeft, rearTopRight);
+        indices.push(rearBottomLeft, rearBottomRight, rearTopRight);
+
+        // Front face (nose) - flat face with width (not a pure point)
+        indices.push(frontTopLeft, frontBottomLeft, frontTopRight);
+        indices.push(frontBottomLeft, frontBottomRight, frontTopRight);
+
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+        geometry.setIndex(indices);
+        geometry.computeVertexNormals();
+
+        return geometry;
+    }
+
     constructor(track: Track, camera: THREE.PerspectiveCamera) {
         this.track = track;
         this.camera = camera;
 
-        // single hover-ship mesh that changes color
+        // Simple wedge ship hull
         const body = new THREE.Group();
-        const geo = new THREE.ConeGeometry(0.45, 1.2, 16);
+
+        // Create simple wedge geometry
+        const hullGeometry = this.createShipHullGeometry();
+
         this.shipMaterial = new THREE.MeshStandardMaterial({
             color: COLORS.neonCyan,
             metalness: 0.3,
             roughness: 0.2,
-            emissive: COLORS.neonCyan.clone().multiplyScalar(0.8)
+            emissive: COLORS.neonCyan.clone().multiplyScalar(0.8),
+            transparent: false,
+            opacity: 1.0,
+            side: THREE.DoubleSide
         });
-        const mesh = new THREE.Mesh(geo, this.shipMaterial);
-        mesh.rotation.x = Math.PI / 2;
-        body.add(mesh);
+        const hullMesh = new THREE.Mesh(hullGeometry, this.shipMaterial);
+        body.add(hullMesh);
+        this.addEdgeLines(hullMesh);
 
+        // Jet wings (swept-back angular wings) - 20% height, lowered on wedge body
+        const wingMaterial = this.shipMaterial.clone();
+        const wingTop = -0.01;    // Top of wing (lowered on body)
+        const wingBottom = -0.05; // Bottom of wing (lower on body)
+
+        // Left wing - swept back with blunt/square tip (touching center wedge, thin)
+        const leftWingGeo = new THREE.BufferGeometry();
+        const leftWingVerts = new Float32Array([
+            // Root at fuselage (top vertices)
+            -0.15, wingTop, 0,
+            -0.2, wingTop, -0.5,   // Trailing edge at root
+            // Wing tip - blunt/square edge (two points forming a flat tip)
+            -0.7, wingTop - 0.004, -0.35,  // Tip leading edge (forward point)
+            -0.68, wingTop - 0.004, -0.45, // Tip trailing edge (rear point)
+            // Root at fuselage (bottom vertices)
+            -0.15, wingBottom, 0,
+            -0.2, wingBottom, -0.5,   // Trailing edge at root
+            // Wing tip bottom - blunt/square edge
+            -0.7, wingBottom - 0.004, -0.35,  // Tip leading edge (forward point)
+            -0.68, wingBottom - 0.004, -0.45  // Tip trailing edge (rear point)
+        ]);
+        leftWingGeo.setAttribute('position', new THREE.BufferAttribute(leftWingVerts, 3));
+        leftWingGeo.setIndex([
+            // Top surface (quad with blunt tip)
+            0, 2, 1,
+            1, 2, 3,
+            // Bottom surface
+            4, 6, 5,
+            5, 6, 7,
+            // Front edge (leading edge)
+            0, 4, 2,
+            2, 4, 6,
+            // Rear edge (trailing edge)
+            1, 5, 3,
+            3, 5, 7,
+            // Outboard edge (blunt tip - flat edge perpendicular to wing)
+            2, 6, 3,
+            3, 6, 7,
+            // Root edge (complete, connects to fuselage)
+            0, 4, 1,
+            1, 4, 5
+        ]);
+        leftWingGeo.computeVertexNormals();
+
+        const leftWing = new THREE.Mesh(leftWingGeo, wingMaterial);
+        body.add(leftWing);
+        this.addEdgeLines(leftWing);
+
+        // Right wing - swept back with blunt/square tip (mirrored, touching center wedge, thin)
+        const rightWingGeo = new THREE.BufferGeometry();
+        const rightWingVerts = new Float32Array([
+            // Root at fuselage (top vertices)
+            0.15, wingTop, 0,
+            0.2, wingTop, -0.5,   // Trailing edge at root
+            // Wing tip - blunt/square edge (two points forming a flat tip)
+            0.7, wingTop - 0.004, -0.35,  // Tip leading edge (forward point)
+            0.68, wingTop - 0.004, -0.45, // Tip trailing edge (rear point)
+            // Root at fuselage (bottom vertices)
+            0.15, wingBottom, 0,
+            0.2, wingBottom, -0.5,   // Trailing edge at root
+            // Wing tip bottom - blunt/square edge
+            0.7, wingBottom - 0.004, -0.35,  // Tip leading edge (forward point)
+            0.68, wingBottom - 0.004, -0.45  // Tip trailing edge (rear point)
+        ]);
+        rightWingGeo.setAttribute('position', new THREE.BufferAttribute(rightWingVerts, 3));
+        rightWingGeo.setIndex([
+            // Top surface (quad with blunt tip)
+            0, 1, 2,
+            1, 3, 2,
+            // Bottom surface
+            4, 5, 6,
+            5, 7, 6,
+            // Front edge (leading edge)
+            0, 2, 4,
+            2, 6, 4,
+            // Rear edge (trailing edge)
+            1, 3, 5,
+            3, 7, 5,
+            // Outboard edge (blunt tip - flat edge perpendicular to wing)
+            2, 3, 6,
+            3, 7, 6,
+            // Root edge (complete, connects to fuselage)
+            0, 1, 4,
+            1, 5, 4
+        ]);
+        rightWingGeo.computeVertexNormals();
+
+        const rightWing = new THREE.Mesh(rightWingGeo, wingMaterial);
+        body.add(rightWing);
+        this.addEdgeLines(rightWing);
+
+        // Tail fins (vertical stabilizers) - triangular/trapezoidal shape, wider at bottom, tapering to top
+        const tailFinMaterial = this.shipMaterial.clone();
+
+        // Left tail fin - swept-back design like modern jet aircraft
+        const leftTailFinGeo = new THREE.BufferGeometry();
+        const leftTailFinVerts = new Float32Array([
+            // Bottom vertices (wider base, placed lower, extended front-to-back)
+            -0.2, 0.05, -0.35,   // Bottom front outer (more forward)
+            -0.18, 0.05, -0.75,  // Bottom rear outer (more backward)
+            -0.12, 0.05, -0.35,  // Bottom front inner (more forward)
+            -0.1, 0.05, -0.75,   // Bottom rear inner (more backward)
+            // Top edge - swept back dramatically (leading edge angles back, trailing edge also sweeps back)
+            -0.28, 0.25, -0.55,  // Top front point (swept back from bottom front)
+            -0.26, 0.25, -0.90   // Top rear point (slightly further back than bottom rear)
+        ]);
+        leftTailFinGeo.setAttribute('position', new THREE.BufferAttribute(leftTailFinVerts, 3));
+        leftTailFinGeo.setIndex([
+            // Outer face (quad - has top edge length)
+            0, 1, 4,
+            1, 5, 4,
+            // Inner face (quad)
+            2, 4, 3,
+            3, 4, 5,
+            // Bottom edge (quad)
+            0, 2, 1,
+            1, 2, 3,
+            // Front edge (triangle)
+            0, 2, 4,
+            // Rear edge (triangle)
+            1, 5, 3,
+            // Top edge is formed by outer/inner faces connecting the two top points (4, 5)
+            // Left edge (triangles)
+            0, 1, 2
+        ]);
+        leftTailFinGeo.computeVertexNormals();
+
+        const leftTailFin = new THREE.Mesh(leftTailFinGeo, tailFinMaterial);
+        leftTailFin.rotation.z = -0.15; // Slight outward tilt
+        body.add(leftTailFin);
+        this.addEdgeLines(leftTailFin);
+
+        // Right tail fin - swept-back design like modern jet aircraft
+        const rightTailFinGeo = new THREE.BufferGeometry();
+        const rightTailFinVerts = new Float32Array([
+            0.2, 0.05, -0.35,   // Bottom front outer (more forward)
+            0.18, 0.05, -0.75,  // Bottom rear outer (more backward)
+            0.12, 0.05, -0.35,  // Bottom front inner (more forward)
+            0.1, 0.05, -0.75,   // Bottom rear inner (more backward)
+            0.28, 0.25, -0.55,  // Top front point (swept back from bottom front)
+            0.26, 0.25, -0.90   // Top rear point (slightly further back than bottom rear)
+        ]);
+        rightTailFinGeo.setAttribute('position', new THREE.BufferAttribute(rightTailFinVerts, 3));
+        rightTailFinGeo.setIndex([
+            // Outer face (quad - has top edge length)
+            0, 4, 1,
+            1, 4, 5,
+            // Inner face (quad)
+            2, 3, 4,
+            3, 5, 4,
+            // Bottom edge (quad)
+            0, 1, 2,
+            1, 3, 2,
+            // Front edge (triangle)
+            0, 4, 2,
+            // Rear edge (triangle)
+            1, 3, 5,
+            // Top edge is formed by outer/inner faces connecting the two top points (4, 5)
+            // Right edge (triangles)
+            0, 2, 1
+        ]);
+        rightTailFinGeo.computeVertexNormals();
+
+        const rightTailFin = new THREE.Mesh(rightTailFinGeo, tailFinMaterial);
+        rightTailFin.rotation.z = 0.15;
+        body.add(rightTailFin);
+        this.addEdgeLines(rightTailFin);
+
+        // Rocket booster on the back (smaller) - using ship base color but slightly darker
+        const boosterColor = COLORS.neonCyan.clone().multiplyScalar(0.4); // Darker version of ship color
+        const boosterMaterial = new THREE.MeshStandardMaterial({
+            color: boosterColor,
+            metalness: 0.8,
+            roughness: 0.2,
+            emissive: boosterColor.clone().multiplyScalar(0.3)
+        });
+
+        // Booster body (cylinder - made smaller)
+        const boosterBody = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.1, 0.12, 0.2, 12),
+            boosterMaterial
+        );
+        boosterBody.rotation.x = Math.PI / 2;
+        boosterBody.position.set(0, 0, -0.65);
+        body.add(boosterBody);
+        this.addEdgeLines(boosterBody);
+
+        // Booster nozzle (wider opening - made smaller)
+        const boosterNozzle = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.15, 0.1, 0.1, 12),
+            boosterMaterial
+        );
+        boosterNozzle.rotation.x = Math.PI / 2;
+        boosterNozzle.position.set(0, 0, -0.72);
+        body.add(boosterNozzle);
+        this.addEdgeLines(boosterNozzle);
+
+        // Engine glow effect (from rocket booster) - blue to orange gradient
         this.glowMaterial = new THREE.MeshBasicMaterial({
-            color: COLORS.neonCyan,
+            color: 0xffffff, // White base, will use vertex colors
             transparent: true,
-            opacity: 0.9,
+            opacity: 0.85,
             blending: THREE.AdditiveBlending,
             depthWrite: false,
-            toneMapped: false
+            toneMapped: false,
+            vertexColors: true // Enable vertex colors for gradient
         });
-        const glow = new THREE.Mesh(new THREE.SphereGeometry(0.25, 16, 16), this.glowMaterial);
-        glow.position.set(0, -0.15, -0.3);
-        body.add(glow);
+
+        // Create rocket booster flame with blue-to-orange gradient
+        const coneGeometry = new THREE.ConeGeometry(0.12, 0.3, 16, 1, true);
+
+        // Add vertex colors for blue-to-orange gradient
+        const colors: number[] = [];
+        const positions = coneGeometry.attributes.position.array;
+        const vertexCount = positions.length / 3;
+
+        for (let i = 0; i < vertexCount; i++) {
+            // Y coordinate determines position along cone (0 at base, 0.15 at tip for height 0.3)
+            const yPos = positions[i * 3 + 1];
+            const normalizedY = (yPos + 0.15) / 0.3; // Normalize to 0-1
+            const clampedY = THREE.MathUtils.clamp(normalizedY, 0, 1);
+
+            // Gradient: 30% blue, then blend to vibrant orange at tip
+            const blueColor = new THREE.Color(0.2, 0.6, 1.0); // Bright blue
+            const vibrantOrangeColor = new THREE.Color(1.0, 0.5, 0.0); // Vibrant orange
+            const orangeColor = new THREE.Color(1.0, 0.6, 0.15); // Orange transition
+
+            let gradientColor: THREE.Color;
+            if (clampedY <= 0.3) {
+                // First 30%: pure blue
+                gradientColor = blueColor;
+            } else if (clampedY <= 0.7) {
+                // 30-70%: blue to orange
+                const t = (clampedY - 0.3) / 0.4;
+                gradientColor = blueColor.clone().lerp(orangeColor, t);
+            } else {
+                // 70-100%: orange to vibrant orange at tip
+                const t = (clampedY - 0.7) / 0.3;
+                gradientColor = orangeColor.clone().lerp(vibrantOrangeColor, t);
+            }
+
+            colors.push(gradientColor.r, gradientColor.g, gradientColor.b);
+        }
+
+        coneGeometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+
+        this.engineGlow = new THREE.Mesh(coneGeometry, this.glowMaterial);
+        this.engineGlow.position.set(0, 0, -0.9); // Start at nozzle
+        this.engineGlow.rotation.x = -Math.PI / 2; // Point backward
+        body.add(this.engineGlow);
 
         this.root.add(body);
 
         // Create rocket tail boost effect (initially hidden)
-        this.rocketTail = new THREE.Group();
-        this.createRocketTail();
-        this.root.add(this.rocketTail);
-        this.rocketTail.visible = false;
+        // Position further back at jet engine nozzle opening (z=-0.85) so tail starts right at the nozzle
+        this.rocketTail = new ShipRocketTail(
+            this,
+            new THREE.Vector3(0, 0, -0.85),
+            0 // no baseClipOffset for player ship
+        );
+        this.root.add(this.rocketTail.root);
+
+        // Double the ship size
+        this.root.scale.set(3, 3, 3);
 
         window.addEventListener('keydown', (e) => this.onKey(e, true));
         window.addEventListener('keyup', (e) => this.onKey(e, false));
@@ -260,6 +595,12 @@ export class Ship {
         this.focusRefillActive = false;
         this.focusRefillProgress = 0;
 
+        // Reset drift state
+        this.state.isDrifting = false;
+        this.state.driftDuration = 0;
+        this.state.driftLength = 0;
+        this.wasDrifting = false;
+
         // Clear input
         this.clearInput();
 
@@ -268,56 +609,6 @@ export class Ship {
         this.camera.updateProjectionMatrix();
     }
 
-    private createRocketTail() {
-        // Create a glowing rocket tail effect with multiple cone segments
-        const particleCount = BOOST_PAD.tailParticleCount;
-        const tailLength = BOOST_PAD.tailLength;
-
-        for (let i = 0; i < particleCount; i++) {
-            const progress = i / particleCount;
-            const size = 0.4 * (1 - progress); // taper from wide to narrow
-            const length = tailLength / particleCount;
-
-            // Create cone geometry for each particle
-            const geometry = new THREE.ConeGeometry(size, length, 8);
-            const baseOpacity = 0.8 * (1 - progress * 0.5); // fade toward the back
-            const material = new THREE.MeshBasicMaterial({
-                color: new THREE.Color().lerpColors(BOOST_PAD.colorStart, BOOST_PAD.colorEnd, progress),
-                transparent: true,
-                opacity: baseOpacity,
-                blending: THREE.AdditiveBlending,
-                depthWrite: false,
-                toneMapped: false
-            });
-
-            const cone = new THREE.Mesh(geometry, material);
-            // Position along the tail, pointing backward
-            cone.position.set(0, 0, -(progress * tailLength + length * 0.5));
-            cone.rotation.x = Math.PI * 0.5; // point backward
-
-            this.rocketTail.add(cone);
-            this.rocketTailMaterials.push(material);
-            this.rocketTailBaseOpacities.push(baseOpacity);
-        }
-
-        // Add central glow core
-        const coreGeometry = new THREE.CylinderGeometry(0.15, 0.05, tailLength, 8);
-        const coreOpacity = 0.9;
-        const coreMaterial = new THREE.MeshBasicMaterial({
-            color: BOOST_PAD.colorStart,
-            transparent: true,
-            opacity: coreOpacity,
-            blending: THREE.AdditiveBlending,
-            depthWrite: false,
-            toneMapped: false
-        });
-        const core = new THREE.Mesh(coreGeometry, coreMaterial);
-        core.position.set(0, 0, -tailLength * 0.5);
-        core.rotation.x = Math.PI * 0.5;
-        this.rocketTail.add(core);
-        this.rocketTailMaterials.push(coreMaterial);
-        this.rocketTailBaseOpacities.push(coreOpacity);
-    }
 
     update(dt: number) {
         this.now += dt;
@@ -504,6 +795,12 @@ export class Ship {
         const sideInput = (this.input.right ? 1 : 0) - (this.input.left ? 1 : 0);
         const targetSideVel = sideInput * PHYSICS.lateralAccel;
         this.velocitySide = THREE.MathUtils.damp(this.velocitySide, targetSideVel, PHYSICS.lateralDamping, dt);
+
+        // Force velocitySide to 0 when there's no input and it's very small (prevents drift)
+        if (Math.abs(sideInput) < 0.01 && Math.abs(this.velocitySide) < 0.01) {
+            this.velocitySide = 0;
+        }
+
         const half = this.track.width * 0.5;
         const lateralLimit = half * 0.95;
         this.state.lateralOffset = THREE.MathUtils.clamp(this.state.lateralOffset + this.velocitySide * dt, -lateralLimit, lateralLimit);
@@ -514,6 +811,43 @@ export class Ship {
         const targetPitchVel = pitchInput * PHYSICS.pitchAccel;
         this.velocityPitch = THREE.MathUtils.damp(this.velocityPitch, targetPitchVel, PHYSICS.pitchDamping, dt);
         this.state.pitch = THREE.MathUtils.clamp(this.state.pitch + this.velocityPitch * dt, -PHYSICS.pitchMax, PHYSICS.pitchMax);
+
+        // Explicitly damp pitch back to 0 when there's no input (prevents stuck orientation)
+        if (Math.abs(pitchInput) < 0.01 && Math.abs(this.velocityPitch) < 0.01) {
+            this.state.pitch = THREE.MathUtils.damp(this.state.pitch, 0, PHYSICS.pitchDamping * 1.5, dt);
+            // Clamp very small values to 0 to prevent floating point drift
+            if (Math.abs(this.state.pitch) < 0.001) {
+                this.state.pitch = 0;
+                this.velocityPitch = 0;
+            }
+        }
+
+        // Drift detection: turning (left/right) AND boosting simultaneously
+        // sideInput already defined above in lateral control section
+        const isTurning = Math.abs(sideInput) > 0.01;
+        const isDriftingNow = isTurning && isBoosting;
+
+        // Update drift state
+        if (isDriftingNow && !this.wasDrifting) {
+            // Drift just started
+            this.state.isDrifting = true;
+            this.state.driftDuration = 0;
+            this.state.driftLength = 0;
+        } else if (!isDriftingNow && this.wasDrifting) {
+            // Drift just ended
+            this.state.isDrifting = false;
+        }
+
+        // Accumulate drift duration and length while drifting
+        if (this.state.isDrifting) {
+            this.state.driftDuration += dt;
+            const mps = kmhToMps(this.state.speedKmh);
+            this.state.driftLength += mps * dt;
+        }
+
+        // Update previous frame's drift state
+        this.wasDrifting = isDriftingNow;
+        this.state.isDrifting = isDriftingNow;
 
         // Focus refill logic
         if (this.focusRefillActive) {
@@ -535,10 +869,15 @@ export class Ship {
             }
         } else {
             // Normal flow meter logic (only when not refilling)
-            const fast = this.state.speedKmh >= PHYSICS.highSpeedThreshold;
-            const stable = Math.abs(sideInput) === 0 && Math.abs(pitchInput) === 0;
-            const df = (fast && stable ? PHYSICS.flowFillSpeed : -PHYSICS.flowDrainSpeed) * dt;
-            this.state.flow = THREE.MathUtils.clamp(this.state.flow + df, 0, 1);
+            // Flow only increases when drifting, never drains
+            // When flow is full, user can use it to refill boost (focus refill)
+            if (this.state.isDrifting) {
+                // Only add flow when drifting
+                const driftFlowGain = DRIFT.flowRefillRate * dt;
+                this.state.flow = THREE.MathUtils.clamp(this.state.flow + driftFlowGain, 0, 1);
+            }
+            // Flow does not drain - it stays at current level until drifting adds more
+            // or until focus refill is used (which drains flow to refill boost)
         }
 
         // position and orientation from banked Frenet frame
@@ -563,16 +902,20 @@ export class Ship {
         m.makeBasis(x, y, z);
         const q = new THREE.Quaternion().setFromRotationMatrix(m);
 
-        // Add yaw rotation based on lateral input for Mario Kart-style turning
+        // Apply rotations independently using Euler angles for player input
+        // Standard approach in racing games: base orientation from track, inputs as separate Euler rotations
         const shipYaw = -sideInput * CAMERA.shipYawFromInput;
-        const yawQ = new THREE.Quaternion().setFromAxisAngle(y, shipYaw);
-
-        const pitchQ = new THREE.Quaternion().setFromAxisAngle(x, this.state.pitch);
-        // Bank visually with sideways velocity
         const bankAngle = THREE.MathUtils.degToRad(22) * THREE.MathUtils.clamp(this.velocitySide / PHYSICS.lateralAccel, -1, 1);
-        const bankQ = new THREE.Quaternion().setFromAxisAngle(z, -bankAngle);
 
-        q.multiply(yawQ).multiply(pitchQ).multiply(bankQ);
+        // Create rotation from Euler with order 'YXZ': Y (yaw) first, X (pitch) second, Z (bank) last
+        // Euler(x, y, z, order) where x=pitch, y=yaw, z=bank
+        // 'YXZ' order ensures yaw is applied first so it doesn't affect pitch axis
+        const inputEuler = new THREE.Euler(this.state.pitch, shipYaw, -bankAngle, 'YXZ');
+        const inputQ = new THREE.Quaternion().setFromEuler(inputEuler);
+
+        // Apply input rotation to base quaternion
+        // This adds player controls on top of track-aligned base orientation
+        q.multiply(inputQ);
         this.root.position.copy(pos);
         this.root.quaternion.copy(q);
 
@@ -583,19 +926,36 @@ export class Ship {
         this.updateCamera(dt);
 
         // Update rocket tail effect based on boost pad state only
-        const hasBoostPadEffect = this.boostPadTimer > 0;
-        this.rocketTail.visible = hasBoostPadEffect;
+        this.rocketTail.update(dt);
 
-        if (this.rocketTail.visible) {
-            // Animate tail intensity based on boost pad effect
-            const tailIntensity = Math.min(1, this.boostPadTimer / BOOST_PAD.boostDuration);
-            const pulseEffect = 0.9 + 0.1 * Math.sin(this.now * 15); // fast pulse
+        // Animate engine glow - realistic jet boost effect
+        this.updateEngineGlow(dt, isBoosting);
+    }
 
-            for (let i = 0; i < this.rocketTailMaterials.length; i++) {
-                const baseOpacity = this.rocketTailBaseOpacities[i];
-                this.rocketTailMaterials[i].opacity = baseOpacity * tailIntensity * pulseEffect * BOOST_PAD.tailIntensity;
-            }
+    private updateEngineGlow(dt: number, isBoosting: boolean) {
+        // Static glow - blue flame effect
+        // Core color (bright blue)
+        const coreColor = new THREE.Color(0.2, 0.6, 1.0);
+        // Brighter blue tint when boosting
+        const boostColor = new THREE.Color(0.4, 0.8, 1.0);
+
+        // Lerp between colors based on boost state - subtle transition
+        const finalColor = coreColor.clone();
+        if (isBoosting) {
+            finalColor.lerp(boostColor, 0.3); // Brighter blue when boosting
         }
+
+        // Update material color
+        this.glowMaterial.color.copy(finalColor);
+
+        // Constant opacity - static size
+        this.glowMaterial.opacity = 0.85;
+
+        // Static size - no scale animation
+        this.engineGlow.scale.set(1.0, 1.0, 1.0);
+
+        // Always visible
+        this.engineGlow.visible = true;
     }
 
     public updatePositionAndCamera(dt: number) {
@@ -736,6 +1096,19 @@ export class Ship {
     // Getters for boost recharge delay
     public getBoostRechargeDelay(): number {
         return this.boostRechargeDelay;
+    }
+
+    public getBoostPadTimer(): number {
+        return this.boostPadTimer;
+    }
+
+    public getNow(): number {
+        return this.now;
+    }
+
+    // Expose ship color for color-matched effects
+    public getColor(): THREE.Color {
+        return this.shipMaterial?.color ?? new THREE.Color(0xffffff);
     }
 }
 

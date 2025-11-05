@@ -12,7 +12,7 @@ interface Particle {
 
 type Boostable = { root: Group; state: { boosting: boolean } };
 
-export class ShipBoost {
+export class ShipBoostParticles {
     public root = new THREE.Group();
     private ship: Boostable;
     private particles: Particle[] = [];
@@ -63,11 +63,14 @@ export class ShipBoost {
         const shipDir = new THREE.Vector3(0, 0, 1).applyQuaternion(this.ship.root.quaternion);
         const shipRight = new THREE.Vector3(1, 0, 0).applyQuaternion(this.ship.root.quaternion);
 
-        // Spawn particles behind the ship
+        // Spawn particles from the jet engine nozzle
+        // Jet engine nozzle is at (0, 0, -0.72) in body local space
+        // Ship root is scaled by 3x, so nozzle is at -0.72 * 3 = -2.16 units behind root origin
+        const nozzleOffset = -0.72 * 3; // -2.16 units behind ship root
         const offset = (Math.random() - 0.5) * 0.6; // Spread across ship width
         const spawnPos = shipPos.clone()
             .addScaledVector(shipRight, offset)
-            .addScaledVector(shipDir, -0.5); // Behind ship
+            .addScaledVector(shipDir, nozzleOffset); // Spawn from jet engine nozzle
 
         const particle: Particle = {
             position: spawnPos,

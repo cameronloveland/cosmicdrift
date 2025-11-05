@@ -6,9 +6,10 @@ import { Ship } from './Ship';
 import { Track } from './Track';
 import { UI } from './UI';
 import { Environment } from './Environment';
-import { ShipBoost } from './ShipBoost';
+import { ShipBoostParticles } from './ShipBoostParticles';
 import { ShipSpeedStars } from './ShipSpeedStars';
 import { AudioSystem } from './Audio';
+import { DriftTrail } from './DriftTrail';
 import { WormholeTunnel } from './WormholeTunnel';
 import { NPCShip } from './NPCShip';
 import { RaceManager } from './RaceManager';
@@ -54,7 +55,8 @@ export class Game {
     private track!: Track;
     private ship!: Ship;
     private env!: Environment;
-    private shipBoost!: ShipBoost;
+    private shipBoost!: ShipBoostParticles;
+    private driftTrail!: DriftTrail;
     private speedStars!: ShipSpeedStars;
     private wormholeTunnel!: WormholeTunnel;
     private shootingStars!: ShootingStars;
@@ -62,7 +64,8 @@ export class Game {
     private ui!: UI;
     private audio!: AudioSystem;
     private npcShips: NPCShip[] = [];
-    private npcShipBoosts: ShipBoost[] = [];
+    private npcShipBoosts: ShipBoostParticles[] = [];
+    private npcDriftTrails: DriftTrail[] = [];
     private raceManager!: RaceManager;
     private raceState: RaceState = 'NOT_STARTED';
     private minimapVisible = true; // Start visible by default
@@ -72,14 +75,14 @@ export class Game {
     private controlsViewer: ControlsViewer | null = null;
     // Attract mode
     private menuNpcShips: NPCShip[] = [];
-    private menuNpcBoosts: ShipBoost[] = [];
+    private menuNpcBoosts: ShipBoostParticles[] = [];
     private menuPacerT = 0;
     private menuPacerSpeedKmh = 80; // Relaxed speed for calm menu preview
     private cameraDirector: CameraDirector | null = null;
     private menuWheelBound = false;
     private onMenuWheel = (e: WheelEvent) => {
         if (this.mode !== 'MENU') return;
-        const delta = -Math.sign(e.deltaY) * 0.08; // step per wheel notch
+        const delta = Math.sign(e.deltaY) * 0.08; // step per wheel notch
         this.cameraDirector?.adjustZoom(delta);
     };
 
@@ -118,6 +121,9 @@ export class Game {
         currentTrackIndex: 0
     };
 
+    // Settings
+    private menuAnimationDisabled = false;
+
     constructor(container: HTMLElement) {
         this.container = container;
         this.scene = new THREE.Scene();
@@ -140,6 +146,9 @@ export class Game {
         document.body.appendChild(this.stats.dom);
 
         this.clock = new THREE.Clock();
+
+        // Load settings asynchronously
+        this.loadSettings();
 
         this.setup();
         this.onResize();
@@ -188,8 +197,12 @@ export class Game {
         this.env.setStarfieldRadius(starfieldRadius);
 
         // Manual boost particle effect
-        this.shipBoost = new ShipBoost(this.ship);
+        this.shipBoost = new ShipBoostParticles(this.ship);
         this.scene.add(this.shipBoost.root);
+
+        // Drift trail effect (player color)
+        this.driftTrail = new DriftTrail(this.track, this.ship.getColor());
+        this.scene.add(this.driftTrail.root);
 
         // Speed stars
         this.speedStars = new ShipSpeedStars(this.ship, this.track);
@@ -469,6 +482,35 @@ export class Game {
         });
     }
 
+    private async loadSettings() {
+        // In dev mode, disable animations by default
+        const isDev = import.meta.env.DEV;
+        if (isDev) {
+            this.menuAnimationDisabled = true;
+        }
+
+        try {
+            const response = await fetch('/settings.json');
+            if (response.ok) {
+                const settings = await response.json();
+                // Settings file can override dev mode default
+                if (settings?.menu?.disableStartAnimation !== undefined) {
+                    this.menuAnimationDisabled = settings.menu.disableStartAnimation === true;
+                }
+            }
+        } catch (e) {
+            // If settings file doesn't exist or fails to load, use defaults
+            // (dev mode already set above)
+            if (!isDev) {
+                console.log('Settings file not found or failed to load, using defaults');
+            }
+        }
+    }
+
+    private shouldAnimateMenu(): boolean {
+        return !this.menuAnimationDisabled;
+    }
+
     private onResize() {
         const w = window.innerWidth;
         const h = window.innerHeight;
@@ -543,8 +585,29 @@ export class Game {
             try {
                 this.mainMenu.setMode('pause');
                 this.mainMenu.show();
-                document.getElementById('mainMenu')?.classList.add('enter');
-                document.getElementById('newsFeed')?.classList.add('enter');
+                const menuEl = document.getElementById('mainMenu');
+                const newsEl = document.getElementById('newsFeed');
+                if (this.shouldAnimateMenu()) {
+                    menuEl?.classList.add('enter');
+                    newsEl?.classList.add('enter');
+                } else {
+                    // Show immediately without animation - disable transitions
+                    if (menuEl) {
+                        menuEl.style.transition = 'none';
+                        menuEl.classList.add('enter');
+                        // Re-enable transitions after showing (for future animations)
+                        requestAnimationFrame(() => {
+                            if (menuEl) menuEl.style.transition = '';
+                        });
+                    }
+                    if (newsEl) {
+                        (newsEl as HTMLElement).style.transition = 'none';
+                        newsEl.classList.add('enter');
+                        requestAnimationFrame(() => {
+                            if (newsEl) (newsEl as HTMLElement).style.transition = '';
+                        });
+                    }
+                }
             } catch { }
         } else {
             // Exiting pause: restore camera state
@@ -557,15 +620,34 @@ export class Game {
 
             // Slide out main menu + news feed
             try {
-                document.getElementById('mainMenu')?.classList.remove('enter');
-                document.getElementById('newsFeed')?.classList.remove('enter');
-                // hide after transition to allow slide-out
-                setTimeout(() => {
+                const menuEl = document.getElementById('mainMenu');
+                const newsEl = document.getElementById('newsFeed');
+                if (this.shouldAnimateMenu()) {
+                    menuEl?.classList.remove('enter');
+                    newsEl?.classList.remove('enter');
+                    // hide after transition to allow slide-out
+                    setTimeout(() => {
+                        this.mainMenu.hide();
+                        // Reset menu to main for next time it's shown outside pause
+                        const inRace = this.started && !this.paused;
+                        if (inRace) this.mainMenu.setMode('main');
+                    }, 650);
+                } else {
+                    // Hide immediately without animation
+                    if (menuEl) menuEl.style.transition = 'none';
+                    if (newsEl) (newsEl as HTMLElement).style.transition = 'none';
+                    menuEl?.classList.remove('enter');
+                    newsEl?.classList.remove('enter');
                     this.mainMenu.hide();
                     // Reset menu to main for next time it's shown outside pause
                     const inRace = this.started && !this.paused;
                     if (inRace) this.mainMenu.setMode('main');
-                }, 650);
+                    // Re-enable transitions after hiding
+                    requestAnimationFrame(() => {
+                        if (menuEl) menuEl.style.transition = '';
+                        if (newsEl) (newsEl as HTMLElement).style.transition = '';
+                    });
+                }
             } catch { }
         }
     }
@@ -701,6 +783,9 @@ export class Game {
             this.updateFreeCamera(dt);
             this.ship.update(dt);
             this.shipBoost.update(dt);
+            this.driftTrail.update(dt, this.ship.state);
+            // NPC drift trails in free-fly updates too
+            this.npcShips.forEach((npc, i) => this.npcDriftTrails[i]?.update(dt, npc.state));
             this.speedStars.update(dt);
             this.wormholeTunnel.update(dt);
             this.shootingStars.update(dt);
@@ -748,6 +833,9 @@ export class Game {
             // Visual effects use dilated dt for time dilation effect
             const visualDt = this.getEffectiveDt(dt);
             this.shipBoost.update(visualDt);
+            this.driftTrail.update(visualDt, this.ship.state);
+            // NPC drift trails (visual)
+            this.npcShips.forEach((npc, i) => this.npcDriftTrails[i]?.update(visualDt, npc.state));
             this.speedStars.update(visualDt, this.insideBlackholeProgress);
             this.wormholeTunnel.update(visualDt);
             this.shootingStars.update(visualDt); // Ensure shooting stars continue during race
@@ -1001,12 +1089,28 @@ export class Game {
         try {
             const menuEl = document.getElementById('mainMenu');
             const newsEl = document.getElementById('newsFeed');
-            menuEl?.classList.remove('enter');
-            newsEl?.classList.remove('enter');
-            setTimeout(() => {
+            if (this.shouldAnimateMenu()) {
+                menuEl?.classList.remove('enter');
+                newsEl?.classList.remove('enter');
+                // Hide after transition
+                setTimeout(() => {
+                    this.mainMenu.hide();
+                    if (newsEl) (newsEl as HTMLElement).style.display = 'none';
+                }, 650);
+            } else {
+                // Hide immediately without animation
+                if (menuEl) menuEl.style.transition = 'none';
+                if (newsEl) (newsEl as HTMLElement).style.transition = 'none';
+                menuEl?.classList.remove('enter');
+                newsEl?.classList.remove('enter');
                 this.mainMenu.hide();
                 if (newsEl) (newsEl as HTMLElement).style.display = 'none';
-            }, 650);
+                // Re-enable transitions after hiding
+                requestAnimationFrame(() => {
+                    if (menuEl) menuEl.style.transition = '';
+                    if (newsEl) (newsEl as HTMLElement).style.transition = '';
+                });
+            }
         } catch { /* ignore */ }
         if (this.shipViewer) {
             this.shipViewer.stop();
@@ -1051,8 +1155,17 @@ export class Game {
         this.scene.add(npc3.root);
         this.scene.add(npc4.root);
 
-        this.npcShipBoosts = [new ShipBoost(npc1), new ShipBoost(npc2), new ShipBoost(npc3), new ShipBoost(npc4)];
+        this.npcShipBoosts = [new ShipBoostParticles(npc1), new ShipBoostParticles(npc2), new ShipBoostParticles(npc3), new ShipBoostParticles(npc4)];
         this.npcShipBoosts.forEach(b => this.scene.add(b.root));
+
+        // NPC drift trails color-matched per ship
+        this.npcDriftTrails = [
+            new DriftTrail(this.track, npc1.color),
+            new DriftTrail(this.track, npc2.color),
+            new DriftTrail(this.track, npc3.color),
+            new DriftTrail(this.track, npc4.color)
+        ];
+        this.npcDriftTrails.forEach(t => this.scene.add(t.root));
 
         // Register with race manager
         this.raceManager.addNPC('npc1');
@@ -1131,7 +1244,7 @@ export class Game {
             const n3 = new NPCShip(this.track, 'menu3', COLORS.neonPurple, 'aggressive', 6, 0.25);
             this.menuNpcShips = [n1, n2, n3];
             this.menuNpcShips.forEach(n => { this.scene.add(n.root); n.startRace(); });
-            this.menuNpcBoosts = [new ShipBoost(n1), new ShipBoost(n2), new ShipBoost(n3)];
+            this.menuNpcBoosts = [new ShipBoostParticles(n1), new ShipBoostParticles(n2), new ShipBoostParticles(n3)];
             this.menuNpcBoosts.forEach(b => this.scene.add(b.root));
             this.menuPacerT = -12 / this.track.length;
             // Create camera director

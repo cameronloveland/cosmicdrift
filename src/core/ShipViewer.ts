@@ -1,12 +1,14 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three-stdlib';
-import { COLORS, PHYSICS } from './constants';
+import { EffectComposer, RenderPass, EffectPass, BloomEffect } from 'postprocessing';
+import { COLORS, PHYSICS, POST } from './constants';
 import type { Ship } from './Ship';
 
 export class ShipViewer {
     private mount: HTMLElement;
     private ship: Ship | null = null;
     private renderer: THREE.WebGLRenderer | null = null;
+    private composer: EffectComposer | null = null;
     private scene: THREE.Scene | null = null;
     private camera: THREE.PerspectiveCamera | null = null;
     private controls: OrbitControls | null = null;
@@ -50,14 +52,31 @@ export class ShipViewer {
         renderer.toneMapping = THREE.ACESFilmicToneMapping;
         renderer.outputColorSpace = THREE.SRGBColorSpace;
         renderer.setClearColor(0x050314, 1); // Match scene background
+        // Modern lighting (default) supports emissive materials properly
         this.mount.innerHTML = '';
         this.mount.appendChild(renderer.domElement);
         this.renderer = renderer;
 
-        // Lights + simple rim
-        const hemi = new THREE.HemisphereLight(0x6e5cd6, 0x0a082a, 0.9);
+        // Post-processing: Bloom effect to make emissive glow visible (matching in-game)
+        const composer = new EffectComposer(renderer);
+        const renderPass = new RenderPass(scene, camera);
+        // Use same bloom settings as main game for consistent glow appearance
+        const bloom = new BloomEffect({
+            intensity: POST.bloomStrength,
+            luminanceThreshold: POST.bloomThreshold,
+            luminanceSmoothing: 0.2,
+            radius: POST.bloomRadius
+        });
+        const effectPass = new EffectPass(camera, bloom);
+        composer.addPass(renderPass);
+        composer.addPass(effectPass);
+        this.composer = composer;
+
+        // Lights - dimmed to make emissive glow visible (matching in-game appearance)
+        // Reduced intensity so the ship's emissive properties create the glow effect
+        const hemi = new THREE.HemisphereLight(0x6e5cd6, 0x0a082a, 0.3); // Reduced from 0.9 to 0.3
         scene.add(hemi);
-        const dir = new THREE.DirectionalLight(0xffffff, 0.7);
+        const dir = new THREE.DirectionalLight(0xffffff, 0.25); // Reduced from 0.7 to 0.25
         dir.position.set(5, 6, 4);
         dir.castShadow = false;
         scene.add(dir);
@@ -116,6 +135,10 @@ export class ShipViewer {
             this.camera.aspect = Math.max(1, r.width) / Math.max(1, r.height);
             this.camera.updateProjectionMatrix();
             this.renderer.setSize(r.width, r.height);
+            // Update composer size to match renderer
+            if (this.composer) {
+                this.composer.setSize(r.width, r.height);
+            }
         };
         window.addEventListener('resize', this.onResizeBound);
         // Trigger resize once to correct sizing if viewport was hidden during init
@@ -129,7 +152,11 @@ export class ShipViewer {
         const animate = () => {
             this.rafId = requestAnimationFrame(animate);
             if (this.controls) this.controls.update();
-            if (this.renderer && this.scene && this.camera) {
+            // Use composer (with bloom) instead of direct renderer
+            if (this.composer && this.scene && this.camera) {
+                this.composer.render();
+            } else if (this.renderer && this.scene && this.camera) {
+                // Fallback to direct render if composer not available
                 this.renderer.render(this.scene, this.camera);
             }
         };
@@ -139,6 +166,7 @@ export class ShipViewer {
     stop() {
         if (this.rafId) { cancelAnimationFrame(this.rafId); this.rafId = null; }
         if (this.controls) { this.controls.dispose(); this.controls = null; }
+        if (this.composer) { this.composer.dispose(); this.composer = null; }
         if (this.renderer) { this.renderer.dispose(); this.renderer.domElement.remove(); this.renderer = null; }
         this.scene = null;
         this.camera = null;
@@ -187,15 +215,44 @@ export class ShipViewer {
     }
 
     private isRocketTail(object: THREE.Object3D): boolean {
-        // Rocket tail is a group with many cone geometries
+        // Rocket tail component is a group with 3 overlapping cone meshes (core, middle, outer layers)
         if (object instanceof THREE.Group) {
-            // Check if it has many children that are cone meshes (rocket tail pattern)
-            const coneCount = object.children.filter(child =>
+            const coneMeshes = object.children.filter(child =>
                 child instanceof THREE.Mesh &&
                 child.geometry instanceof THREE.ConeGeometry
-            ).length;
-            // Rocket tail typically has many cone particles
-            return coneCount > 5;
+            );
+
+            // Check for 3 cone meshes (the enhanced rocket tail component)
+            if (coneMeshes.length === 3) {
+                // Check if at least one cone has orange/white flame colors
+                for (const mesh of coneMeshes) {
+                    const meshObj = mesh as THREE.Mesh;
+                    if (meshObj.material instanceof THREE.MeshBasicMaterial) {
+                        const color = meshObj.material.color;
+                        // Check for orange colors (middle/outer layers): (1, 0.55-0.65, 0.1-0.15)
+                        const isOrangeColor = color.r > 0.9 && color.g > 0.5 && color.g < 0.7 && color.b > 0.05 && color.b < 0.2;
+                        // Check for white-hot core: (1, 0.9-1.0, 0.85-1.0)
+                        const isWhiteCore = color.r > 0.95 && color.g > 0.9 && color.b > 0.85;
+                        if (isOrangeColor || isWhiteCore) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            // Legacy check: single cone (old version) or many cone particles
+            if (coneMeshes.length === 1) {
+                const mesh = coneMeshes[0] as THREE.Mesh;
+                if (mesh.material instanceof THREE.MeshBasicMaterial) {
+                    const color = mesh.material.color;
+                    // Boost color is bright orange: (1, 0.55, 0.1)
+                    const isBoostColor = color.r > 0.9 && color.g > 0.5 && color.g < 0.6 && color.b > 0.05 && color.b < 0.15;
+                    if (isBoostColor) {
+                        return true;
+                    }
+                }
+            }
+            // Legacy check: many cone particles (for backward compatibility)
+            return coneMeshes.length > 5;
         }
         return false;
     }
@@ -209,8 +266,14 @@ export class ShipViewer {
             let material: THREE.Material | THREE.Material[];
             if (object.material instanceof THREE.Material) {
                 material = object.material.clone();
+                // Update material to match player ship's neon cyan color (replace glossy skin with game colors)
+                this.updateMaterialToMatchPlayerShip(material);
             } else if (Array.isArray(object.material)) {
-                material = object.material.map(m => m.clone());
+                material = object.material.map(m => {
+                    const cloned = m.clone();
+                    this.updateMaterialToMatchPlayerShip(cloned);
+                    return cloned;
+                });
             } else {
                 material = object.material;
             }
@@ -219,7 +282,25 @@ export class ShipViewer {
             mesh.position.copy(object.position);
             mesh.rotation.copy(object.rotation);
             mesh.scale.copy(object.scale);
+            // Clone children (edge lines, etc.) so they're included in the viewer
+            object.children.forEach(child => {
+                const clonedChild = this.deepCloneObject3D(child);
+                if (clonedChild) {
+                    mesh.add(clonedChild);
+                }
+            });
             return mesh;
+        } else if (object instanceof THREE.LineSegments) {
+            // Clone LineSegments (edge lines) - preserve black color
+            const geometry = object.geometry.clone();
+            const material = object.material instanceof THREE.Material
+                ? object.material.clone()
+                : object.material;
+            const lineSegments = new THREE.LineSegments(geometry, material);
+            lineSegments.position.copy(object.position);
+            lineSegments.rotation.copy(object.rotation);
+            lineSegments.scale.copy(object.scale);
+            return lineSegments;
         } else if (object instanceof THREE.Group) {
             const group = new THREE.Group();
             object.children.forEach(child => {
@@ -235,6 +316,44 @@ export class ShipViewer {
         }
 
         return null;
+    }
+
+    private updateMaterialToMatchPlayerShip(material: THREE.Material): void {
+        // Skip glow materials (engine glow, etc.) - they should remain as-is
+        if (material instanceof THREE.MeshBasicMaterial && material.transparent) {
+            // This is likely a glow/emissive effect - keep it as-is
+            return;
+        }
+
+        // Update MeshStandardMaterial to match player ship's appearance
+        if (material instanceof THREE.MeshStandardMaterial) {
+            // Check if this is the booster material (darker color, higher metalness)
+            // Booster has metalness 0.8 and darker color, ship has metalness 0.3 and neon cyan
+            const isBoosterMaterial = material.metalness > 0.7 && material.roughness < 0.3;
+
+            if (isBoosterMaterial) {
+                // Update booster material (darker version of neon cyan)
+                const boosterColor = COLORS.neonCyan.clone().multiplyScalar(0.4);
+                material.color.copy(boosterColor);
+                material.metalness = 0.8;
+                material.roughness = 0.2;
+                material.emissive.copy(boosterColor.clone().multiplyScalar(0.3));
+            } else {
+                // Apply player ship's neon cyan color and material properties with strong emissive glow
+                material.color.copy(COLORS.neonCyan);
+                material.metalness = 0.3;
+                material.roughness = 0.2;
+                // Strong emissive glow to match in-game appearance
+                material.emissive.copy(COLORS.neonCyan.clone().multiplyScalar(0.8));
+                // Ensure emissive intensity is high for visible glow
+                material.emissiveIntensity = 1.0; // Explicitly set emissive intensity
+            }
+
+            material.transparent = false;
+            material.opacity = 1.0;
+            material.side = THREE.DoubleSide;
+            material.needsUpdate = true;
+        }
     }
 }
 

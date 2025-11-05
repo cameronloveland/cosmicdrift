@@ -20,6 +20,9 @@ export interface ShipState {
     lastLapTime?: number; // seconds for the last completed lap
     lapTimes?: number[]; // array of all lap times
     onBoostPadEntry: boolean; // true when just entered a boost pad (resets after check)
+    isDrifting: boolean; // true when drifting (turning + boosting)
+    driftDuration: number; // accumulated drift time in seconds
+    driftLength: number; // accumulated drift distance in meters
 }
 
 export interface TrackSystem {

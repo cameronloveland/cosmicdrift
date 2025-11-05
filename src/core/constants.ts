@@ -23,9 +23,9 @@ export const CAMERA = {
     lookAheadDistance: 8.0,
     downPitchDeg: 12,
     // Mario Kart-style camera behavior
-    cameraYawDamping: 4.0,  // Heavy damping for subtle camera rotation
+    cameraYawDamping: 6.0,  // Faster follow for snappier feel
     cameraYawScale: 0.25,   // Camera only rotates 25% as much as ship
-    shipYawFromInput: 0.4   // How much ship rotates based on turning (radians)
+    shipYawFromInput: 0.65  // How much ship rotates based on turning (radians)
 };
 
 export const PHYSICS = {
@@ -151,8 +151,8 @@ export const BOOST_PAD = {
 
 // Wormhole tunnel configuration
 export const WORMHOLE = {
-    dotsPerMeter: 8.0, // dot density along tunnel length (increased for more flow)
-    dotsPerRing: 16, // dots around circumference at each position (reduced)
+    dotsPerMeter: 5.0, // dot density along tunnel length
+    dotsPerRing: 12, // dots around circumference at each position
     dotSize: 0.18, // radius of each dot sphere
     radiusMin: 8, // minimum distance from tunnel center axis
     radiusMax: 15, // maximum distance from tunnel center axis (varying depths)
@@ -323,6 +323,37 @@ export const CAMERA_DIRECTOR = {
     trackside: { aheadMeters: 480, side: 10, up: 4, lookBack: 6 },
     cutMinSec: 5,
     cutMaxSec: 9
+};
+
+// Drift system configuration
+export const DRIFT = {
+    flowRefillRate: 0.18, // flow per second while drifting
+    trailColor: new Color(0xff2bd6), // pink/magenta
+    trailFadeTime: 2.0, // seconds for trail segments to fade out
+    trailSegmentLength: 2.0, // meters between trail segments
+    trailMaxSegments: 100, // maximum trail segments
+    trailGlowIntensity: 1.5, // glow intensity multiplier
+    // Ribbon trail (flat on track)
+    ribbonWidthRatio: 0.18, // base width ~ ship width (ratio of track width)
+    ribbonMinWidthFactor: 0.55, // thinnest fraction when turning hard
+    ribbonTurnSpeedForMin: 8.0, // lateral m/s for minimum width
+    ribbonWidthScale: 0.02, // global scale to reduce ribbon to a fine line
+    // Spark particles (pink) emitted along drift ribbon near ship
+    sparkMaxCount: 400,
+    sparkSpawnRate: 140, // particles per second while drifting
+    sparkLifetime: 0.35, // seconds
+    sparkSize: 0.06, // world units
+    sparkUpwardSpeed: 1.6, // base upward velocity (m/s)
+    sparkLateralSpeed: 1.2, // across-track binormal jitter (m/s)
+    sparkForwardSpeed: 0.6 // along-track forward push (m/s)
+};
+
+// NPC lane preference tuning
+export const NPC = {
+    laneSwayAmplitude: 1.2, // meters: gentle side sway around preferred lane
+    laneSwaySpeed: 0.5, // multiplier for sway progression speed
+    laneJitterRange: 0.6, // meters: random variation around preferred lane
+    laneStickiness: 0.7 // how strongly NPCs return toward their preferred lane
 };
 
 // Blackhole growth configuration

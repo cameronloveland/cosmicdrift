@@ -88,6 +88,7 @@ export class UI {
                 speedometerContainer.classList.add('hidden');
             }
         }
+
     }
 
     update(state: ShipState, focusRefillActive: boolean, focusRefillProgress: number, boostRechargeDelay: number = 0) {

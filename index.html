@@ -1623,11 +1623,95 @@
             const menu = document.getElementById('mainMenu');
             const news = document.getElementById('newsFeed');
             const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-            if (prefersReduced) return; // respect user setting
-            requestAnimationFrame(() => {
-                setTimeout(() => menu && menu.classList.add('enter'), 50);
-                setTimeout(() => news && news.classList.add('enter'), 200);
-            });
+
+            // Check if we're in dev mode (more reliable detection)
+            const hostname = window.location.hostname;
+            const port = window.location.port;
+            const isDev = hostname === 'localhost' ||
+                hostname === '127.0.0.1' ||
+                hostname === '[::1]' ||
+                port !== '' ||
+                hostname.includes('.local');
+
+            // In dev mode, disable animations immediately (before any async operations)
+            if (isDev || prefersReduced) {
+                if (menu) {
+                    menu.style.transition = 'none';
+                    menu.classList.add('enter');
+                    // Keep transitions disabled in dev mode
+                    if (!isDev) {
+                        requestAnimationFrame(() => {
+                            if (menu) menu.style.transition = '';
+                        });
+                    }
+                }
+                if (news) {
+                    news.style.transition = 'none';
+                    news.classList.add('enter');
+                    if (!isDev) {
+                        requestAnimationFrame(() => {
+                            if (news) news.style.transition = '';
+                        });
+                    }
+                }
+                // Still check settings file for override, but don't wait for it
+                if (!prefersReduced) {
+                    fetch('/settings.json').then(response => {
+                        if (response.ok) {
+                            return response.json();
+                        }
+                    }).then(settings => {
+                        // If settings explicitly enable animation, re-enable it
+                        if (settings?.menu?.disableStartAnimation === false && isDev) {
+                            if (menu) menu.style.transition = '';
+                            if (news) news.style.transition = '';
+                        }
+                    }).catch(() => {
+                        // Ignore errors, keep dev mode default
+                    });
+                }
+                return;
+            }
+
+            // Production mode: check settings file
+            (async function () {
+                let disableAnimation = false;
+                try {
+                    const response = await fetch('/settings.json');
+                    if (response.ok) {
+                        const settings = await response.json();
+                        disableAnimation = settings?.menu?.disableStartAnimation === true;
+                    }
+                } catch (e) {
+                    // If settings file doesn't exist or fails to load, use default (animate)
+                    console.log('Settings file not found or failed to load, using defaults');
+                }
+
+                // If animation is disabled, show menu immediately without animation
+                if (disableAnimation) {
+                    if (menu) {
+                        menu.style.transition = 'none';
+                        menu.classList.add('enter');
+                        requestAnimationFrame(() => {
+                            if (menu) menu.style.transition = '';
+                        });
+                    }
+                    if (news) {
+                        news.style.transition = 'none';
+                        news.classList.add('enter');
+                        requestAnimationFrame(() => {
+                            if (news) news.style.transition = '';
+                        });
+                    }
+                    return;
+                }
+
+                // Otherwise, animate as normal
+                requestAnimationFrame(() => {
+                    setTimeout(() => menu && menu.classList.add('enter'), 50);
+                    setTimeout(() => news && news.classList.add('enter'), 200);
+                });
+            })();
         })();
     </script>
 
