@@ -353,7 +353,17 @@ export const NPC = {
     laneSwayAmplitude: 1.2, // meters: gentle side sway around preferred lane
     laneSwaySpeed: 0.5, // multiplier for sway progression speed
     laneJitterRange: 0.6, // meters: random variation around preferred lane
-    laneStickiness: 0.7 // how strongly NPCs return toward their preferred lane
+    laneStickiness: 0.7, // how strongly NPCs return toward their preferred lane
+    // Lane change cadence
+    laneChangeIntervalMinSec: 4.5,
+    laneChangeIntervalMaxSec: 9.0,
+    // Drafting (align to target ahead)
+    draftEngageDistanceMeters: 60,
+    draftAlignTolerance: 2.2, // meters lateral
+    // Evasion (avoid pursuer behind)
+    evasiveDistanceMetersBehind: 45,
+    evasiveShiftMeters: 3.0,
+    evasiveCooldownSec: 3.5
 };
 
 // Blackhole growth configuration
@@ -381,6 +391,21 @@ export const BLACKHOLE = {
     // Blackhole consumption and fade
     consumptionFadeDuration: 5.0, // seconds for blackhole and effects to fade away after consuming track
     trackEngulfedCheckInterval: 0.5 // seconds between checks if track is fully engulfed
+};
+
+
+// Drafting (slipstream) configuration
+export const DRAFTING = {
+    minDistance: 3.5, // must be right behind the lead ship
+    maxDistance: 14, // disengage quickly when too far
+    coneDeg: 20, // tighter cone directly behind
+    alignmentMinDot: 0.98, // nearly identical heading required
+    lockTime: 0.25, // seconds to maintain conditions before drafting starts
+    dropoutGrace: 0.1, // faster drop when conditions fail
+    flowRefillRate: 0.20, // focus(flow) per second while drafting (0..1 scale)
+    speedLerp: 6.0, // how quickly we match the lead speed
+    matchMaxDelta: 2.0, // km/h extra above lead to avoid rubber-banding artifacts
+    showCone: false // visual: show forward cone; particles are always enabled
 };
 
 

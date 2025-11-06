@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { Group } from 'three';
-import { BOOST_PAD } from './constants';
+import { BOOST_PAD } from '../constants';
 
 interface RocketTailShip {
     root: Group;

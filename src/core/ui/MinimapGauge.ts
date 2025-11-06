@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import { Track } from './Track';
-import type { ShipState } from './types';
+import { Track } from '../Track';
+import type { ShipState } from '../types';
 
 interface ShipPosition {
     t: number;

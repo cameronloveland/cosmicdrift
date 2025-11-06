@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { STARFIELD_MIN_RADIUS, PLANET_EFFECTS, BLACKHOLE } from './constants';
-import { AccretionParticles } from './AccretionParticles';
+import { AccretionParticles } from './background/AccretionParticles';
 
 export class Environment {
     public root = new THREE.Group();

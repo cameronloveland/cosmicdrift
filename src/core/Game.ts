@@ -1,26 +1,27 @@
 import * as THREE from 'three';
 import Stats from 'stats.js';
 import { EffectComposer, RenderPass, EffectPass, BloomEffect, ChromaticAberrationEffect, VignetteEffect, SMAAEffect } from 'postprocessing';
-import { CAMERA, POST, RENDER, BLACKHOLE } from './constants';
-import { Ship } from './Ship';
+import { CAMERA, POST, RENDER, BLACKHOLE, DRAFTING } from './constants';
+import { Ship } from './ship/Ship';
 import { Track } from './Track';
 import { UI } from './UI';
 import { Environment } from './Environment';
-import { ShipBoostParticles } from './ShipBoostParticles';
-import { ShipSpeedStars } from './ShipSpeedStars';
+import { ShipBoostParticles } from './ship/ShipBoostParticles';
+import { ShipSpeedStars } from './ship/ShipSpeedStars';
 import { AudioSystem } from './Audio';
-import { DriftTrail } from './DriftTrail';
+import { DriftTrail } from './ship/DriftTrail';
 import { WormholeTunnel } from './WormholeTunnel';
 import { NPCShip } from './NPCShip';
 import { RaceManager } from './RaceManager';
-import { ShootingStars } from './ShootingStars';
+import { ShootingStars } from './background/ShootingStars';
 // import { Comets } from './Comets'; // Temporarily disabled
 import { COLORS } from './constants';
+import { DraftingSystem } from './ship/drafting/DraftingSystem';
 import type { RaceState } from './types';
-import { MainMenu } from './MainMenu';
-import { NEWS_ITEMS } from './news';
-import { ShipViewer } from './ShipViewer';
-import { ControlsViewer } from './ControlsViewer';
+import { MainMenu } from './ui/MainMenu';
+import { NEWS_ITEMS } from './ui/news';
+import { ShipViewer } from './ship/ShipViewer';
+import { ControlsViewer } from './ui/ControlsViewer';
 import { CameraDirector } from './CameraDirector';
 
 export class Game {
@@ -124,6 +125,9 @@ export class Game {
     // Settings
     private menuAnimationDisabled = false;
 
+    // Drafting system
+    private drafting!: DraftingSystem;
+
     constructor(container: HTMLElement) {
         this.container = container;
         this.scene = new THREE.Scene();
@@ -203,6 +207,9 @@ export class Game {
         // Drift trail effect (player color)
         this.driftTrail = new DriftTrail(this.track, this.ship.getColor());
         this.scene.add(this.driftTrail.root);
+
+        // Drafting system
+        this.drafting = new DraftingSystem();
 
         // Speed stars
         this.speedStars = new ShipSpeedStars(this.ship, this.track);
@@ -781,7 +788,10 @@ export class Game {
         if (this.freeFlying) {
             // Free fly mode: update both free camera and game state
             this.updateFreeCamera(dt);
+            // Drafting first so Ship can use drafting speed in update
+            this.drafting.update(dt, this.track, this.ship, this.npcShips);
             this.ship.update(dt);
+            this.ui.showDrafting(this.drafting.isActive());
             this.shipBoost.update(dt);
             this.driftTrail.update(dt, this.ship.state);
             // NPC drift trails in free-fly updates too
@@ -828,7 +838,10 @@ export class Game {
             this.track.updateGateFade(currentTime);
 
             // Ship updates use normal dt for responsive controls
+            // Drafting before ship update so target speed can incorporate it
+            this.drafting.update(dt, this.track, this.ship, this.npcShips);
             this.ship.update(dt);
+            this.ui.showDrafting(this.drafting.isActive());
 
             // Visual effects use dilated dt for time dilation effect
             const visualDt = this.getEffectiveDt(dt);
@@ -851,7 +864,7 @@ export class Game {
             // Update NPCs FIRST so their state is current when calculating positions
             // NPCs use normal dt for gameplay consistency
             this.npcShips.forEach(npc => {
-                npc.update(dt, this.ship.state.t, this.ship.state.lapCurrent, this.ship.state.speedKmh, this.npcShips);
+                npc.update(dt, this.ship.state.t, this.ship.state.lapCurrent, this.ship.state.speedKmh, this.npcShips, this.ship.state.lateralOffset);
             });
 
             // Update NPC boost effects (visual, use dilated dt)
@@ -1261,7 +1274,7 @@ export class Game {
         if (this.menuPacerT > 1) this.menuPacerT -= 1;
 
         // Update NPCs
-        this.menuNpcShips.forEach(npc => npc.update(dt, this.menuPacerT, 1, this.menuPacerSpeedKmh, this.menuNpcShips));
+        this.menuNpcShips.forEach(npc => npc.update(dt, this.menuPacerT, 1, this.menuPacerSpeedKmh, this.menuNpcShips, 0));
         this.menuNpcBoosts.forEach(b => b.update(dt));
         // Camera director controls the menu camera
         if (this.cameraDirector) {

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
-import { DRIFT } from './constants';
-import type { ShipState } from './types';
-import type { Track } from './Track';
+import { DRIFT } from '../constants';
+import type { ShipState } from '../types';
+import type { Track } from '../Track';
 
 interface RibbonPoint {
     position: THREE.Vector3;
@@ -26,8 +26,8 @@ export class DriftTrail {
     private posBuffer: Float32Array;
     private colorBuffer: Float32Array;
     private indexBuffer: Uint32Array;
-	private _tmpL = new THREE.Vector3();
-	private _tmpR = new THREE.Vector3();
+    private _tmpL = new THREE.Vector3();
+    private _tmpR = new THREE.Vector3();
     private lastOffset = 0;
 
     // Spark particle system
@@ -146,12 +146,12 @@ export class DriftTrail {
                 const tangent = new THREE.Vector3();
 
 
-				this.track.getPointAtT(t, pos);
-				this.track.getFrenetFrame(t, normal, binormal, tangent);
+                this.track.getPointAtT(t, pos);
+                this.track.getFrenetFrame(t, normal, binormal, tangent);
 
-				// Center ribbon under the ship (apply lateral offset) and lift slightly
-				pos.addScaledVector(binormal, shipState.lateralOffset);
-				pos.addScaledVector(normal, 0.02);
+                // Center ribbon under the ship (apply lateral offset) and lift slightly
+                pos.addScaledVector(binormal, shipState.lateralOffset);
+                pos.addScaledVector(normal, 0.02);
 
                 // Dynamic width based on lateral turning speed
                 const dtSafe = Math.max(1e-4, dt);
@@ -205,15 +205,15 @@ export class DriftTrail {
         const color = this.color.clone();
         const glow = DRIFT.trailGlowIntensity;
 
-		for (let i = 0; i < count; i++) {
+        for (let i = 0; i < count; i++) {
             const p = this.points[i];
             const center = p.position;
             const bin = p.binormal;
             const up = p.normal;
 
-			const w = p.halfWidth;
-			const left = this._tmpL.copy(center).addScaledVector(bin, -w).addScaledVector(up, 0);
-			const right = this._tmpR.copy(center).addScaledVector(bin, w).addScaledVector(up, 0);
+            const w = p.halfWidth;
+            const left = this._tmpL.copy(center).addScaledVector(bin, -w).addScaledVector(up, 0);
+            const right = this._tmpR.copy(center).addScaledVector(bin, w).addScaledVector(up, 0);
 
             const vi = i * 2;
             // left vertex

@@ -1,6 +1,6 @@
 import { ShipState } from './types';
-import { SpeedometerGauge } from './SpeedometerGauge';
-import { MinimapGauge } from './MinimapGauge';
+import { SpeedometerGauge } from './ui/SpeedometerGauge';
+import { MinimapGauge } from './ui/MinimapGauge';
 import { Track } from './Track';
 
 export class UI {
@@ -39,6 +39,7 @@ export class UI {
     private racePositionEl: HTMLElement | null = null;
     private lastLapTimeEl: HTMLElement | null = null;
     private pausedLabelEl: HTMLElement | null = null;
+    private draftingLabelEl: HTMLDivElement | null = null;
 
     constructor() {
         // Initialize speedometer gauge
@@ -65,6 +66,19 @@ export class UI {
         if (!this.lastLapTimeEl) {
             console.warn('lastLapTime element not found in DOM');
         }
+
+        // Create DRAFTING label dynamically (above speedometer)
+        const speedometerContainer = document.querySelector('.speedometer-container');
+        if (speedometerContainer) {
+            const label = document.createElement('div');
+            label.className = 'speedometer-label drafting-label hidden';
+            label.textContent = 'DRAFTING';
+            // Position above BOOST label
+            (label.style as any).top = '-76px';
+            (label.style as any).color = '#53d7ff';
+            speedometerContainer.appendChild(label);
+            this.draftingLabelEl = label as HTMLDivElement;
+        }
     }
 
     private started = false;
@@ -89,6 +103,18 @@ export class UI {
             }
         }
 
+    }
+
+    // Show/hide DRAFTING label
+    showDrafting(active: boolean) {
+        if (!this.draftingLabelEl) return;
+        if (active) {
+            this.draftingLabelEl.classList.remove('hidden');
+            this.draftingLabelEl.classList.add('visible');
+        } else {
+            this.draftingLabelEl.classList.remove('visible');
+            this.draftingLabelEl.classList.add('hidden');
+        }
     }
 
     update(state: ShipState, focusRefillActive: boolean, focusRefillProgress: number, boostRechargeDelay: number = 0) {

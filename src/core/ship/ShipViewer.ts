@@ -1,8 +1,14 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three-stdlib';
 import { EffectComposer, RenderPass, EffectPass, BloomEffect } from 'postprocessing';
-import { COLORS, PHYSICS, POST } from './constants';
+import { COLORS, PHYSICS, POST, BOOST_PAD } from '../constants';
 import type { Ship } from './Ship';
+import { ShipRocketTail } from './ShipRocketTail';
+import { DriftTrail } from './DriftTrail';
+import { DraftingParticles } from './drafting/DraftingParticles';
+import { DraftingVectorLines } from './drafting/DraftingVectorLines';
+import type { ShipState } from '../types';
+import { ShipBoostParticles } from './ShipBoostParticles';
 
 export class ShipViewer {
     private mount: HTMLElement;
@@ -14,6 +20,37 @@ export class ShipViewer {
     private controls: OrbitControls | null = null;
     private rafId: number | null = null;
     private onResizeBound: (() => void) | null = null;
+
+    // UI state and overlay
+    private ui = { boost: false, trackBoost: false, drift: false, draft: false };
+    private controlsEl: HTMLDivElement | null = null;
+
+    // Viewer ship clone and engine glow ref
+    private viewerShip: THREE.Group | null = null;
+    private engineGlowMesh: THREE.Mesh | null = null;
+    private engineGlowMat: THREE.MeshBasicMaterial | null = null;
+
+    // Timekeeping
+    private lastTimeSec: number = 0;
+    private nowSec: number = 0;
+
+    // Track boost (rocket tail)
+    private rocketTail: ShipRocketTail | null = null;
+    private trackBoostTimer: number = 0;
+
+    // Drafting visuals
+    private draftingParticles: DraftingParticles | null = null;
+    private draftingLines: DraftingVectorLines | null = null;
+    private draftProxy: { root: THREE.Group; state: { speedKmh: number } } | null = null;
+
+    // Drifting visuals
+    private driftTrail: DriftTrail | null = null;
+    private miniTrack: { width: number; length: number; getPointAtT: (t: number, pos: THREE.Vector3) => void; getFrenetFrame: (t: number, n: THREE.Vector3, b: THREE.Vector3, tan: THREE.Vector3) => void } | null = null;
+    private driftState: ShipState | null = null;
+
+    // Boost particles
+    private shipBoostParticles: ShipBoostParticles | null = null;
+    private boostProxy: { root: THREE.Group; state: { boosting: boolean } } | null = null;
 
     constructor(mount: HTMLElement, ship: Ship) {
         this.mount = mount;
@@ -110,7 +147,9 @@ export class ShipViewer {
             const shipClone = this.cloneShipGeometry(this.ship);
             if (shipClone.children.length > 0) {
                 scene.add(shipClone);
-                console.log('ShipViewer: Ship cloned successfully with', shipClone.children.length, 'children');
+                this.viewerShip = shipClone;
+                this.locateEngineGlow(shipClone);
+                this.initEffects();
             } else {
                 console.warn('ShipViewer: Ship clone has no children. Original ship root has', this.ship.root.children.length, 'children');
             }
@@ -127,6 +166,9 @@ export class ShipViewer {
         controls.target.set(0, PHYSICS.hoverHeight, 0); // Target where ship is positioned
         controls.update();
         this.controls = controls;
+
+        // Overlay control buttons
+        this.createControlsOverlay();
 
         // Resize handling
         this.onResizeBound = () => {
@@ -149,9 +191,23 @@ export class ShipViewer {
         });
 
         // Animate
+        this.lastTimeSec = performance.now() * 0.001;
         const animate = () => {
             this.rafId = requestAnimationFrame(animate);
+            const tNow = performance.now() * 0.001;
+            let dt = tNow - this.lastTimeSec;
+            if (dt > 0.1) dt = 0.1; // cap to avoid spikes
+            if (dt < 0) dt = 0;
+            this.lastTimeSec = tNow;
+            this.nowSec = tNow;
             if (this.controls) this.controls.update();
+
+            // Effect updates
+            this.updateBoost(dt);
+            this.updateTrackBoost(dt);
+            this.updateDrift(dt);
+            this.updateDrafting(dt);
+
             // Use composer (with bloom) instead of direct renderer
             if (this.composer && this.scene && this.camera) {
                 this.composer.render();
@@ -174,6 +230,241 @@ export class ShipViewer {
     }
 
     dispose() { this.stop(); }
+
+    private createControlsOverlay() {
+        const container = document.createElement('div');
+        container.className = 'shipviewer-controls';
+        (container.style as any).position = 'absolute';
+        (container.style as any).bottom = '64px';
+        (container.style as any).left = '50%';
+        (container.style as any).transform = 'translateX(-50%)';
+        (container.style as any).display = 'flex';
+        (container.style as any).gap = '12px';
+        (container.style as any).zIndex = '5';
+
+        const setActiveButtonStyle = (btn: HTMLButtonElement, active: boolean) => {
+            const s = btn.style as any;
+            if (active) {
+                // Active: blue outline glow (teal) without gradient fill
+                s.background = 'rgba(20, 18, 35, 0.90)';
+                s.color = '#eaf6ff';
+                s.border = '2px solid rgba(83, 215, 255, 0.85)';
+                s.boxShadow = '0 0 18px rgba(83, 215, 255, 0.65), 0 0 26px rgba(83, 215, 255, 0.35)';
+                s.textShadow = '0 0 10px rgba(83, 215, 255, 0.8)';
+                s.transform = 'none';
+            } else {
+                s.background = 'rgba(20, 18, 35, 0.82)';
+                s.color = '#eaf6ff';
+                s.border = '1px solid rgba(255, 255, 255, 0.12)';
+                s.boxShadow = '0 0 0 rgba(0,0,0,0)';
+                s.textShadow = 'none';
+                s.transform = 'none';
+            }
+        };
+
+        const mkBtn = (label: string, handler: () => void) => {
+            const btn = document.createElement('button');
+            btn.textContent = label;
+            btn.className = 'shipviewer-btn';
+            const s = btn.style as any;
+            s.background = 'rgba(20, 18, 35, 0.82)';
+            s.color = '#eaf6ff';
+            s.border = '1px solid rgba(255, 255, 255, 0.12)';
+            s.borderRadius = '999px';
+            s.padding = '12px 22px';
+            s.font = '800 15px Orbitron, system-ui, sans-serif';
+            s.letterSpacing = '2px';
+            s.cursor = 'pointer';
+            s.boxShadow = '0 0 0 rgba(0,0,0,0)';
+            s.textTransform = 'uppercase';
+            btn.onmouseenter = () => {
+                if (!btn.classList.contains('active')) {
+                    (btn.style as any).background = 'rgba(20, 18, 35, 0.9)';
+                }
+            };
+            btn.onmouseleave = () => {
+                if (!btn.classList.contains('active')) {
+                    (btn.style as any).background = 'rgba(20, 18, 35, 0.82)';
+                }
+            };
+            btn.onclick = handler;
+            return btn as HTMLButtonElement;
+        };
+
+        const boostBtn = mkBtn('Boost', () => {
+            this.ui.boost = !this.ui.boost;
+            boostBtn.classList.toggle('active', this.ui.boost);
+            setActiveButtonStyle(boostBtn, this.ui.boost);
+        });
+        const trackBoostBtn = mkBtn('Track Boost', () => {
+            this.ui.trackBoost = !this.ui.trackBoost;
+            trackBoostBtn.classList.toggle('active', this.ui.trackBoost);
+            setActiveButtonStyle(trackBoostBtn, this.ui.trackBoost);
+        });
+        const driftBtn = mkBtn('Drift', () => {
+            this.ui.drift = !this.ui.drift;
+            driftBtn.classList.toggle('active', this.ui.drift);
+            setActiveButtonStyle(driftBtn, this.ui.drift);
+        });
+        const draftBtn = mkBtn('Drafting', () => {
+            this.ui.draft = !this.ui.draft;
+            draftBtn.classList.toggle('active', this.ui.draft);
+            setActiveButtonStyle(draftBtn, this.ui.draft);
+            if (this.draftingParticles) this.draftingParticles.setVisible(this.ui.draft);
+            if (this.draftingLines) this.draftingLines.setVisible(this.ui.draft);
+        });
+
+        container.appendChild(boostBtn);
+        container.appendChild(trackBoostBtn);
+        container.appendChild(driftBtn);
+        container.appendChild(draftBtn);
+
+        const mountStyle = getComputedStyle(this.mount);
+        if (mountStyle.position === 'static') {
+            this.mount.style.position = 'relative';
+        }
+        // Initialize default inactive visual style
+        setActiveButtonStyle(boostBtn, this.ui.boost);
+        setActiveButtonStyle(trackBoostBtn, this.ui.trackBoost);
+        setActiveButtonStyle(driftBtn, this.ui.drift);
+        setActiveButtonStyle(draftBtn, this.ui.draft);
+
+        this.mount.appendChild(container);
+        this.controlsEl = container;
+    }
+
+    private initEffects() {
+        if (!this.viewerShip) return;
+        const rocketProxy = {
+            root: this.viewerShip,
+            getBoostPadTimer: () => this.trackBoostTimer,
+            getNow: () => this.nowSec
+        } as any;
+        this.rocketTail = new ShipRocketTail(rocketProxy, new THREE.Vector3(0, 0, -0.85), 0);
+        this.viewerShip.add(this.rocketTail.root);
+
+        this.draftProxy = { root: this.viewerShip, state: { speedKmh: 200 } };
+        this.draftingParticles = new DraftingParticles(this.draftProxy as any);
+        this.draftingLines = new DraftingVectorLines(this.draftProxy as any, { count: 22, points: 26 });
+        this.viewerShip.add(this.draftingParticles.root);
+        this.viewerShip.add(this.draftingLines.root);
+        this.draftingParticles.setVisible(false);
+        this.draftingLines.setVisible(false);
+
+        // Boost particles (viewer-local)
+        this.boostProxy = { root: this.viewerShip, state: { boosting: false } };
+        this.shipBoostParticles = new ShipBoostParticles(this.boostProxy as any);
+        this.viewerShip.add(this.shipBoostParticles.root);
+
+        const mini = {
+            width: 4,
+            length: 120,
+            getPointAtT: (t: number, pos: THREE.Vector3) => {
+                pos.set(0, PHYSICS.hoverHeight, -t * 120);
+            },
+            getFrenetFrame: (_t: number, normal: THREE.Vector3, binormal: THREE.Vector3, tangent: THREE.Vector3) => {
+                normal.set(0, 1, 0);
+                binormal.set(1, 0, 0);
+                tangent.set(0, 0, 1);
+            }
+        };
+        this.miniTrack = mini;
+        this.driftTrail = new DriftTrail(this.miniTrack as any, COLORS.neonCyan);
+        this.scene?.add(this.driftTrail.root);
+
+        this.driftState = {
+            t: 0,
+            speedKmh: 160,
+            lateralOffset: 0,
+            pitch: 0,
+            flow: 0,
+            boosting: false,
+            lapCurrent: 0,
+            lapTotal: 1,
+            boostLevel: 1,
+            inTunnel: false,
+            tunnelCenterBoost: 1,
+            lastLapTime: 0,
+            lapTimes: [] as number[],
+            onBoostPadEntry: false,
+            isDrifting: false,
+            driftDuration: 0,
+            driftLength: 0
+        } as ShipState;
+    }
+
+    private locateEngineGlow(root: THREE.Object3D) {
+        let foundMesh: THREE.Mesh<THREE.BufferGeometry, THREE.Material | THREE.Material[]> | null = null;
+        root.traverse(obj => {
+            if (foundMesh) return;
+            if (obj instanceof THREE.Mesh) {
+                const mat = obj.material as any;
+                const isBasic = mat instanceof THREE.MeshBasicMaterial;
+                const hasVC = !!(obj.geometry as any)?.attributes?.color;
+                const isCone = obj.geometry instanceof THREE.ConeGeometry;
+                if (isBasic && hasVC && isCone) {
+                    foundMesh = obj as any;
+                    this.engineGlowMesh = obj as any;
+                    this.engineGlowMat = obj.material as THREE.MeshBasicMaterial;
+                    // Hide engine glow in viewer to prevent tiny bright point artifacts
+                    (this.engineGlowMesh as any).visible = false;
+                }
+            }
+        });
+        // engineGlowMesh/Mat set within traverse when found
+    }
+
+    private updateBoost(dt: number) {
+        // Engine glow pulse
+        if (this.engineGlowMesh && this.engineGlowMat) {
+            if (this.ui.boost) {
+                const pulse = 0.85 + Math.sin(this.nowSec * 12.0) * 0.15;
+                this.engineGlowMat.opacity = THREE.MathUtils.clamp(pulse, 0.2, 1.0);
+                const s = 1.0 + 0.05 * Math.sin(this.nowSec * 10.0);
+                this.engineGlowMesh.scale.set(s, s, s);
+            } else {
+                this.engineGlowMat.opacity = 0.85;
+                this.engineGlowMesh.scale.set(1.0, 1.0, 1.0);
+            }
+        }
+
+        // Drive boost particle system
+        if (this.boostProxy && this.shipBoostParticles) {
+            this.boostProxy.state.boosting = !!this.ui.boost;
+            this.shipBoostParticles.update(dt);
+        }
+    }
+
+    private updateTrackBoost(dt: number) {
+        if (!this.rocketTail) return;
+        this.trackBoostTimer = this.ui.trackBoost ? BOOST_PAD.boostDuration : Math.max(0, this.trackBoostTimer - dt);
+        this.rocketTail.update(dt);
+    }
+
+    private updateDrift(dt: number) {
+        if (!this.driftTrail || !this.driftState || !this.miniTrack) return;
+        const active = this.ui.drift;
+        this.driftState.isDrifting = active;
+        this.driftState.lateralOffset = active ? Math.sin(this.nowSec * 0.8) * 0.4 : 0;
+        const mps = this.driftState.speedKmh / 3.6;
+        const L = this.miniTrack.length;
+        this.driftState.t = (this.driftState.t + (mps * dt) / L) % 1;
+        this.driftTrail.update(dt, this.driftState);
+    }
+
+    private updateDrafting(dt: number) {
+        if (!this.draftingParticles || !this.draftingLines || !this.draftProxy) return;
+        if (this.ui.draft) {
+            this.draftingParticles.setVisible(true);
+            this.draftingLines.setVisible(true);
+            this.draftProxy.state.speedKmh = 200;
+        } else {
+            this.draftingParticles.setVisible(false);
+            this.draftingLines.setVisible(false);
+        }
+        this.draftingParticles.update(dt);
+        this.draftingLines.update(dt);
+    }
 
     private cloneShipGeometry(ship: Ship): THREE.Group {
         // Create a new group for the cloned ship
@@ -200,10 +491,10 @@ export class ShipViewer {
             }
         });
 
-        // Reset position and rotation for display
+        // Reset position and rotation for display; match in-race ship scale (3x)
         cloneGroup.position.set(0, PHYSICS.hoverHeight, 0); // Position above ground
         cloneGroup.rotation.set(0, 0, 0);
-        cloneGroup.scale.set(1, 1, 1);
+        cloneGroup.scale.set(3, 3, 3);
 
         // Ensure visibility
         cloneGroup.visible = true;

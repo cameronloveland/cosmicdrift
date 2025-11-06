@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { SHOOTING_STARS, STARFIELD_MIN_RADIUS } from './constants';
+import { SHOOTING_STARS, STARFIELD_MIN_RADIUS } from '../constants';
 
 export class ShootingStars {
     public root = new THREE.Group();

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { BLACKHOLE } from './constants';
+import { BLACKHOLE } from '../constants';
 
 export class AccretionDisk {
     public root = new THREE.Group();

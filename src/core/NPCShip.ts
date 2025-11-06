@@ -1,8 +1,11 @@
 import * as THREE from 'three';
-import { COLORS, PHYSICS, BOOST_PAD, TUNNEL, CAMERA, NPC } from './constants';
+import { COLORS, PHYSICS, BOOST_PAD, TUNNEL, CAMERA, NPC, DRAFTING } from './constants';
 import { Track } from './Track';
 import type { ShipState, RacePosition } from './types';
-import { ShipRocketTail } from './ShipRocketTail';
+import { Ship } from './ship/Ship';
+import { ShipRocketTail } from './ship/ShipRocketTail';
+import { DraftingParticles } from './ship/drafting/DraftingParticles';
+import { DraftingVectorLines } from './ship/drafting/DraftingVectorLines';
 
 export class NPCShip {
     public root = new THREE.Group();
@@ -28,6 +31,10 @@ export class NPCShip {
     private laneSwayPhase = Math.random() * Math.PI * 2;
     private laneSwayAmplitude = NPC.laneSwayAmplitude;
     private laneStickiness = NPC.laneStickiness;
+    private laneChangeTimer = 0;
+    private laneChangeIntervalSec = THREE.MathUtils.lerp(NPC.laneChangeIntervalMinSec, NPC.laneChangeIntervalMaxSec, Math.random());
+    private evasiveCooldown = 0;
+    private isDraftingTarget = false;
 
     // Stuck detection
     private stuckDetectionTimer = 0;
@@ -76,10 +83,31 @@ export class NPCShip {
     private speedStarsMax = 80; // Fewer stars for NPCs
     private tmpObj = new THREE.Object3D();
 
+    // Drafting state/visual
+    private draftingActive = false;
+    private draftingLeadSpeedKmh = 0;
+    private draftingCone: THREE.Mesh | null = null;
+    private draftingParticles: DraftingParticles | null = null;
+    private draftingLines: DraftingVectorLines | null = null;
+    private tmp = {
+        playerPos: new THREE.Vector3(),
+        playerForward: new THREE.Vector3(),
+        selfPos: new THREE.Vector3(),
+        selfForward: new THREE.Vector3(),
+        otherPos: new THREE.Vector3(),
+        otherForward: new THREE.Vector3(),
+        v: new THREE.Vector3(),
+        normal: new THREE.Vector3(),
+        binormal: new THREE.Vector3(),
+        tangent: new THREE.Vector3()
+    };
+
 
     // Add this field to the class properties (after line 55)
     private hasCrossedCheckpointThisFrame = false;
     private prevT = 0;
+    // Tiny persistent per-NPC speed variation (0.99 - 1.01)
+    private individualVariation = 1.0;
 
     constructor(track: Track, racerId: string, color: THREE.Color, behavior: 'aggressive' | 'conservative' = 'conservative', lateralOffset: number = 0, speedMultiplier: number = 1.0) {
         this.track = track;
@@ -122,6 +150,8 @@ export class NPCShip {
 
         // Set initial position immediately so NPCs are visible
         this.updateVisualPosition();
+        // Assign a tiny persistent speed variation (±1%)
+        this.individualVariation = 0.99 + Math.random() * 0.02;
     }
 
     private addEdgeLines(mesh: THREE.Mesh): void {
@@ -133,6 +163,125 @@ export class NPCShip {
         const edges = new THREE.LineSegments(edgesGeometry, edgeMaterial);
         // Add as child of mesh so it inherits all transformations (position, rotation, scale)
         mesh.add(edges);
+    }
+
+    private ensureDraftingCone() {
+        if (this.draftingCone || !DRAFTING.showCone) return;
+        const height = 2.0;
+        const baseRadius = 0.9;
+        const geo = new THREE.CylinderGeometry(baseRadius, 0, height, 24, 1, true);
+        const mat = new THREE.MeshPhysicalMaterial({
+            color: new THREE.Color(0x3bd1ff),
+            emissive: new THREE.Color(0x3bd1ff),
+            emissiveIntensity: 0.9,
+            metalness: 0.0,
+            roughness: 0.25,
+            transparent: true,
+            opacity: 0.2,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+            toneMapped: true,
+            side: THREE.DoubleSide
+        });
+        this.draftingCone = new THREE.Mesh(geo, mat);
+        this.draftingCone.rotation.x = Math.PI / 2;
+        this.draftingCone.position.set(0, 0, 0.9 + height * 0.5);
+        this.draftingCone.visible = false;
+        this.root.add(this.draftingCone);
+    }
+
+    private setDraftingVisible(v: boolean) {
+        if (this.draftingCone) this.draftingCone.visible = v && DRAFTING.showCone;
+        if (this.draftingParticles) this.draftingParticles.setVisible(v);
+        if (this.draftingLines) this.draftingLines.setVisible(v);
+    }
+
+    private draftLock = 0;
+    private draftFail = 0;
+
+    private updateDrafting(dt: number, playerT: number, playerLateral: number, allNPCs: NPCShip[]) {
+        const cosCone = Math.cos(THREE.MathUtils.degToRad(DRAFTING.coneDeg));
+
+        // Self frame
+        this.track.getShipWorldPosition(this.state.t, this.state.lateralOffset, this.tmp.selfPos);
+        this.tmp.selfForward.set(0, 0, 1).applyQuaternion(this.root.quaternion).normalize();
+
+        let bestDist = Infinity;
+        let bestLeadSpeed = 0;
+        let conditionsOk = false;
+
+        // Candidate: player
+        {
+            this.track.getShipWorldPosition(playerT, playerLateral, this.tmp.playerPos);
+            // Approximate player forward from track tangent
+            this.track.getFrenetFrame(playerT, this.tmp.normal, this.tmp.binormal, this.tmp.tangent);
+            this.tmp.playerForward.copy(this.tmp.tangent).normalize();
+            this.tmp.v.subVectors(this.tmp.selfPos, this.tmp.playerPos);
+            const dist = this.tmp.v.length();
+            if (dist >= DRAFTING.minDistance && dist <= DRAFTING.maxDistance) {
+                const dirLeadToSelf = this.tmp.v.normalize();
+                const behindDot = dirLeadToSelf.dot(this.tmp.playerForward.clone().negate());
+                const aligned = this.tmp.selfForward.dot(this.tmp.playerForward) >= DRAFTING.alignmentMinDot;
+                const inCone = behindDot >= cosCone;
+                if (inCone && aligned) {
+                    bestDist = dist;
+                    bestLeadSpeed = this.latestPlayerSpeedKmh;
+                    conditionsOk = true;
+                }
+            }
+        }
+
+        // Candidates: other NPCs
+        for (const other of allNPCs) {
+            if (other === this) continue;
+            this.track.getShipWorldPosition(other.state.t, other.state.lateralOffset, this.tmp.otherPos);
+            this.tmp.otherForward.set(0, 0, 1).applyQuaternion(other.root.quaternion).normalize();
+            this.tmp.v.subVectors(this.tmp.selfPos, this.tmp.otherPos);
+            const dist = this.tmp.v.length();
+            if (dist < DRAFTING.minDistance || dist > DRAFTING.maxDistance) continue;
+            const dirLeadToSelf = this.tmp.v.normalize();
+            const behindDot = dirLeadToSelf.dot(this.tmp.otherForward.clone().negate());
+            const aligned = this.tmp.selfForward.dot(this.tmp.otherForward) >= DRAFTING.alignmentMinDot;
+            const inCone = behindDot >= cosCone;
+            if (inCone && aligned && dist < bestDist) {
+                bestDist = dist;
+                bestLeadSpeed = other.state.speedKmh;
+                conditionsOk = true;
+            }
+        }
+
+        if (conditionsOk) {
+            this.draftLock += dt;
+            this.draftFail = 0;
+        } else {
+            this.draftFail += dt;
+            this.draftLock = 0;
+        }
+
+        if (!this.draftingActive && this.draftLock >= DRAFTING.lockTime) this.draftingActive = true;
+        if (this.draftingActive && !conditionsOk && this.draftFail >= DRAFTING.dropoutGrace) this.draftingActive = false;
+
+        if (this.draftingActive) {
+            this.draftingLeadSpeedKmh = bestLeadSpeed;
+            // Recharge own flow slightly (not shown in UI but keeps parity)
+            this.state.flow = THREE.MathUtils.clamp(this.state.flow + DRAFTING.flowRefillRate * dt, 0, 1);
+        }
+
+        this.setDraftingVisible(this.draftingActive);
+        if (this.draftingParticles) this.draftingParticles.update(dt);
+        if (this.draftingLines) this.draftingLines.update(dt);
+    }
+
+    private ensureDraftingParticles() {
+        if (this.draftingParticles) return;
+        this.draftingParticles = new DraftingParticles(this as any);
+        this.root.add(this.draftingParticles.root);
+    }
+
+    private ensureDraftingLines() {
+        if (this.draftingLines) return;
+        this.draftingLines = new DraftingVectorLines(this as any, { count: 4, points: 22 });
+        this.root.add(this.draftingLines.root);
     }
 
     private createShipHullGeometry(): THREE.BufferGeometry {
@@ -442,6 +591,13 @@ export class NPCShip {
         this.root.scale.set(3, 3, 3);
 
         // Ship boost effect is handled externally by ShipBoost class (same as player)
+
+        // Create drafting cone visual (hidden by default)
+        this.ensureDraftingCone();
+        // Create drafting particles
+        this.ensureDraftingParticles();
+        // Create drafting vector lines
+        this.ensureDraftingLines();
     }
 
 
@@ -472,17 +628,17 @@ export class NPCShip {
     private setupAIBehavior() {
         // Set up AI behavior parameters based on type
         if (this.aiBehavior === 'aggressive') {
-            this.speedVariation = 0.1;
+            this.speedVariation = 0.02;
             this.laneSwayAmplitude = NPC.laneSwayAmplitude * 1.3;
             this.laneStickiness = Math.max(0.5, NPC.laneStickiness - 0.1);
         } else {
-            this.speedVariation = 0.05;
+            this.speedVariation = 0.01;
             this.laneSwayAmplitude = NPC.laneSwayAmplitude * 0.9;
             this.laneStickiness = Math.min(0.9, NPC.laneStickiness + 0.1);
         }
     }
 
-    public update(dt: number, playerPosition: number, playerLap: number, playerSpeed: number, allNPCs: NPCShip[] = []) {
+    public update(dt: number, playerPosition: number, playerLap: number, playerSpeed: number, allNPCs: NPCShip[] = [], playerLateral: number = 0) {
         // Update visual position even during countdown
         this.updateVisualPosition();
 
@@ -511,13 +667,18 @@ export class NPCShip {
         this.updateTunnelBoost(dt);
         this.updateBoostPad(dt);
 
+        // Drafting detection & visuals
+        this.updateDrafting(dt, playerPosition, playerLateral, allNPCs);
+
         // Update AI behavior periodically
         if (this.aiUpdateTimer >= this.aiUpdateInterval) {
-            this.updateAI(playerPosition, playerLap, playerSpeed);
+            this.updateAI(playerPosition, playerLap, playerSpeed, playerLateral, allNPCs);
             this.updateCollisionAvoidance(allNPCs);
-            this.updateBoostBehavior(dt);
             this.aiUpdateTimer = 0;
         }
+
+        // Boost behavior (timers/energy/FX) must update every frame for correct durations
+        this.updateBoostBehavior(dt);
 
         // Update ship physics
         this.updatePhysics(dt);
@@ -531,9 +692,18 @@ export class NPCShip {
             this.state.driftDuration += dt;
         }
 
+        // Update drafting visual pulse
+        if (this.draftingCone && this.draftingActive) {
+            const mat = this.draftingCone.material as THREE.MeshPhysicalMaterial;
+            const now = this.getNow();
+            const pulse = 0.85 + Math.sin(now * 2.0) * 0.15;
+            mat.emissiveIntensity = pulse;
+            mat.opacity = 0.18 + (pulse - 0.85) * 0.4;
+        }
+
     }
 
-    private updateAI(playerPosition: number, playerLap: number, playerSpeed: number) {
+    private updateAI(playerPosition: number, playerLap: number, playerSpeed: number, playerLateral: number, allNPCs: NPCShip[] = []) {
         // Store player state for rubber banding
         this.playerPosition = playerPosition;
         this.playerLap = playerLap;
@@ -545,18 +715,111 @@ export class NPCShip {
         // Calculate rubber banding multiplier based on distance from player
         this.updateRubberBanding();
 
-        // AI lateral movement - bias around a preferred lane with gentle sway and jitter
-        this.lateralSwayTimer += this.aiUpdateInterval * NPC.laneSwaySpeed;
-
-        const sway = Math.sin(this.lateralSwayTimer + this.laneSwayPhase) * this.laneSwayAmplitude;
-        const jitter = (Math.random() - 0.5) * NPC.laneJitterRange * (this.aiBehavior === 'aggressive' ? 1.2 : 1.0);
-
-        // Compute target around preferred lane and clamp to track bounds
+        // Bounds
         const half = this.track.width * 0.5;
         const lateralLimit = half * 0.95;
-        const desired = THREE.MathUtils.clamp(this.preferredLateralOffset + sway + jitter, -lateralLimit, lateralLimit);
 
-        // Stick towards the desired lane-biased target
+        // Timers
+        this.laneChangeTimer += this.aiUpdateInterval;
+        this.evasiveCooldown = Math.max(0, this.evasiveCooldown - this.aiUpdateInterval);
+
+        // Drafting/evasion detection
+        const trackLen = this.track.length; // meters
+        const ourT = this.state.t;
+        const ourLat = this.state.lateralOffset;
+
+        // Helper: ahead distance in meters (0..trackLen)
+        const aheadMetersTo = (otherT: number): number => {
+            let d = otherT - ourT;
+            if (d < 0) d += 1;
+            return d * trackLen;
+        };
+        // Helper: behind distance in meters
+        const behindMetersFrom = (otherT: number): number => {
+            let d = ourT - otherT;
+            if (d < 0) d += 1;
+            return d * trackLen;
+        };
+
+        // Find best draft target ahead (player or NPC)
+        let bestAheadDist = Infinity;
+        let draftTargetLateral = playerLateral;
+        let draftFound = false;
+
+        // Check player
+        const playerAheadDist = aheadMetersTo(this.playerPosition);
+        const playerLatDiff = Math.abs(playerLateral - ourLat);
+        if (playerAheadDist > 0 && playerAheadDist <= NPC.draftEngageDistanceMeters && playerLatDiff <= NPC.draftAlignTolerance) {
+            bestAheadDist = playerAheadDist;
+            draftTargetLateral = playerLateral;
+            draftFound = true;
+        }
+        // Check other NPCs
+        for (const other of allNPCs) {
+            if (other === this) continue;
+            const dist = aheadMetersTo(other.state.t);
+            const latDiff = Math.abs(other.state.lateralOffset - ourLat);
+            if (dist > 0 && dist <= NPC.draftEngageDistanceMeters && latDiff <= NPC.draftAlignTolerance && dist < bestAheadDist) {
+                bestAheadDist = dist;
+                draftTargetLateral = other.state.lateralOffset;
+                draftFound = true;
+            }
+        }
+
+        // Detect pursuer behind
+        let evasionTriggered = false;
+        let pursuerLat = playerLateral;
+        const playerBehindDist = behindMetersFrom(this.playerPosition);
+        const playerBehindLatDiff = Math.abs(playerLateral - ourLat);
+        let pursuerDetected = playerBehindDist > 0 && playerBehindDist <= NPC.evasiveDistanceMetersBehind && playerBehindLatDiff <= NPC.draftAlignTolerance;
+        if (!pursuerDetected) {
+            for (const other of allNPCs) {
+                if (other === this) continue;
+                const distBack = behindMetersFrom(other.state.t);
+                const latDiff = Math.abs(other.state.lateralOffset - ourLat);
+                if (distBack > 0 && distBack <= NPC.evasiveDistanceMetersBehind && latDiff <= NPC.draftAlignTolerance) {
+                    pursuerDetected = true;
+                    pursuerLat = other.state.lateralOffset;
+                    break;
+                }
+            }
+        }
+
+        // Adjust preferred lane for evasion
+        if (pursuerDetected && this.evasiveCooldown <= 0) {
+            const dirAway = this.state.lateralOffset >= pursuerLat ? 1 : -1;
+            this.preferredLateralOffset = THREE.MathUtils.clamp(this.preferredLateralOffset + dirAway * NPC.evasiveShiftMeters, -lateralLimit, lateralLimit);
+            this.evasiveCooldown = NPC.evasiveCooldownSec;
+            // Shorten next lane change interval
+            this.laneChangeIntervalSec = Math.max(NPC.laneChangeIntervalMinSec, this.laneChangeIntervalSec * 0.6);
+            this.laneChangeTimer = 0;
+            evasionTriggered = true;
+        }
+
+        // Periodic lane change (continuous offset)
+        if (this.laneChangeTimer >= this.laneChangeIntervalSec) {
+            // Random continuous target within bounds
+            const newPref = THREE.MathUtils.randFloatSpread(lateralLimit * 2 * 0.9); // keep margin from edges
+            this.preferredLateralOffset = THREE.MathUtils.clamp(newPref, -lateralLimit, lateralLimit);
+            // Set next interval, modulate by context
+            let next = THREE.MathUtils.lerp(NPC.laneChangeIntervalMinSec, NPC.laneChangeIntervalMaxSec, Math.random());
+            if (draftFound) next *= 1.3; // linger while drafting
+            if (evasionTriggered) next *= 0.7; // more jitter after evasion
+            this.laneChangeIntervalSec = THREE.MathUtils.clamp(next, NPC.laneChangeIntervalMinSec, NPC.laneChangeIntervalMaxSec * 1.5);
+            this.laneChangeTimer = 0;
+        }
+
+        // Apply drafting influence to preferred lane (bias toward target lateral)
+        if (draftFound) {
+            this.preferredLateralOffset = THREE.MathUtils.lerp(this.preferredLateralOffset, draftTargetLateral, 0.7);
+        }
+        this.isDraftingTarget = draftFound;
+
+        // AI lateral movement - bias around a (possibly updated) preferred lane with gentle sway and jitter
+        this.lateralSwayTimer += this.aiUpdateInterval * NPC.laneSwaySpeed;
+        const sway = Math.sin(this.lateralSwayTimer + this.laneSwayPhase) * this.laneSwayAmplitude;
+        const jitter = (Math.random() - 0.5) * NPC.laneJitterRange * (this.aiBehavior === 'aggressive' ? 1.2 : 1.0);
+        const desired = THREE.MathUtils.clamp(this.preferredLateralOffset + sway + jitter, -lateralLimit, lateralLimit);
         this.targetLateralOffset = THREE.MathUtils.lerp(this.targetLateralOffset, desired, this.laneStickiness);
     }
 
@@ -615,16 +878,15 @@ export class NPCShip {
 
         // Rubber banding thresholds and multipliers
         const closeDistance = 50; // meters - within this, no rubber banding
-        const maxAheadDistance = 100; // meters - hard cap: NPCs cannot get more than this ahead
+        const maxAheadDistance = 100; // meters - hard cap threshold for slowdown
         const farBehindDistance = 300; // meters - beyond this, maximum speedup effect
         const veryFarBehindDistance = 400; // meters - beyond this, extra strong speedup
-        const maxSlowdown = 0.75; // Slow down to 75% when at max ahead distance (slightly less aggressive)
-        const maxSpeedup = 1.25; // Speed up to 125% when very far behind (reduced to prevent pack formation)
-        const normalSpeedup = 1.15; // Speed up to 115% when moderately behind (reduced to prevent pack formation)
+        const maxSlowdown = 0.85; // Slow down to 85% when far ahead
+        const maxSpeedup = 1.08; // Mild speedup when very far behind
+        const normalSpeedup = 1.05; // Mild speedup when moderately behind
 
-        // Add individual variation to rubber banding so NPCs don't all get the same multiplier
-        // This creates natural spread instead of pack behavior
-        const rubberBandingVariation = 0.95 + (Math.random() * 0.1); // 0.95 to 1.05 variation
+        // Tiny persistent variation so NPCs don't all feel identical
+        const rubberBandingVariation = this.individualVariation;
 
         // Calculate target rubber banding multiplier
         if (trackDistance > 0) {
@@ -754,6 +1016,11 @@ export class NPCShip {
         // Increase chance if behind player (competitive catch-up)
         if (isBehind) {
             baseChance += 0.2;
+        }
+
+        // Boost more frequently when drafting (capitalize on slipstream)
+        if (this.isDraftingTarget) {
+            baseChance += 0.1;
         }
 
         // Boost more frequently when energy is high (can afford to boost)
@@ -889,34 +1156,45 @@ export class NPCShip {
         // Apply rubber banding multiplier (slows NPCs when ahead, speeds up when behind)
         const rubberBanding = this.rubberBandingMultiplier;
 
-        // Apply individual speed variation to create racing differences between NPCs
-        // Add random variation that changes slowly over time (more realistic than constant variation)
-        const speedVariationFactor = 1.0 + (Math.random() - 0.5) * this.speedVariation * 2;
+        // Remove per-frame jitter; use persistent tiny variation only
+        const speedVariationFactor = this.individualVariation;
 
         // Target speed calculation with rubber banding and individual variation
         let targetSpeed = baseSpeed * this.speedMultiplier * boostMultiplier * tunnelMultiplier * boostPadMultiplier * rubberBanding * speedVariationFactor;
 
-        // When ahead of player, cap speed to ~92% of player to avoid runaway
-        // Recompute ahead/behind based on stored player state
-        const ourPosition = this.getTrackPosition();
-        const lapDiff = this.state.lapCurrent - this.playerLap;
-        let isAhead = false;
-        if (lapDiff > 0) {
-            isAhead = true;
-        } else if (lapDiff === 0) {
-            let trackDistance = ourPosition - this.playerPosition;
-            if (Math.abs(trackDistance) > 0.5) trackDistance = trackDistance > 0 ? trackDistance - 1 : trackDistance + 1;
-            isAhead = trackDistance > 0;
+        // Drafting speed match: raise target toward lead speed when locked
+        if (this.draftingActive) {
+            const matchTarget = Math.min(
+                Math.max(this.draftingLeadSpeedKmh + DRAFTING.matchMaxDelta, this.state.speedKmh),
+                PHYSICS.maxSpeed
+            );
+            targetSpeed = Math.max(targetSpeed, matchTarget);
         }
-        if (isAhead && this.latestPlayerSpeedKmh > 1) {
-            const cap = this.latestPlayerSpeedKmh * 0.92;
-            targetSpeed = Math.min(targetSpeed, cap);
-        }
+
+        // Allow NPCs to legitimately get ahead; rubber banding below will prevent runaway leads
 
         // Ensure minimum speed to prevent NPCs from getting completely stuck
         // Minimum is 50% of base speed (allows rubber banding to slow them when ahead, but not stop them)
         const minSpeed = PHYSICS.baseSpeed * 0.5;
         targetSpeed = Math.max(targetSpeed, minSpeed);
+
+        // Soft cap when ahead: don't exceed player speed by more than 2%
+        {
+            const ourPosition = this.getTrackPosition();
+            const lapDiff = this.state.lapCurrent - this.playerLap;
+            let isAhead = false;
+            if (lapDiff > 0) {
+                isAhead = true;
+            } else if (lapDiff === 0) {
+                let trackDistance = ourPosition - this.playerPosition;
+                if (Math.abs(trackDistance) > 0.5) trackDistance = trackDistance > 0 ? trackDistance - 1 : trackDistance + 1;
+                isAhead = trackDistance > 0;
+            }
+            if (isAhead && this.latestPlayerSpeedKmh > 1) {
+                const cap = this.latestPlayerSpeedKmh * 1.02;
+                targetSpeed = Math.min(targetSpeed, cap);
+            }
+        }
 
         // Smooth speed transitions (same lerp rate as player ship for consistency)
         const speedLerp = 1 - Math.pow(0.001, dt);

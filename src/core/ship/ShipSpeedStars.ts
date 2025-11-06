@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { Ship } from './Ship';
-import { Track } from './Track';
+import { Track } from '../Track';
 
 export class ShipSpeedStars {
     public root = new THREE.Group();

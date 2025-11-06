@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import { CAMERA, COLORS, LAPS_TOTAL, PHYSICS, TUNNEL, BOOST_PAD, FOCUS_REFILL, DRIFT, DRAFTING } from './constants';
-import { Track } from './Track';
+import { CAMERA, COLORS, LAPS_TOTAL, PHYSICS, TUNNEL, BOOST_PAD, FOCUS_REFILL, DRIFT, DRAFTING } from '../constants';
+import { Track } from '../Track';
 import { ShipRocketTail } from './ShipRocketTail';
 import { ShipJetEngine } from './ShipJetEngine';
 
