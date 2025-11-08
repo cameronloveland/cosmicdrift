@@ -29,7 +29,9 @@ npm run preview
 Controls
 --------
 
-- WASD or Arrow keys: steer and pitch
+- A/D or ← →: roll
+- W/S or ↑ ↓: pitch
+- Q/E: yaw (steer)
 - Space: hold to boost, press to start
 
 HUD

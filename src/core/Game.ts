@@ -137,7 +137,7 @@ export class Game {
         this.camera.position.set(0, 2, 6);
 
         this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-        this.renderer.setClearColor(0x050314, 1);
+        this.renderer.setClearColor(0x02010a, 1);
         this.renderer.setPixelRatio(this.pixelRatio);
         this.renderer.setSize(window.innerWidth, window.innerHeight);
         this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -776,7 +776,7 @@ export class Game {
 
         if (!this.started) {
             if (this.mode === 'MENU') this.updateAttractMode(dt);
-            this.ui.update(this.ship.state, this.ship.getFocusRefillActive(), this.ship.getFocusRefillProgress(), this.ship.getBoostRechargeDelay());
+            this.ui.update(this.ship.state, this.ship.getFocusRefillActive(), this.ship.getFocusRefillProgress(), this.ship.getBoostRechargeDelay(), this.ship.isBoostHeld());
             return;
         }
 
@@ -801,7 +801,10 @@ export class Game {
             this.shootingStars.update(dt);
             // this.comets.update(dt); // Temporarily disabled
             this.env.update(dt);
-            this.ui.update(this.ship.state, this.ship.getFocusRefillActive(), this.ship.getFocusRefillProgress(), this.ship.getBoostRechargeDelay());
+            // Animate ramp visuals while free flying too
+            const currentTime = this.clock.getElapsedTime();
+            this.track.updateRampAnimation(currentTime);
+            this.ui.update(this.ship.state, this.ship.getFocusRefillActive(), this.ship.getFocusRefillProgress(), this.ship.getBoostRechargeDelay(), this.ship.isBoostHeld());
             this.audio.setSpeed(this.ship.state.speedKmh);
             if (this.ship.state.boosting && !this.prevBoost) this.audio.triggerBoost();
             this.prevBoost = this.ship.state.boosting;
@@ -836,6 +839,7 @@ export class Game {
             // Update gate fade-out during countdown and race
             const currentTime = this.clock.getElapsedTime();
             this.track.updateGateFade(currentTime);
+            this.track.updateRampAnimation(currentTime);
 
             // Ship updates use normal dt for responsive controls
             // Drafting before ship update so target speed can incorporate it
@@ -853,7 +857,7 @@ export class Game {
             this.wormholeTunnel.update(visualDt);
             this.shootingStars.update(visualDt); // Ensure shooting stars continue during race
             this.env.update(visualDt);
-            this.ui.update(this.ship.state, this.ship.getFocusRefillActive(), this.ship.getFocusRefillProgress(), this.ship.getBoostRechargeDelay());
+            this.ui.update(this.ship.state, this.ship.getFocusRefillActive(), this.ship.getFocusRefillProgress(), this.ship.getBoostRechargeDelay(), this.ship.isBoostHeld());
 
             // Update debug overlay
             // TODO FIX THIS CAUSES WEIRD INTRO CAMERA JERK 
@@ -1429,11 +1433,11 @@ export class Game {
         );
 
         // Get base colors (original space background colors)
-        const bgStartBase = new THREE.Color(0x0a0324);
-        const bgMidBase = new THREE.Color(0x050314);
-        const bgEndBase = new THREE.Color(0x030211);
+        const bgStartBase = new THREE.Color(0x040214);
+        const bgMidBase = new THREE.Color(0x02010a);
+        const bgEndBase = new THREE.Color(0x000000);
         const fogColorBase = new THREE.Color(0x07051a);
-        const clearColorBase = new THREE.Color(0x050314);
+        const clearColorBase = new THREE.Color(0x02010a);
 
         // Get dark colors (almost black for tunnels)
         const bgStartDark = new THREE.Color(0x000001);

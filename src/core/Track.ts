@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import { COLORS, TRACK_OPTS, TRACK_SOURCE, CUSTOM_TRACK_POINTS, TUNNEL, BOOST_PAD } from './constants';
-import type { TrackOptions, TrackSample, TunnelSegment, TunnelInfo, BoostPadSegment, BoostPadInfo } from './types';
+import { COLORS, TRACK_OPTS, TRACK_SOURCE, CUSTOM_TRACK_POINTS, TUNNEL, BOOST_PAD, RAMP } from './constants';
+import type { TrackOptions, TrackSample, TunnelSegment, TunnelInfo, BoostPadSegment, BoostPadInfo, RampSegment, RampInfo } from './types';
 
 function mulberry32(seed: number) {
     let t = seed >>> 0;
@@ -23,6 +23,9 @@ export class Track {
     private tunnels = new THREE.Group();
     private boostPads: BoostPadSegment[] = [];
     private boostPadGroup = new THREE.Group();
+    private ramps: RampSegment[] = [];
+    private rampGroup = new THREE.Group();
+    private rampChevronMaterials: THREE.MeshBasicMaterial[] = [];
 
     // Start line gate fade-out state
     private gateMaterials: THREE.MeshBasicMaterial[] = [];
@@ -113,6 +116,7 @@ export class Track {
         this.buildMarkers();
         this.buildTunnels();
         this.buildBoostPads();
+        this.buildRamps();
         this.buildStartLine(); // Build after tunnels so we can position relative to first tunnel
         this.updateTrackAlphaForTunnels();
     }
@@ -1206,6 +1210,194 @@ export class Track {
         }
 
         this.root.add(this.boostPadGroup);
+    }
+
+    private buildRamps() {
+        // Clear old ramps
+        if (this.rampGroup.parent) this.root.remove(this.rampGroup);
+        this.rampGroup = new THREE.Group();
+        this.ramps = [];
+        this.rampChevronMaterials = [];
+
+        const minStartT = RAMP.minStartOffset / this.length;
+        const count = Math.max(1, RAMP.count | 0);
+        const segLengthT = RAMP.lengthMeters / this.length;
+        const tStep = 5 / this.length; // 5m forward step when nudging out of tunnels
+
+        for (let i = 0; i < count; i++) {
+            let startT = THREE.MathUtils.euclideanModulo(minStartT + i * (1 / count), 1);
+
+            // Avoid tunnels: nudge forward until clear or after one full loop
+            let tries = 0;
+            const maxTries = Math.ceil(1 / tStep) + 2;
+            while (this.isTInAnyTunnel(startT) && tries < maxTries) {
+                startT = THREE.MathUtils.euclideanModulo(startT + tStep, 1);
+                tries++;
+            }
+
+            this.ramps.push({ t: startT, lengthT: segLengthT });
+            this.createRampVisual(startT, segLengthT);
+        }
+
+        this.root.add(this.rampGroup);
+    }
+
+    private isTInAnyTunnel(t: number): boolean {
+        const normalizedT = THREE.MathUtils.euclideanModulo(t, 1);
+        for (const tunnel of this.tunnelSegments) {
+            if (tunnel.startT <= tunnel.endT) {
+                if (normalizedT >= tunnel.startT && normalizedT <= tunnel.endT) return true;
+            } else {
+                // wrap case
+                if (normalizedT >= tunnel.startT || normalizedT <= tunnel.endT) return true;
+            }
+        }
+        return false;
+    }
+
+    private createRampVisual(startT: number, lengthT: number) {
+        // Create multiple chevrons indicating a launch zone; visually distinct from boost pads
+        const chevronCount = Math.max(3, Math.floor((RAMP.lengthMeters / 10)));
+        for (let i = 0; i < chevronCount; i++) {
+            const progress = i / chevronCount;
+            const t = startT + progress * lengthT;
+            const idx = Math.floor(THREE.MathUtils.euclideanModulo(t, 1) * this.samples) % this.samples;
+            const center = this.cachedPositions[idx];
+            const binormal = this.cachedBinormals[idx];
+            const up = this.cachedNormals[idx];
+            const tangent = this.cachedTangents[idx];
+
+            const color = new THREE.Color().lerpColors(RAMP.colorStart, RAMP.colorEnd, 0.5);
+            const chevronWidth = this.width * 0.9;
+            const chevronLength = 7.5; // slightly shorter segments
+            const chevronThickness = 1.5; // thicker bars to differentiate from boost pads
+
+            const tipOffset = chevronLength * 0.5;
+            const backOffset = -chevronLength * 0.5;
+            const sideOffset = chevronWidth * 0.5;
+
+            const tip = new THREE.Vector3()
+                .copy(center)
+                .addScaledVector(tangent, tipOffset)
+                .addScaledVector(up, RAMP.thickness);
+            const rightBack = new THREE.Vector3()
+                .copy(center)
+                .addScaledVector(tangent, backOffset)
+                .addScaledVector(binormal, sideOffset)
+                .addScaledVector(up, RAMP.thickness);
+            const leftBack = new THREE.Vector3()
+                .copy(center)
+                .addScaledVector(tangent, backOffset)
+                .addScaledVector(binormal, -sideOffset)
+                .addScaledVector(up, RAMP.thickness);
+
+            // Create shared animated materials for arrows (store for pulsing)
+            const chevronMat = new THREE.MeshBasicMaterial({
+                color: color,
+                transparent: true,
+                opacity: 0.8,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false,
+                toneMapped: false
+            });
+            this.rampChevronMaterials.push(chevronMat);
+            const chevronMat2 = chevronMat.clone();
+            this.rampChevronMaterials.push(chevronMat2);
+
+            // Build bars with animated materials
+            this.addChevronBarWithMaterial(tip, rightBack, chevronThickness, up, binormal, chevronMat, this.rampGroup);
+            this.addChevronBarWithMaterial(tip, leftBack, chevronThickness, up, binormal, chevronMat2, this.rampGroup);
+        }
+
+        // Add a subtle translucent plate spanning the ramp length for glow
+        // Build at the center of the ramp
+        const midT = THREE.MathUtils.euclideanModulo(startT + lengthT * 0.5, 1);
+        const midIdx = Math.floor(midT * this.samples) % this.samples;
+        const midCenter = this.cachedPositions[midIdx];
+        const midUp = this.cachedNormals[midIdx];
+        const midBin = this.cachedBinormals[midIdx];
+        const midTan = this.cachedTangents[midIdx];
+
+        const plateGeom = new THREE.PlaneGeometry(this.width * 0.98, RAMP.lengthMeters * 0.85);
+        const plateMat = new THREE.MeshBasicMaterial({
+            color: new THREE.Color().lerpColors(RAMP.colorStart, RAMP.colorEnd, 0.5),
+            transparent: true,
+            opacity: 0.22,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+            side: THREE.DoubleSide,
+            toneMapped: false
+        });
+        const plate = new THREE.Mesh(plateGeom, plateMat);
+        const z = midUp.clone().normalize(); // plane normal
+        const x = midBin.clone().normalize(); // width across track
+        const y = new THREE.Vector3().crossVectors(z, x).normalize(); // along track
+        const m = new THREE.Matrix4().makeBasis(x, y, z);
+        const q = new THREE.Quaternion().setFromRotationMatrix(m);
+        plate.quaternion.copy(q);
+        plate.position.copy(midCenter).addScaledVector(midUp, RAMP.thickness * 0.5);
+        this.rampGroup.add(plate);
+    }
+
+    public getRampAtT(t: number): RampInfo {
+        const normalizedT = THREE.MathUtils.euclideanModulo(t, 1);
+        for (const seg of this.ramps) {
+            const endT = seg.t + seg.lengthT;
+            if (endT <= 1.0) {
+                if (normalizedT >= seg.t && normalizedT <= endT) {
+                    return { onRamp: true };
+                }
+            } else {
+                const wrappedEndT = endT - 1.0;
+                if (normalizedT >= seg.t || normalizedT <= wrappedEndT) {
+                    return { onRamp: true };
+                }
+            }
+        }
+        return { onRamp: false };
+    }
+
+    // Animate ramp arrow opacity to create a forward-moving pulse
+    public updateRampAnimation(currentTime: number) {
+        if (this.rampChevronMaterials.length === 0) return;
+        const speed = 3.2; // wave speed
+        const base = 0.35;
+        const range = 0.6;
+        const count = this.rampChevronMaterials.length;
+        for (let i = 0; i < count; i++) {
+            const phase = (i / count) * Math.PI * 2;
+            const s = Math.sin(currentTime * speed + phase) * 0.5 + 0.5; // 0..1
+            const opacity = base + range * s;
+            const mat = this.rampChevronMaterials[i];
+            mat.opacity = opacity;
+        }
+    }
+
+    private addChevronBarWithMaterial(
+        start: THREE.Vector3,
+        end: THREE.Vector3,
+        thickness: number,
+        up: THREE.Vector3,
+        binormal: THREE.Vector3,
+        material: THREE.MeshBasicMaterial,
+        group: THREE.Group
+    ) {
+        const direction = new THREE.Vector3().subVectors(end, start);
+        const length = direction.length();
+        const center = new THREE.Vector3().addVectors(start, end).multiplyScalar(0.5);
+
+        const barGeom = new THREE.BoxGeometry(thickness, thickness * 0.5, length);
+        const bar = new THREE.Mesh(barGeom, material);
+        bar.position.copy(center);
+
+        const forward = direction.clone().normalize();
+        const right = new THREE.Vector3().crossVectors(up, forward).normalize();
+        const upNorm = new THREE.Vector3().crossVectors(forward, right).normalize();
+        const m = new THREE.Matrix4().makeBasis(right, upNorm, forward);
+        const q = new THREE.Quaternion().setFromRotationMatrix(m);
+        bar.quaternion.copy(q);
+
+        group.add(bar);
     }
 
     private createBoostPadVisual(startT: number, lengthT: number) {

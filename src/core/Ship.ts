@@ -6,12 +6,15 @@ import { ShipJetEngine } from './ShipJetEngine';
 
 function kmhToMps(kmh: number) { return kmh / 3.6; }
 
+console.error(`!!! SHIP CLASS DEFINED !!!`);
+
 export class Ship {
     public root = new THREE.Group();
     public state = {
         t: 0,
         speedKmh: 0, // Start completely stationary
         lateralOffset: 0,
+        verticalOffset: 0,
         pitch: 0,
         flow: 0,
         boosting: false,
@@ -34,6 +37,7 @@ export class Ship {
     private inputEnabled = false; // disabled during countdown
     private velocitySide = 0;
     private velocityPitch = 0;
+    private verticalVelocity = 0;
     private boostTimer = 0; // visual intensity for camera/shake
     private wasDrifting = false; // track previous frame's drift state
     private boostEnergy = 1; // 0..1 manual boost resource
@@ -510,11 +514,37 @@ export class Ship {
         this.lapTime = 0; // Reset lap time
     }
 
+    private updateVerticalDynamics(dt: number) {
+        // Vertical dynamics: W/Up to climb, S/Down to descend + spring-damper recentering
+        const verticalInput = (this.input.up ? 1 : 0) - (this.input.down ? 1 : 0);
+        const climbVel = verticalInput * PHYSICS.verticalAccel;
+        this.verticalVelocity = THREE.MathUtils.damp(this.verticalVelocity, climbVel, PHYSICS.verticalDamping, dt);
+        const springForce = -PHYSICS.verticalSpring * this.state.verticalOffset;
+        const springDamp = -PHYSICS.verticalSpringDamping * this.verticalVelocity;
+        this.verticalVelocity += (springForce + springDamp) * dt;
+        this.state.verticalOffset += this.verticalVelocity * dt;
+
+        if (verticalInput !== 0 || Math.abs(this.state.verticalOffset) > 0.01) {
+            console.log(`VERT DYNAMICS: input=${verticalInput} vel=${this.verticalVelocity.toFixed(3)} offset=${this.state.verticalOffset.toFixed(3)}`);
+        }
+
+        // Hard clamp to corridor height with soft wall damping
+        const vHalf = PHYSICS.corridorHalfHeight;
+        if (this.state.verticalOffset > vHalf) {
+            this.state.verticalOffset = vHalf;
+            if (this.verticalVelocity > 0) this.verticalVelocity = 0;
+        } else if (this.state.verticalOffset < -vHalf) {
+            this.state.verticalOffset = -vHalf;
+            if (this.verticalVelocity < 0) this.verticalVelocity = 0;
+        }
+    }
+
     reset() {
         // Reset ship to starting position and state
         this.state.t = -12 / this.track.length; // Start 12 meters behind start line (matches constructor)
         this.state.speedKmh = 0;
         this.state.lateralOffset = 0;
+        this.state.verticalOffset = 0;
         this.state.pitch = 0;
         this.state.flow = 0;
         this.state.boosting = false;
@@ -526,6 +556,7 @@ export class Ship {
         // Reset internal state
         this.velocitySide = 0;
         this.velocityPitch = 0;
+        this.verticalVelocity = 0;
         this.boostTimer = 0;
         this.boostEnergy = 1;
         this.boostRechargeDelay = 0;
@@ -571,11 +602,14 @@ export class Ship {
 
     update(dt: number) {
         this.now += dt;
+        console.error(`!!! SHIP UPDATE CALLED !!!`);
 
         // Don't move during countdown (when input is disabled)
         if (!this.inputEnabled) {
             this.state.speedKmh = 0;
             // Still update ship position and camera even when input is disabled
+            // IMPORTANT: vertical dynamics still need to update
+            this.updateVerticalDynamics(dt);
             this.updatePositionAndCamera(dt);
             return;
         }
@@ -774,8 +808,8 @@ export class Ship {
         this.state.lateralOffset = THREE.MathUtils.clamp(this.state.lateralOffset + this.velocitySide * dt, -lateralLimit, lateralLimit);
 
 
-        // pitch control
-        const pitchInput = (this.input.up ? 1 : 0) - (this.input.down ? 1 : 0);
+        // pitch control (inverted: down input = nose up, up input = nose down for flight feel)
+        const pitchInput = (this.input.down ? 1 : 0) - (this.input.up ? 1 : 0);
         const targetPitchVel = pitchInput * PHYSICS.pitchAccel;
         this.velocityPitch = THREE.MathUtils.damp(this.velocityPitch, targetPitchVel, PHYSICS.pitchDamping, dt);
         this.state.pitch = THREE.MathUtils.clamp(this.state.pitch + this.velocityPitch * dt, -PHYSICS.pitchMax, PHYSICS.pitchMax);
@@ -789,6 +823,8 @@ export class Ship {
                 this.velocityPitch = 0;
             }
         }
+
+        this.updateVerticalDynamics(dt);
 
         // Drift detection: turning (left/right) AND boosting simultaneously
         // sideInput already defined above in lateral control section
@@ -861,9 +897,13 @@ export class Ship {
         right.copy(binormal).normalize();
         up.copy(normal).normalize();
 
-        // apply lateral offset (side to side across the ribbon) and hover height
+        // apply lateral offset (side to side across the ribbon) and hover height + vertical freedom
         pos.addScaledVector(right, this.state.lateralOffset);
-        pos.addScaledVector(up, PHYSICS.hoverHeight);
+        const debugHeight = PHYSICS.hoverHeight + this.state.verticalOffset;
+        pos.addScaledVector(up, debugHeight);
+        if (Math.abs(this.state.verticalOffset) > 0.01 || this.input.up || this.input.down) {
+            console.log(`MAIN UPDATE: vertOffset=${this.state.verticalOffset.toFixed(3)} input.up=${this.input.up} input.down=${this.input.down} height=${debugHeight.toFixed(3)}`);
+        }
 
         // compute quaternion from basis vectors (forward, up)
         const m = new THREE.Matrix4();
@@ -875,8 +915,8 @@ export class Ship {
 
         // Apply rotations independently using Euler angles for player input
         // Standard approach in racing games: base orientation from track, inputs as separate Euler rotations
-        const shipYaw = -sideInput * CAMERA.shipYawFromInput;
         const bankAngle = THREE.MathUtils.degToRad(22) * THREE.MathUtils.clamp(this.velocitySide / PHYSICS.lateralAccel, -1, 1);
+        const shipYaw = (-sideInput * CAMERA.shipYawFromInput) + (PHYSICS.yawFromBankGain * (-bankAngle));
 
         // Create rotation from Euler with order 'YXZ': Y (yaw) first, X (pitch) second, Z (bank) last
         // Euler(x, y, z, order) where x=pitch, y=yaw, z=bank
@@ -933,9 +973,9 @@ export class Ship {
         right.copy(binormal).normalize();
         up.copy(normal).normalize();
 
-        // apply lateral offset (side to side across the ribbon) and hover height
+        // apply lateral offset (side to side across the ribbon) and hover height + vertical freedom
         pos.addScaledVector(binormal, this.state.lateralOffset);
-        pos.addScaledVector(up, PHYSICS.hoverHeight);
+        pos.addScaledVector(up, PHYSICS.hoverHeight + this.state.verticalOffset);
 
         // compute quaternion from basis vectors (forward, up)
         const m = new THREE.Matrix4();
@@ -974,7 +1014,7 @@ export class Ship {
         // Create a local copy of position for camera calculations
         const camPos = pos.clone();
         camPos.addScaledVector(right, this.state.lateralOffset);
-        camPos.addScaledVector(up, PHYSICS.hoverHeight);
+        camPos.addScaledVector(up, PHYSICS.hoverHeight + this.state.verticalOffset);
 
         // Mario Kart-style camera: independent smoothed yaw with heavy damping
         this.cameraYawVelocity = THREE.MathUtils.damp(this.cameraYawVelocity, this.targetCameraYaw - this.cameraYaw, CAMERA.cameraYawDamping, dt);

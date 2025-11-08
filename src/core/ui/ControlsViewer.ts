@@ -52,12 +52,12 @@ export class ControlsViewer {
                         border-radius: 8px;
                         transition: all 0.3s ease;
                     ">
-                        <span style="font-size: 16px; font-weight: 600; color: rgba(255, 255, 255, 0.9);">
-                            Steer
-                        </span>
-                        <span style="font-size: 14px; font-weight: 400; color: rgba(83, 215, 255, 1); font-family: monospace;">
-                            A/D or ← →
-                        </span>
+						<span style="font-size: 16px; font-weight: 600; color: rgba(255, 255, 255, 0.9);">
+							Turn Left/Right
+						</span>
+						<span style="font-size: 14px; font-weight: 400; color: rgba(83, 215, 255, 1); font-family: monospace;">
+							A/D or ← →
+						</span>
                     </div>
                     
                     <div style="
@@ -106,12 +106,12 @@ export class ControlsViewer {
                         border-radius: 8px;
                         transition: all 0.3s ease;
                     ">
-                        <span style="font-size: 16px; font-weight: 600; color: rgba(255, 255, 255, 0.9);">
-                            Pitch Up/Down
-                        </span>
-                        <span style="font-size: 14px; font-weight: 400; color: rgba(83, 215, 255, 1); font-family: monospace;">
-                            W/S or ↑ ↓
-                        </span>
+						<span style="font-size: 16px; font-weight: 600; color: rgba(255, 255, 255, 0.9);">
+							Throttle / Brake
+						</span>
+						<span style="font-size: 14px; font-weight: 400; color: rgba(83, 215, 255, 1); font-family: monospace;">
+							W / S or ↑ ↓
+						</span>
                     </div>
                     
                     <div style="

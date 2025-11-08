@@ -117,7 +117,7 @@ export class UI {
         }
     }
 
-    update(state: ShipState, focusRefillActive: boolean, focusRefillProgress: number, boostRechargeDelay: number = 0) {
+    update(state: ShipState, focusRefillActive: boolean, focusRefillProgress: number, boostRechargeDelay: number = 0, holdingBoost: boolean = false) {
         // Update speedometer gauge with all values including lap info
         this.speedometerGauge.setValues(state.speedKmh, state.boostLevel, state.flow, state.lapCurrent, state.lapTotal);
 
@@ -142,9 +142,18 @@ export class UI {
             this.boostLabel.classList.remove('higher');
         }
 
-        // Show MAX FLOW label when flow is nearly full
-        if (state.flow >= 0.95) {
+        // Determine instruction messaging priority:
+        // 1) If boost is empty and player is still holding boost, prompt to disengage to recharge
+        // 2) Else if flow is nearly full, prompt to press F to recharge boost
+        const boostEmptyAndHeld = state.boostLevel <= 0.01 && holdingBoost && !state.boosting;
+        if (boostEmptyAndHeld) {
+            // Hide MAX FLOW label to avoid clutter when showing disengage hint
+            this.flowLabel.classList.add('hidden');
+            this.instructionLabel.textContent = "DISENGAGE BOOST TO RECHARGE";
+            this.instructionLabel.classList.remove('hidden');
+        } else if (state.flow >= 0.95) {
             this.flowLabel.classList.remove('hidden');
+            this.instructionLabel.textContent = "PRESS 'F' TO RECHARGE BOOST";
             this.instructionLabel.classList.remove('hidden');
         } else {
             this.flowLabel.classList.add('hidden');

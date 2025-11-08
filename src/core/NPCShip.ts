@@ -1,9 +1,10 @@
 import * as THREE from 'three';
-import { COLORS, PHYSICS, BOOST_PAD, TUNNEL, CAMERA, NPC, DRAFTING } from './constants';
+import { COLORS, PHYSICS, BOOST_PAD, TUNNEL, CAMERA, NPC, DRAFTING, RAMP } from './constants';
 import { Track } from './Track';
 import type { ShipState, RacePosition } from './types';
 import { Ship } from './ship/Ship';
 import { ShipRocketTail } from './ship/ShipRocketTail';
+import { ShipJetEngine } from './ship/ShipJetEngine';
 import { DraftingParticles } from './ship/drafting/DraftingParticles';
 import { DraftingVectorLines } from './ship/drafting/DraftingVectorLines';
 
@@ -67,12 +68,11 @@ export class NPCShip {
     private raceStartTime = 0; // Track elapsed game time since race started (in seconds)
     private raceStarted = false; // Track if race has started
 
-    // Rocket tail effect (like player ship)
+    // Rocket tail effect (shared with player)
     public rocketTail!: ShipRocketTail;
 
-    // Engine glow effect (like player ship)
-    private glowMaterial!: THREE.MeshBasicMaterial;
-    private engineGlow!: THREE.Mesh;
+    // Jet engine visuals (shared with player)
+    public jetEngine!: ShipJetEngine;
 
     // Speed stars effect (like player ship)
     private speedStars!: THREE.Group;
@@ -120,6 +120,7 @@ export class NPCShip {
             t: -12 / track.length, // Start 12 meters behind start line (matches player)
             speedKmh: 0,
             lateralOffset: lateralOffset, // Position NPCs at different lateral positions
+            verticalOffset: 0,
             pitch: 0,
             flow: 0,
             boosting: false,
@@ -549,24 +550,9 @@ export class NPCShip {
         body.add(boosterNozzle);
         this.addEdgeLines(boosterNozzle);
 
-        // Engine glow effect (from rocket booster) - glowing blue
-        this.glowMaterial = new THREE.MeshBasicMaterial({
-            color: new THREE.Color(0.2, 0.6, 1.0), // Bright blue
-            transparent: true,
-            opacity: 0.85,
-            blending: THREE.AdditiveBlending,
-            depthWrite: false,
-            toneMapped: false
-        });
-
-        // Create rocket booster flame - simple blue cone
-        this.engineGlow = new THREE.Mesh(
-            new THREE.ConeGeometry(0.12, 0.3, 16),
-            this.glowMaterial
-        );
-        this.engineGlow.position.set(0, 0, -0.9); // Start at nozzle
-        this.engineGlow.rotation.x = -Math.PI / 2; // Point backward
-        body.add(this.engineGlow);
+        // Jet engine visuals (idle disc + blue cone), positioned at nozzle
+        this.jetEngine = new ShipJetEngine(new THREE.Vector3(0, 0, -0.72));
+        body.add(this.jetEngine.root);
 
         this.root.add(body);
 
@@ -576,7 +562,7 @@ export class NPCShip {
         const baseClipOffset = -nozzleRadius * 0.15; // Small backward offset to clip base
         this.rocketTail = new ShipRocketTail(
             this,
-            new THREE.Vector3(0, 0, -0.72),
+            new THREE.Vector3(0, 0, -0.74),
             baseClipOffset
         );
         this.root.add(this.rocketTail.root);
@@ -599,6 +585,11 @@ export class NPCShip {
         // Create drafting vector lines
         this.ensureDraftingLines();
     }
+
+    // Vertical/ramp state
+    private verticalVelocity = 0;
+    private wasOnRamp = false;
+    private airborneTimer = 0;
 
 
     private createSpeedStars() {
@@ -667,6 +658,15 @@ export class NPCShip {
         this.updateTunnelBoost(dt);
         this.updateBoostPad(dt);
 
+        // Ramp detection and impulse (same as player)
+        const rampInfo = this.track.getRampAtT(this.state.t);
+        const justEnteredRamp = rampInfo.onRamp && !this.wasOnRamp;
+        if (justEnteredRamp) {
+            this.verticalVelocity += RAMP.upwardImpulseMps;
+            this.airborneTimer = RAMP.airDuration;
+        }
+        this.wasOnRamp = rampInfo.onRamp;
+
         // Drafting detection & visuals
         this.updateDrafting(dt, playerPosition, playerLateral, allNPCs);
 
@@ -682,6 +682,8 @@ export class NPCShip {
 
         // Update ship physics
         this.updatePhysics(dt);
+        // Update vertical arc (after physics so dt sequencing matches player)
+        this.updateVertical(dt);
         this.updatePosition(dt);
 
         // Simple drift detection: turning (lateralVelocity) + boosting
@@ -701,6 +703,28 @@ export class NPCShip {
             mat.opacity = 0.18 + (pulse - 0.85) * 0.4;
         }
 
+    }
+
+    private updateVertical(dt: number) {
+        // Airborne spring-damper back toward 0 offset, like player (no free flight)
+        const springK = this.airborneTimer > 0 ? RAMP.airSpring : PHYSICS.verticalSpring;
+        const dampingC = this.airborneTimer > 0 ? RAMP.airDamping : PHYSICS.verticalSpringDamping;
+        const springForce = -springK * this.state.verticalOffset;
+        const springDamp = -dampingC * this.verticalVelocity;
+        this.verticalVelocity += (springForce + springDamp) * dt;
+        this.state.verticalOffset += this.verticalVelocity * dt;
+        if (this.airborneTimer > 0) this.airborneTimer = Math.max(0, this.airborneTimer - dt);
+
+        // Clamp to corridor
+        const vHalf = PHYSICS.corridorHalfHeight;
+        if (this.state.verticalOffset < 0) {
+            this.state.verticalOffset = 0;
+            if (this.verticalVelocity < 0) this.verticalVelocity = 0;
+        }
+        if (this.state.verticalOffset > vHalf) {
+            this.state.verticalOffset = vHalf;
+            if (this.verticalVelocity > 0) this.verticalVelocity = 0;
+        }
     }
 
     private updateAI(playerPosition: number, playerLap: number, playerSpeed: number, playerLateral: number, allNPCs: NPCShip[] = []) {
@@ -958,37 +982,14 @@ export class NPCShip {
         // Update speed stars effect based on boost state
         this.updateSpeedStars(dt);
 
-        // Animate engine glow - realistic jet boost effect
-        this.updateEngineGlow(dt, this.isBoosting);
+        // Animate jet engine visuals based on movement
+        const isMoving = this.state.speedKmh > 1;
+        this.jetEngine.update(dt, isMoving, this.isBoosting);
 
         // Ship boost particle effect is handled externally by ShipBoost class (same as player)
     }
 
-    private updateEngineGlow(dt: number, isBoosting: boolean) {
-        // Static glow - blue flame effect
-        // Core color (bright blue)
-        const coreColor = new THREE.Color(0.2, 0.6, 1.0);
-        // Brighter blue tint when boosting
-        const boostColor = new THREE.Color(0.4, 0.8, 1.0);
-
-        // Lerp between colors based on boost state - subtle transition
-        const finalColor = coreColor.clone();
-        if (isBoosting) {
-            finalColor.lerp(boostColor, 0.3); // Brighter blue when boosting
-        }
-
-        // Update material color
-        this.glowMaterial.color.copy(finalColor);
-
-        // Constant opacity - static size
-        this.glowMaterial.opacity = 0.85;
-
-        // Static size - no scale animation
-        this.engineGlow.scale.set(1.0, 1.0, 1.0);
-
-        // Always visible
-        this.engineGlow.visible = true;
-    }
+    // Jet engine visuals now shared with player via ShipJetEngine
 
     private shouldUseBoost(): boolean {
         // Competitive boost usage - NPCs should use boost strategically to stay competitive
@@ -1331,6 +1332,8 @@ export class NPCShip {
             // Apply lateral offset and hover height (match player ship height)
             pos.addScaledVector(binormal, this.state.lateralOffset);
             pos.addScaledVector(normal, PHYSICS.hoverHeight);
+            // Add vertical offset for ramps/airtime (match player)
+            pos.addScaledVector(normal, this.state.verticalOffset);
 
             this.root.position.copy(pos);
 

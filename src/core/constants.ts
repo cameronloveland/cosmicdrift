@@ -31,6 +31,15 @@ export const CAMERA = {
 export const PHYSICS = {
     baseSpeed: 236, // km/h visualized in HUD (convert to m/s inside) - reduced 25% from 315
     maxSpeed: 405, // reduced 25% from 540 to maintain proportional relationship
+    // Throttle/yaw racing controls
+    maxNonBoostKmh: 250, // non-boost top speed (W not required to maintain once reached)
+    throttleAccelKmhPerSec: 180, // km/h per second while holding W
+    brakeDecelKmhPerSec: 320, // km/h per second while holding S
+    coastDecelKmhPerSec: 80, // km/h per second when neither W nor S (below maxNonBoostKmh)
+    yawAccel: 2.2, // rad/s^2 target for yaw-driven lateral response (used as input gain)
+    yawDamping: 3.0, // damping for yaw-driven lateral velocity
+    yawDownPitchMax: 0.06, // radians: pitch-down while turning to simulate downforce
+    yawDownPitchSpeed: 5.0, // how quickly pitch approaches target while turning
     boostMultiplier: 1.8,
     // Manual boost resource
     boostDurationSec: 3.0, // full-to-empty hold duration
@@ -44,10 +53,26 @@ export const PHYSICS = {
     pitchMax: 0.2,
     pitchAccel: 1.8,
     pitchDamping: 3.0,
+    // Roll (player-controlled) tuning
+    rollMax: 0.6,        // radians (~34 deg)
+    rollAccel: 2.4,      // how fast roll builds with input
+    rollDamping: 3.2,    // how fast roll recenters without input
+    // Coupling strength for roll+pitch producing lateral turn
+    turnCouplingStrength: 1.0,
     flowFillSpeed: 0.12,
     flowDrainSpeed: 0.5,
     highSpeedThreshold: 191, // reduced 25% from 255 to maintain proportional relationship
-    hoverHeight: 0.3 // Height above track surface in meters
+    hoverHeight: 2.0, // Height above track surface in meters
+    // Vertical flight/containment tuning
+    verticalAccel: 24.0, // m/s^2 base target vertical velocity from pitch input
+    verticalDamping: 8.0, // damping when matching target vertical velocity
+    verticalSpring: 0.3, // recentering spring strength toward 0 offset (very weak)
+    verticalSpringDamping: 0.1, // damping for spring motion (very weak)
+    corridorHalfHeight: 10.0, // meters up/down from hover height (more range)
+    climbGain: 1.6, // scales climb rate from pitch and forward speed
+    verticalResponseExp: 1.6, // nonlinear response exponent for pitch → vertical speed
+    // Yaw coupling from bank (roll)
+    yawFromBankGain: 0.9 // radians of yaw per radian of bank (subtle)
 };
 
 export const RENDER = {
@@ -163,6 +188,23 @@ export const WORMHOLE = {
     lightness: 0.5, // HSL lightness (reduced for less white, harder colors)
     opacity: 0.85, // dot transparency (increased for visibility)
     glowIntensity: 1.3 // brightness multiplier (reduced to avoid white glow)
+};
+
+// Ramp launch configuration
+export const RAMP = {
+    count: 4, // four evenly spaced ramps
+    lengthMeters: 24, // ramp trigger zone length along track
+    minStartOffset: 220, // meters from start before first ramp can appear
+    // Big, cinematic launch
+    upwardImpulseMps: 16.0, // instantaneous upward velocity boost on entry
+    airDuration: 1.8, // seconds using air spring/damping after launch
+    airSpring: 0.12, // weaker spring while airborne for longer hang time
+    airDamping: 0.06, // light damping for smooth settle
+    // Visuals
+    thickness: 0.22, // visual stripe height above track
+    colorStart: new Color(0x53d7ff), // cyan/blue
+    colorEnd: new Color(0x53d7ff), // same blue for solid blue ramps
+    glowIntensity: 1.3
 };
 
 // Planet visual effects configuration

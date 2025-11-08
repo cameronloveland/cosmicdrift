@@ -2,97 +2,214 @@ import * as THREE from 'three';
 
 export class ShipJetEngine {
     public root = new THREE.Group();
-    private glowMaterial!: THREE.MeshBasicMaterial;
-    private engineGlow!: THREE.Mesh;
+
+    // Idle (warm cap) state
+    private idleMaterial!: THREE.ShaderMaterial;
+    private idleMesh!: THREE.Mesh;
+    private idleOpacity: number = 0.35;
+
+    // Moving (blue cone) state
+    private coneMaterial!: THREE.MeshBasicMaterial;
+    private coneMesh!: THREE.Mesh;
+    private coneOpacity: number = 0.95;
+
+    // Inner boost core (tight hot-blue cone)
+    private coreMaterial!: THREE.MeshBasicMaterial;
+    private coreMesh!: THREE.Mesh;
+    private coreOpacity: number = 0.0;
+
+    // Moving (outer warm cone overlay)
+    private outerMaterial!: THREE.MeshBasicMaterial;
+    private outerMesh!: THREE.Mesh;
+    private outerOpacity: number = 0.0;
+
+    // Animation state
+    private timeSec: number = 0;
+    private tmpColor = new THREE.Color();
 
     constructor(position: THREE.Vector3 = new THREE.Vector3(0, 0, -0.9)) {
-        // Engine glow effect (from rocket booster) - blue to orange gradient
-        this.glowMaterial = new THREE.MeshBasicMaterial({
-            color: 0xffffff, // White base, will use vertex colors
+        // Warm idle cap material using radial alpha falloff for soft edge
+        this.idleMaterial = new THREE.ShaderMaterial({
+            uniforms: {
+                uColor: { value: new THREE.Color(1.0, 0.6, 0.2) },
+                uOpacity: { value: this.idleOpacity },
+                uSoftness: { value: 0.45 }
+            },
+            vertexShader: `
+                varying vec2 vUv;
+                void main() {
+                    vUv = uv;
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                }
+            `,
+            fragmentShader: `
+                varying vec2 vUv;
+                uniform vec3 uColor;
+                uniform float uOpacity;
+                uniform float uSoftness; // 0..1, edge feather
+                void main() {
+                    vec2 c = vUv - 0.5;
+                    float r = length(c) * 2.0; // 0 at center, ~1 at edge
+                    float edge = 1.0 - smoothstep(1.0 - uSoftness, 1.0, r);
+                    float alpha = uOpacity * edge;
+                    gl_FragColor = vec4(uColor, alpha);
+                }
+            `,
             transparent: true,
-            opacity: 0.85,
             blending: THREE.AdditiveBlending,
             depthWrite: false,
+            depthTest: true,
             toneMapped: false,
-            vertexColors: true // Enable vertex colors for gradient
+            side: THREE.DoubleSide
         });
 
-        // Create rocket booster flame with blue-to-orange gradient
-        const coneGeometry = new THREE.ConeGeometry(0.12, 0.3, 16, 1, true);
+        // Idle cap: circular billboard perpendicular to engine axis (-Z)
+        const idleGeo = new THREE.CircleGeometry(0.11, 32);
+        this.idleMesh = new THREE.Mesh(idleGeo, this.idleMaterial);
+        this.idleMesh.position.copy(position);
+        this.idleMesh.rotation.y = Math.PI; // face -Z
+        this.idleMesh.position.z += 0.005; // tuck slightly into nozzle so it touches
+        this.idleMesh.renderOrder = 0;
+        this.root.add(this.idleMesh);
 
-        // Add vertex colors for blue-to-orange gradient
-        const colors: number[] = [];
-        const positions = coneGeometry.attributes.position.array;
-        const vertexCount = positions.length / 3;
+        // Blue cone material (solid color, no gradient)
+        this.coneMaterial = new THREE.MeshBasicMaterial({
+            color: new THREE.Color(0.2, 0.65, 1.0),
+            transparent: true,
+            opacity: this.coneOpacity,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+            toneMapped: false
+        });
 
-        for (let i = 0; i < vertexCount; i++) {
-            // Y coordinate determines position along cone (0 at base, 0.15 at tip for height 0.3)
-            const yPos = positions[i * 3 + 1];
-            const normalizedY = (yPos + 0.15) / 0.3; // Normalize to 0-1
-            const clampedY = THREE.MathUtils.clamp(normalizedY, 0, 1);
+        // Cone points backward along -Z; translate so base sits at origin (no forward protrusion)
+        const coneHeight = 0.26;
+        const coneRadius = 0.10;
+        const coneGeo = new THREE.ConeGeometry(coneRadius, coneHeight, 20, 1, false);
+        // Place base at y=0 so after -90deg X-rotation the base sits at the nozzle (z=0)
+        // and the tip extends backward along -Z
+        coneGeo.translate(0, coneHeight * 0.5, 0);
+        this.coneMesh = new THREE.Mesh(coneGeo, this.coneMaterial);
+        this.coneMesh.position.copy(position);
+        this.coneMesh.position.z -= 0.001; // tiny tuck to avoid z-fighting
+        this.coneMesh.rotation.x = -Math.PI / 2;
+        this.coneMesh.visible = true; // always visible (idle flame present)
+        this.coneMesh.renderOrder = 1; // draw after idle disc for correct layering
+        this.root.add(this.coneMesh);
 
-            // Gradient: 30% blue, then blend to vibrant orange at tip
-            const blueColor = new THREE.Color(0.2, 0.6, 1.0); // Bright blue
-            const vibrantOrangeColor = new THREE.Color(1.0, 0.5, 0.0); // Vibrant orange
-            const orangeColor = new THREE.Color(1.0, 0.6, 0.15); // Orange transition
+        // Inner hot core cone: smaller, brighter blue, reveals when boosting
+        this.coreMaterial = new THREE.MeshBasicMaterial({
+            color: new THREE.Color(0.35, 0.85, 1.0),
+            transparent: true,
+            opacity: this.coreOpacity,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+            toneMapped: false
+        });
+        const coreHeight = 0.22;
+        const coreRadius = 0.06;
+        const coreGeo = new THREE.ConeGeometry(coreRadius, coreHeight, 20, 1, false);
+        coreGeo.translate(0, coreHeight * 0.5, 0);
+        this.coreMesh = new THREE.Mesh(coreGeo, this.coreMaterial);
+        this.coreMesh.position.copy(position);
+        this.coreMesh.position.z -= 0.001;
+        this.coreMesh.rotation.x = -Math.PI / 2;
+        this.coreMesh.visible = false;
+        this.coreMesh.renderOrder = 1; // draw with inner stack
+        this.root.add(this.coreMesh);
 
-            let gradientColor: THREE.Color;
-            if (clampedY <= 0.3) {
-                // First 30%: pure blue
-                gradientColor = blueColor;
-            } else if (clampedY <= 0.7) {
-                // 30-70%: blue to orange
-                const t = (clampedY - 0.3) / 0.4;
-                gradientColor = blueColor.clone().lerp(orangeColor, t);
-            } else {
-                // 70-100%: orange to vibrant orange at tip
-                const t = (clampedY - 0.7) / 0.3;
-                gradientColor = orangeColor.clone().lerp(vibrantOrangeColor, t);
-            }
-
-            colors.push(gradientColor.r, gradientColor.g, gradientColor.b);
-        }
-
-        coneGeometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-
-        this.engineGlow = new THREE.Mesh(coneGeometry, this.glowMaterial);
-        this.engineGlow.position.copy(position);
-        this.engineGlow.rotation.x = -Math.PI / 2; // Point backward
-        this.root.add(this.engineGlow);
+        // Outer warm cone (yellow/orange) that wraps blue cone when moving
+        this.outerMaterial = new THREE.MeshBasicMaterial({
+            color: new THREE.Color(1.0, 0.72, 0.18),
+            transparent: true,
+            opacity: this.outerOpacity,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+            toneMapped: false
+        });
+        const outerGeo = new THREE.ConeGeometry(coneRadius * 1.1, coneHeight * 1.05, 20, 1, false);
+        outerGeo.translate(0, coneHeight * 0.5, 0);
+        this.outerMesh = new THREE.Mesh(outerGeo, this.outerMaterial);
+        this.outerMesh.position.copy(position);
+        this.outerMesh.position.z -= 0.001;
+        this.outerMesh.rotation.x = -Math.PI / 2;
+        this.outerMesh.visible = false;
+        this.outerMesh.renderOrder = 2;
+        this.root.add(this.outerMesh);
     }
 
-    public update(dt: number, isBoosting: boolean) {
-        // Static glow - blue flame effect
-        // Core color (bright blue)
-        const coreColor = new THREE.Color(0.2, 0.6, 1.0);
-        // Brighter blue tint when boosting
-        const boostColor = new THREE.Color(0.4, 0.8, 1.0);
+    // isMoving=true when the ship has non-zero forward speed
+    public update(dt: number, isMoving: boolean, isBoosting: boolean) {
+        this.timeSec += dt;
 
-        // Lerp between colors based on boost state - subtle transition
-        const finalColor = coreColor.clone();
+        // Subtle pulse for idle cap
+        const idlePulse = 0.9 + 0.1 * (0.5 + 0.5 * Math.sin(this.timeSec * 4.0));
+        const idleTargetOpacity = 0.3 * idlePulse;
+        this.idleOpacity = THREE.MathUtils.damp(this.idleOpacity, isMoving ? 0.0 : idleTargetOpacity, isMoving ? 14 : 4, dt);
+        this.idleMaterial.uniforms.uOpacity.value = THREE.MathUtils.clamp(this.idleOpacity, 0.0, 0.6);
+        this.idleMesh.visible = !isMoving && (this.idleMaterial.uniforms.uOpacity.value as number) > 0.01;
+
+        // Blue cone is always visible; smaller/dimmer at idle
+        const conePulse = 1.0 + 0.08 * Math.sin(this.timeSec * 12.0);
+        // Make the cone more opaque overall; brighten further during boost
+        const coneTargetOpacity = isMoving ? (isBoosting ? 1.0 : 0.98) : 0.85;
+        this.coneOpacity = THREE.MathUtils.damp(this.coneOpacity, coneTargetOpacity, 10, dt);
+        this.coneMaterial.opacity = THREE.MathUtils.clamp(this.coneOpacity * conePulse, 0.0, 1.0);
+        // Slight color shift toward hotter blue while boosting
         if (isBoosting) {
-            finalColor.lerp(boostColor, 0.3); // Brighter blue when boosting
+            this.coneMaterial.color.setRGB(0.28, 0.82, 1.0);
+        } else {
+            this.coneMaterial.color.setRGB(0.2, 0.65, 1.0);
         }
+        this.coneMesh.visible = this.coneMaterial.opacity > 0.02;
 
-        // Update material color
-        this.glowMaterial.color.copy(finalColor);
+        // Maintain consistent scale; keep geometry allocations out of hot path
+        // Optional slight length modulation for life without gradient
+        const boostLen = isBoosting ? 0.14 : 0.0;
+        const scaleZ = isMoving ? (1.0 + boostLen + 0.06 * Math.sin(this.timeSec * 9.0)) : 0.9;
+        const radiusScale = isMoving ? (isBoosting ? 1.05 : 1.0) : 0.85;
+        this.coneMesh.scale.set(radiusScale, radiusScale, scaleZ);
 
-        // Constant opacity - static size
-        this.glowMaterial.opacity = 0.85;
+        // Inner core: tight hot-blue flame that appears and glows when boosting
+        const coreTargetOpacity = isBoosting ? 1.0 : (isMoving ? 0.35 : 0.0);
+        const corePulse = 0.98 + 0.12 * Math.sin(this.timeSec * 18.0);
+        this.coreOpacity = THREE.MathUtils.damp(this.coreOpacity, coreTargetOpacity, isBoosting ? 16 : 8, dt);
+        this.coreMaterial.opacity = THREE.MathUtils.clamp(this.coreOpacity * corePulse, 0.0, 1.0);
+        // Make the core a brighter, hotter blue when boosting
+        if (isBoosting) {
+            this.coreMaterial.color.setRGB(0.45, 0.95, 1.0);
+        } else {
+            this.coreMaterial.color.setRGB(0.35, 0.85, 1.0);
+        }
+        this.coreMesh.visible = this.coreMaterial.opacity > 0.02;
+        this.coreMesh.scale.set(1.0, 1.0, isBoosting ? 1.2 : 1.0);
 
-        // Static size - no scale animation
-        this.engineGlow.scale.set(1.0, 1.0, 1.0);
-
-        // Always visible
-        this.engineGlow.visible = true;
+        // Outer warm cone overlay when moving
+        // Keep visible but don't overpower the core during boost
+        const outerTargetOpacity = isMoving ? (isBoosting ? 0.22 : 0.28) : 0.0;
+        const outerPulse = 1.0 + 0.08 * Math.sin(this.timeSec * 8.0);
+        this.outerOpacity = THREE.MathUtils.damp(this.outerOpacity, outerTargetOpacity, 10, dt);
+        this.outerMaterial.opacity = THREE.MathUtils.clamp(this.outerOpacity * outerPulse, 0.0, 1.0);
+        this.outerMesh.visible = isMoving && this.outerMaterial.opacity > 0.02;
+        this.outerMesh.scale.set(1.0, 1.0, 1.04);
     }
 
     public dispose() {
-        this.glowMaterial.dispose();
-        if (this.engineGlow.geometry) {
-            this.engineGlow.geometry.dispose();
-        }
-        this.root.remove(this.engineGlow);
+        this.idleMaterial.dispose();
+        if (this.idleMesh.geometry) this.idleMesh.geometry.dispose();
+        this.root.remove(this.idleMesh);
+
+        this.coneMaterial.dispose();
+        if (this.coneMesh.geometry) this.coneMesh.geometry.dispose();
+        this.root.remove(this.coneMesh);
+
+        this.coreMaterial.dispose();
+        if (this.coreMesh.geometry) this.coreMesh.geometry.dispose();
+        this.root.remove(this.coreMesh);
+
+        this.outerMaterial.dispose();
+        if (this.outerMesh.geometry) this.outerMesh.geometry.dispose();
+        this.root.remove(this.outerMesh);
     }
 }
 

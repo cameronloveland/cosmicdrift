@@ -12,6 +12,13 @@ interface Particle {
 
 type Boostable = { root: Group; state: { boosting: boolean } };
 
+type BoostParticleOptions = {
+    scaleMultiplier?: number;
+    opacity?: number;
+    toneMapped?: boolean;
+    depthTest?: boolean;
+};
+
 export class ShipBoostParticles {
     public root = new THREE.Group();
     private ship: Boostable;
@@ -20,9 +27,13 @@ export class ShipBoostParticles {
     private tmpObj = new THREE.Object3D();
     private colors: THREE.Color[] = [];
     private maxParticles = 50;
+    private scaleMultiplier = 1.0;
+    private baseOpacity = 0.8;
 
-    constructor(ship: Boostable) {
+    constructor(ship: Boostable, opts?: BoostParticleOptions) {
         this.ship = ship;
+        if (opts?.scaleMultiplier !== undefined) this.scaleMultiplier = opts.scaleMultiplier;
+        if (opts?.opacity !== undefined) this.baseOpacity = opts.opacity;
 
         // Create particle geometry (small spheres)
         const geometry = new THREE.SphereGeometry(0.05, 8, 6);
@@ -31,10 +42,11 @@ export class ShipBoostParticles {
         const material = new THREE.MeshBasicMaterial({
             color: 0x00ffff, // Cyan
             transparent: true,
-            opacity: 0.8,
+            opacity: this.baseOpacity,
             blending: THREE.AdditiveBlending,
             depthWrite: false,
-            depthTest: false // CRITICAL FIX: Disable depth test to ensure visibility
+            depthTest: opts?.depthTest ?? false,
+            toneMapped: opts?.toneMapped ?? true
         });
 
         // Create instanced mesh for efficient rendering
@@ -116,7 +128,7 @@ export class ShipBoostParticles {
 
             // Update instance matrix
             this.tmpObj.position.copy(particle.position);
-            this.tmpObj.scale.setScalar(particle.scale * particle.opacity);
+            this.tmpObj.scale.setScalar(particle.scale * particle.opacity * this.scaleMultiplier);
             this.tmpObj.updateMatrix();
             this.imesh.setMatrixAt(i, this.tmpObj.matrix);
 

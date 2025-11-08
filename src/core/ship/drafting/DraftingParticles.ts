@@ -2,6 +2,13 @@ import * as THREE from 'three';
 
 type Draftable = { root: THREE.Group; state: { speedKmh: number } };
 
+type DraftingOptions = {
+    scaleMultiplier?: number;
+    opacity?: number;
+    toneMapped?: boolean;
+    depthTest?: boolean;
+};
+
 type Particle = {
     s: number; // 0..1 along path
     speed: number; // progression per second
@@ -19,20 +26,22 @@ export class DraftingParticles {
     private particles: Particle[] = [];
     private maxParticles = 140;
     private spawnAccumulator = 0;
+    private scaleMultiplier = 1.0;
 
-    constructor(ship: Draftable) {
+    constructor(ship: Draftable, opts?: DraftingOptions) {
         this.ship = ship;
+        if (opts?.scaleMultiplier !== undefined) this.scaleMultiplier = opts.scaleMultiplier;
 
         // Small glowing spheres as retro particle dots
         const geo = new THREE.SphereGeometry(0.035, 6, 6);
         const mat = new THREE.MeshBasicMaterial({
             color: 0x53d7ff,
             transparent: true,
-            opacity: 1,
+            opacity: opts?.opacity ?? 1,
             blending: THREE.AdditiveBlending,
             depthWrite: false,
-            depthTest: false,
-            toneMapped: false
+            depthTest: opts?.depthTest ?? false,
+            toneMapped: opts?.toneMapped ?? false
         });
         this.imesh = new THREE.InstancedMesh(geo, mat, this.maxParticles);
         this.imesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(this.maxParticles * 3), 3);
@@ -116,7 +125,7 @@ export class DraftingParticles {
 
             // Size and fade across life
             const alpha = 1.0 - s;
-            const scale = p.scale * (0.6 + 0.6 * (1.0 - s));
+            const scale = p.scale * (0.6 + 0.6 * (1.0 - s)) * this.scaleMultiplier;
 
             this.tmpObj.position.copy(pos);
             this.tmpObj.scale.setScalar(scale);

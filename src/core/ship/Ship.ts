@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CAMERA, COLORS, LAPS_TOTAL, PHYSICS, TUNNEL, BOOST_PAD, FOCUS_REFILL, DRIFT, DRAFTING } from '../constants';
+import { CAMERA, COLORS, LAPS_TOTAL, PHYSICS, TUNNEL, BOOST_PAD, FOCUS_REFILL, DRIFT, DRAFTING, RAMP } from '../constants';
 import { Track } from '../Track';
 import { ShipRocketTail } from './ShipRocketTail';
 import { ShipJetEngine } from './ShipJetEngine';
@@ -12,7 +12,9 @@ export class Ship {
         t: 0,
         speedKmh: 0, // Start completely stationary
         lateralOffset: 0,
+        verticalOffset: 0,
         pitch: 0,
+        roll: 0,
         flow: 0,
         boosting: false,
         lapCurrent: 0, // Start at lap 0 (pre-race)
@@ -34,6 +36,10 @@ export class Ship {
     private inputEnabled = false; // disabled during countdown
     private velocitySide = 0;
     private velocityPitch = 0;
+    private verticalVelocity = 0;
+    private velocityRoll = 0;
+    private baseSpeedKmh = 0; // throttle-controlled non-boost speed
+    private driftYaw = 0; // visual yaw used during boost drifting
     private boostTimer = 0; // visual intensity for camera/shake
     private wasDrifting = false; // track previous frame's drift state
     private boostEnergy = 1; // 0..1 manual boost resource
@@ -65,6 +71,10 @@ export class Ship {
     private wasOnBoostPad = false; // track previous frame's boost pad state to detect entry
     private baseFov = CAMERA.fov;
     private currentFov = CAMERA.fov;
+
+    // Ramp launch state
+    private wasOnRamp = false;
+    private airborneTimer = 0;
 
     // Focus refill state
     private focusRefillActive = false;
@@ -394,17 +404,17 @@ export class Ship {
         body.add(boosterNozzle);
         this.addEdgeLines(boosterNozzle);
 
-        // Create jet engine component
-        this.jetEngine = new ShipJetEngine(new THREE.Vector3(0, 0, -0.9));
+        // Create jet engine component at nozzle
+        this.jetEngine = new ShipJetEngine(new THREE.Vector3(0, 0, -0.72));
         body.add(this.jetEngine.root);
 
         this.root.add(body);
 
         // Create rocket tail boost effect (initially hidden)
-        // Position further back at jet engine nozzle opening (z=-0.85) so tail starts right at the nozzle
+        // Start just behind the nozzle exit
         this.rocketTail = new ShipRocketTail(
             this,
-            new THREE.Vector3(0, 0, -0.85),
+            new THREE.Vector3(0, 0, -0.74),
             0 // no baseClipOffset for player ship
         );
         this.root.add(this.rocketTail.root);
@@ -426,17 +436,22 @@ export class Ship {
         this.cameraControlEnabled = false;
     }
 
-    public input = { left: false, right: false, up: false, down: false, boost: false };
+    public input = { left: false, right: false, up: false, down: false, boost: false, yawLeft: false, yawRight: false };
 
     private onKey(e: KeyboardEvent, down: boolean) {
         // Only process input if input is enabled (not during countdown)
         if (!this.inputEnabled) return;
 
+        // Turn (Yaw) - A/D or ArrowLeft/Right
         if (e.code === 'ArrowLeft' || e.code === 'KeyA') this.input.left = down;
         if (e.code === 'ArrowRight' || e.code === 'KeyD') this.input.right = down;
-        if (e.code === 'ArrowUp' || e.code === 'KeyW') this.input.up = down;
-        if (e.code === 'ArrowDown' || e.code === 'KeyS') this.input.down = down;
+        // Throttle/Brake - W/S or ArrowUp/Down
+        if (e.code === 'ArrowUp' || e.code === 'KeyW') this.input.up = down;     // throttle
+        if (e.code === 'ArrowDown' || e.code === 'KeyS') this.input.down = down; // brake (no reverse)
         if (e.code === 'Space') this.input.boost = down;
+        // Disable Q/E yaw in new scheme (ignored)
+        if (e.code === 'KeyQ') this.input.yawLeft = false;
+        if (e.code === 'KeyE') this.input.yawRight = false;
 
         // Focus refill key (F key)
         if (e.code === 'KeyF' && down) {
@@ -477,6 +492,8 @@ export class Ship {
         this.input.up = false;
         this.input.down = false;
         this.input.boost = false;
+        this.input.yawLeft = false;
+        this.input.yawRight = false;
     }
 
     setCameraControl(enabled: boolean) {
@@ -515,6 +532,7 @@ export class Ship {
         this.state.t = -12 / this.track.length; // Start 12 meters behind start line (matches constructor)
         this.state.speedKmh = 0;
         this.state.lateralOffset = 0;
+        this.state.verticalOffset = 0;
         this.state.pitch = 0;
         this.state.flow = 0;
         this.state.boosting = false;
@@ -559,6 +577,9 @@ export class Ship {
         this.state.driftDuration = 0;
         this.state.driftLength = 0;
         this.wasDrifting = false;
+        this.state.roll = 0;
+        this.velocityRoll = 0;
+        this.verticalVelocity = 0;
 
         // Clear input
         this.clearInput();
@@ -673,10 +694,36 @@ export class Ship {
         // Expose boost pad entry for audio trigger (set by Game.ts)
         this.state.onBoostPadEntry = justEnteredBoostPad;
 
-        // Auto-cruise: always move forward at base speed with all active multipliers
-        let targetSpeed = PHYSICS.baseSpeed * manual * this.tunnelBoostAccumulator * this.boostPadMultiplier;
+        // Ramp launch logic: one-shot upward impulse when entering ramp
+        const rampInfo = this.track.getRampAtT(this.state.t);
+        const justEnteredRamp = rampInfo.onRamp && !this.wasOnRamp;
+        if (justEnteredRamp) {
+            this.verticalVelocity += RAMP.upwardImpulseMps;
+            this.airborneTimer = RAMP.airDuration;
+        }
+        this.wasOnRamp = rampInfo.onRamp;
 
-        // If drafting, raise target to match lead ship speed smoothly
+        // Throttle-based base speed (non-boost)
+        const throttleHeld = this.input.up;
+        const brakeHeld = this.input.down;
+        const reachedMaxNonBoost = this.baseSpeedKmh >= PHYSICS.maxNonBoostKmh - 0.001;
+        if (throttleHeld) {
+            this.baseSpeedKmh = Math.min(PHYSICS.maxNonBoostKmh, this.baseSpeedKmh + PHYSICS.throttleAccelKmhPerSec * dt);
+        } else if (brakeHeld) {
+            this.baseSpeedKmh = Math.max(0, this.baseSpeedKmh - PHYSICS.brakeDecelKmhPerSec * dt);
+        } else {
+            // Coast behavior: decay unless at max non-boost speed; hold when at max
+            if (reachedMaxNonBoost) {
+                this.baseSpeedKmh = PHYSICS.maxNonBoostKmh;
+            } else {
+                this.baseSpeedKmh = Math.max(0, this.baseSpeedKmh - PHYSICS.coastDecelKmhPerSec * dt);
+            }
+        }
+
+        // Apply environment multipliers after base cap
+        let targetSpeed = this.baseSpeedKmh * manual * this.tunnelBoostAccumulator * this.boostPadMultiplier;
+
+        // Drafting can raise target above multiplier path if needed
         if (this.draftingActive) {
             const matchTarget = Math.min(
                 Math.max(this.draftingLeadSpeedKmh + DRAFTING.matchMaxDelta, this.state.speedKmh),
@@ -686,7 +733,6 @@ export class Ship {
         }
 
         const speedLerp = 1 - Math.pow(0.001, dt); // smooth
-        // Maintain consistent speed across track width for uniform turning feel
         this.state.speedKmh = THREE.MathUtils.lerp(this.state.speedKmh, targetSpeed, speedLerp);
         this.state.boosting = isBoosting;
         if (isBoosting) this.boostTimer = Math.min(this.boostTimer + dt, 1); else this.boostTimer = Math.max(this.boostTimer - dt * 2, 0);
@@ -759,13 +805,13 @@ export class Ship {
         // Reset checkpoint flag for next frame
         this.hasCrossedCheckpointThisFrame = false;
 
-        // lateral control
-        const sideInput = (this.input.right ? 1 : 0) - (this.input.left ? 1 : 0);
-        const targetSideVel = sideInput * PHYSICS.lateralAccel;
+        // Yaw-driven turning: A/D (or arrows) control yaw and lateral
+        const yawInput = (this.input.right ? 1 : 0) - (this.input.left ? 1 : 0);
+        const targetSideVel = yawInput * PHYSICS.lateralAccel;
         this.velocitySide = THREE.MathUtils.damp(this.velocitySide, targetSideVel, PHYSICS.lateralDamping, dt);
 
         // Force velocitySide to 0 when there's no input and it's very small (prevents drift)
-        if (Math.abs(sideInput) < 0.01 && Math.abs(this.velocitySide) < 0.01) {
+        if (Math.abs(yawInput) < 0.01 && Math.abs(this.velocitySide) < 0.01) {
             this.velocitySide = 0;
         }
 
@@ -774,25 +820,40 @@ export class Ship {
         this.state.lateralOffset = THREE.MathUtils.clamp(this.state.lateralOffset + this.velocitySide * dt, -lateralLimit, lateralLimit);
 
 
-        // pitch control
-        const pitchInput = (this.input.up ? 1 : 0) - (this.input.down ? 1 : 0);
-        const targetPitchVel = pitchInput * PHYSICS.pitchAccel;
-        this.velocityPitch = THREE.MathUtils.damp(this.velocityPitch, targetPitchVel, PHYSICS.pitchDamping, dt);
-        this.state.pitch = THREE.MathUtils.clamp(this.state.pitch + this.velocityPitch * dt, -PHYSICS.pitchMax, PHYSICS.pitchMax);
+        // Visual banking: roll into the turn and pitch slightly down while turning
+        const turning = Math.abs(yawInput) > 0.01;
+        const desiredPitch = turning ? -PHYSICS.yawDownPitchMax * Math.min(1, Math.abs(yawInput)) : 0;
+        this.state.pitch = THREE.MathUtils.damp(this.state.pitch, desiredPitch, PHYSICS.yawDownPitchSpeed, dt);
+        this.velocityPitch = 0;
 
-        // Explicitly damp pitch back to 0 when there's no input (prevents stuck orientation)
-        if (Math.abs(pitchInput) < 0.01 && Math.abs(this.velocityPitch) < 0.01) {
-            this.state.pitch = THREE.MathUtils.damp(this.state.pitch, 0, PHYSICS.pitchDamping * 1.5, dt);
-            // Clamp very small values to 0 to prevent floating point drift
-            if (Math.abs(this.state.pitch) < 0.001) {
-                this.state.pitch = 0;
-                this.velocityPitch = 0;
+        // Smooth roll into the turn so wings visibly bank (roll dominates over yaw)
+        const desiredRoll = THREE.MathUtils.clamp(yawInput * PHYSICS.rollMax, -PHYSICS.rollMax, PHYSICS.rollMax);
+        this.state.roll = THREE.MathUtils.damp(this.state.roll, desiredRoll, PHYSICS.rollDamping, dt);
+        this.velocityRoll = 0;
+
+        // Vertical behavior: spring toward base hover height (no free flight)
+        {
+            const springK = this.airborneTimer > 0 ? RAMP.airSpring : PHYSICS.verticalSpring;
+            const dampingC = this.airborneTimer > 0 ? RAMP.airDamping : PHYSICS.verticalSpringDamping;
+            const springForce = -springK * this.state.verticalOffset;
+            const springDamp = -dampingC * this.verticalVelocity;
+            this.verticalVelocity += (springForce + springDamp) * dt;
+            this.state.verticalOffset += this.verticalVelocity * dt;
+            if (this.airborneTimer > 0) this.airborneTimer = Math.max(0, this.airborneTimer - dt);
+            // Clamp to vertical corridor above the track (never below base hover)
+            const vHalf = PHYSICS.corridorHalfHeight;
+            if (this.state.verticalOffset < 0) {
+                this.state.verticalOffset = 0;
+                if (this.verticalVelocity < 0) this.verticalVelocity = 0;
+            }
+            if (this.state.verticalOffset > vHalf) {
+                this.state.verticalOffset = vHalf;
+                if (this.verticalVelocity > 0) this.verticalVelocity = 0;
             }
         }
 
-        // Drift detection: turning (left/right) AND boosting simultaneously
-        // sideInput already defined above in lateral control section
-        const isTurning = Math.abs(sideInput) > 0.01;
+        // Drift detection: turning (yaw-driven) AND boosting simultaneously
+        const isTurning = Math.abs(yawInput) > 0.01;
         const isDriftingNow = isTurning && isBoosting;
 
         // Update drift state
@@ -864,6 +925,7 @@ export class Ship {
         // apply lateral offset (side to side across the ribbon) and hover height
         pos.addScaledVector(right, this.state.lateralOffset);
         pos.addScaledVector(up, PHYSICS.hoverHeight);
+        pos.addScaledVector(up, this.state.verticalOffset);
 
         // compute quaternion from basis vectors (forward, up)
         const m = new THREE.Matrix4();
@@ -875,13 +937,17 @@ export class Ship {
 
         // Apply rotations independently using Euler angles for player input
         // Standard approach in racing games: base orientation from track, inputs as separate Euler rotations
-        const shipYaw = -sideInput * CAMERA.shipYawFromInput;
-        const bankAngle = THREE.MathUtils.degToRad(22) * THREE.MathUtils.clamp(this.velocitySide / PHYSICS.lateralAccel, -1, 1);
+        // Base yaw from input (reduced so roll visually dominates); slight amplification while boosting
+        const baseYaw = -yawInput * CAMERA.shipYawFromInput * 0.4;
+        const driftYawTarget = isBoosting && turning ? baseYaw * 1.15 : baseYaw;
+        this.driftYaw = THREE.MathUtils.damp(this.driftYaw, driftYawTarget, isBoosting ? 6 : 10, dt);
+        const shipYaw = this.driftYaw;
+        const rollAngle = this.state.roll;
 
         // Create rotation from Euler with order 'YXZ': Y (yaw) first, X (pitch) second, Z (bank) last
         // Euler(x, y, z, order) where x=pitch, y=yaw, z=bank
         // 'YXZ' order ensures yaw is applied first so it doesn't affect pitch axis
-        const inputEuler = new THREE.Euler(this.state.pitch, shipYaw, -bankAngle, 'YXZ');
+        const inputEuler = new THREE.Euler(this.state.pitch, shipYaw, rollAngle, 'YXZ');
         const inputQ = new THREE.Quaternion().setFromEuler(inputEuler);
 
         // Apply input rotation to base quaternion
@@ -899,14 +965,20 @@ export class Ship {
         // Update rocket tail effect based on boost pad state only
         this.rocketTail.update(dt);
 
-        // Animate engine glow - realistic jet boost effect
-        this.jetEngine.update(dt, isBoosting);
+        // Animate jet engine visuals: show blue cone when moving, warm cap when idle
+        const isMoving = this.state.speedKmh > 1;
+        this.jetEngine.update(dt, isMoving, this.state.boosting);
     }
 
     public updatePositionAndCamera(dt: number) {
         // Update ship position and orientation without input processing
         this.updateShipPosition();
         this.updateCamera(dt);
+    }
+
+    // Input/query helpers
+    public isBoostHeld(): boolean {
+        return this.input.boost;
     }
 
     private updateShipPosition() {
@@ -936,6 +1008,7 @@ export class Ship {
         // apply lateral offset (side to side across the ribbon) and hover height
         pos.addScaledVector(binormal, this.state.lateralOffset);
         pos.addScaledVector(up, PHYSICS.hoverHeight);
+        pos.addScaledVector(up, this.state.verticalOffset);
 
         // compute quaternion from basis vectors (forward, up)
         const m = new THREE.Matrix4();
@@ -975,6 +1048,7 @@ export class Ship {
         const camPos = pos.clone();
         camPos.addScaledVector(right, this.state.lateralOffset);
         camPos.addScaledVector(up, PHYSICS.hoverHeight);
+        camPos.addScaledVector(up, this.state.verticalOffset);
 
         // Mario Kart-style camera: independent smoothed yaw with heavy damping
         this.cameraYawVelocity = THREE.MathUtils.damp(this.cameraYawVelocity, this.targetCameraYaw - this.cameraYaw, CAMERA.cameraYawDamping, dt);

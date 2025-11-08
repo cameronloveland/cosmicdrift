@@ -22,17 +22,31 @@ export class ShipViewer {
     private onResizeBound: (() => void) | null = null;
 
     // UI state and overlay
-    private ui = { boost: false, trackBoost: false, drift: false, draft: false };
+	private ui = { boost: true, trackBoost: false, drift: false, draft: false };
     private controlsEl: HTMLDivElement | null = null;
 
-    // Viewer ship clone and engine glow ref
+    // Viewer ship clone and engine refs
     private viewerShip: THREE.Group | null = null;
+    // Legacy gradient cone support (pre-refactor)
     private engineGlowMesh: THREE.Mesh | null = null;
     private engineGlowMat: THREE.MeshBasicMaterial | null = null;
+    private engineGlowOpacityCurrent: number = 0.0;
+    private engineGlowScaleCurrent: number = 1.0;
+    // New jet engine components (idle disc + blue cone)
+    private idleDiscMesh: THREE.Mesh | null = null;
+    private idleDiscMat: THREE.ShaderMaterial | null = null;
+    private jetConeMesh: THREE.Mesh | null = null;
+    private jetConeMat: THREE.MeshBasicMaterial | null = null;
+    private outerConeMesh: THREE.Mesh | null = null;
+    private outerConeMat: THREE.MeshBasicMaterial | null = null;
 
     // Timekeeping
     private lastTimeSec: number = 0;
     private nowSec: number = 0;
+
+    // Simulated environment motion (world flow)
+    private envGroup: THREE.Group | null = null;
+    private envTravel: number = 0; // meters along forward axis
 
     // Track boost (rocket tail)
     private rocketTail: ShipRocketTail | null = null;
@@ -63,7 +77,7 @@ export class ShipViewer {
         // Scene
         const scene = new THREE.Scene();
         // Set dark background similar to game background
-        scene.background = new THREE.Color(0x050314);
+        scene.background = new THREE.Color(0x02010a);
         this.scene = scene;
 
         // Camera
@@ -88,7 +102,7 @@ export class ShipViewer {
         renderer.setSize(width, height);
         renderer.toneMapping = THREE.ACESFilmicToneMapping;
         renderer.outputColorSpace = THREE.SRGBColorSpace;
-        renderer.setClearColor(0x050314, 1); // Match scene background
+        renderer.setClearColor(0x02010a, 1); // Match scene background
         // Modern lighting (default) supports emissive materials properly
         this.mount.innerHTML = '';
         this.mount.appendChild(renderer.domElement);
@@ -131,7 +145,9 @@ export class ShipViewer {
             gridMaterial.transparent = true;
             gridMaterial.opacity = 0.6; // More visible for better glow effect
         }
-        scene.add(gridHelper);
+        // Environment group to simulate world flow
+        const envGroup = new THREE.Group();
+        envGroup.add(gridHelper);
 
         // Dark ground circle for reference (below grid to not obscure it)
         const ground = new THREE.Mesh(
@@ -140,7 +156,9 @@ export class ShipViewer {
         );
         ground.rotation.x = -Math.PI / 2;
         ground.position.y = -0.001; // Slightly below grid
-        scene.add(ground);
+        envGroup.add(ground);
+        scene.add(envGroup);
+        this.envGroup = envGroup;
 
         // Clone the actual ship geometry (exclude dynamic effects like rocket tail)
         if (this.ship) {
@@ -148,7 +166,7 @@ export class ShipViewer {
             if (shipClone.children.length > 0) {
                 scene.add(shipClone);
                 this.viewerShip = shipClone;
-                this.locateEngineGlow(shipClone);
+                this.locateEngineMeshes(shipClone);
                 this.initEffects();
             } else {
                 console.warn('ShipViewer: Ship clone has no children. Original ship root has', this.ship.root.children.length, 'children');
@@ -204,6 +222,7 @@ export class ShipViewer {
 
             // Effect updates
             this.updateBoost(dt);
+            this.updateEngineGlow(dt);
             this.updateTrackBoost(dt);
             this.updateDrift(dt);
             this.updateDrafting(dt);
@@ -323,6 +342,11 @@ export class ShipViewer {
         if (mountStyle.position === 'static') {
             this.mount.style.position = 'relative';
         }
+		// Ensure initial active classes reflect UI state
+		boostBtn.classList.toggle('active', this.ui.boost);
+		trackBoostBtn.classList.toggle('active', this.ui.trackBoost);
+		driftBtn.classList.toggle('active', this.ui.drift);
+		draftBtn.classList.toggle('active', this.ui.draft);
         // Initialize default inactive visual style
         setActiveButtonStyle(boostBtn, this.ui.boost);
         setActiveButtonStyle(trackBoostBtn, this.ui.trackBoost);
@@ -340,11 +364,22 @@ export class ShipViewer {
             getBoostPadTimer: () => this.trackBoostTimer,
             getNow: () => this.nowSec
         } as any;
-        this.rocketTail = new ShipRocketTail(rocketProxy, new THREE.Vector3(0, 0, -0.85), 0);
+        // Viewer track boost: use single long yellow cone for clarity
+        this.rocketTail = new ShipRocketTail(
+            rocketProxy,
+            new THREE.Vector3(0, 0, -0.74),
+            0,
+            { singleCone: true, lengthScale: 1.8, color: 0xffdd55 }
+        );
         this.viewerShip.add(this.rocketTail.root);
 
         this.draftProxy = { root: this.viewerShip, state: { speedKmh: 200 } };
-        this.draftingParticles = new DraftingParticles(this.draftProxy as any);
+        this.draftingParticles = new DraftingParticles(this.draftProxy as any, {
+            scaleMultiplier: 0.7,
+            opacity: 0.8,
+            depthTest: true,
+            toneMapped: true
+        } as any);
         this.draftingLines = new DraftingVectorLines(this.draftProxy as any, { count: 22, points: 26 });
         this.viewerShip.add(this.draftingParticles.root);
         this.viewerShip.add(this.draftingLines.root);
@@ -353,8 +388,16 @@ export class ShipViewer {
 
         // Boost particles (viewer-local)
         this.boostProxy = { root: this.viewerShip, state: { boosting: false } };
-        this.shipBoostParticles = new ShipBoostParticles(this.boostProxy as any);
-        this.viewerShip.add(this.shipBoostParticles.root);
+        this.shipBoostParticles = new ShipBoostParticles(this.boostProxy as any, {
+            scaleMultiplier: 0.7,
+            opacity: 0.7,
+            depthTest: true,
+            toneMapped: true
+        } as any);
+        // Important: add boost particles to the scene (world space), not as a child of the ship.
+        // The particle system already spawns in world coordinates using the ship's world transform.
+        // Parenting it to the ship would apply the ship's transform a second time, pushing particles too high.
+        this.scene?.add(this.shipBoostParticles.root);
 
         const mini = {
             width: 4,
@@ -365,7 +408,8 @@ export class ShipViewer {
             getFrenetFrame: (_t: number, normal: THREE.Vector3, binormal: THREE.Vector3, tangent: THREE.Vector3) => {
                 normal.set(0, 1, 0);
                 binormal.set(1, 0, 0);
-                tangent.set(0, 0, 1);
+                // Match direction of getPointAtT (negative Z as t increases)
+                tangent.set(0, 0, -1);
             }
         };
         this.miniTrack = mini;
@@ -393,46 +437,134 @@ export class ShipViewer {
         } as ShipState;
     }
 
-    private locateEngineGlow(root: THREE.Object3D) {
-        let foundMesh: THREE.Mesh<THREE.BufferGeometry, THREE.Material | THREE.Material[]> | null = null;
+    private locateEngineMeshes(root: THREE.Object3D) {
+        // Try to find new-style meshes first (idle disc ShaderMaterial + blue cone)
         root.traverse(obj => {
-            if (foundMesh) return;
-            if (obj instanceof THREE.Mesh) {
+            if (!(obj instanceof THREE.Mesh)) return;
+            // Idle disc: CircleGeometry + ShaderMaterial with uOpacity uniform
+            if (!this.idleDiscMesh && obj.geometry instanceof THREE.CircleGeometry && (obj.material as any)?.isShaderMaterial) {
+                const mat = obj.material as THREE.ShaderMaterial;
+                if ((mat.uniforms as any)?.uOpacity) {
+                    this.idleDiscMesh = obj as any;
+                    this.idleDiscMat = mat;
+                    // Ensure proper render setup
+                    if (this.idleDiscMesh) this.idleDiscMesh.visible = true; // default: idle glow visible
+                    if (this.idleDiscMat) {
+                        this.idleDiscMat.transparent = true;
+                        this.idleDiscMat.depthWrite = false;
+                    }
+                }
+            }
+            // Jet cone: ConeGeometry + MeshBasicMaterial (blue)
+            if (!this.jetConeMesh && obj.geometry instanceof THREE.ConeGeometry && obj.material instanceof THREE.MeshBasicMaterial) {
+                // Skip rocket tail cones by checking approximate color (orange/white) and scale; jet cone is cyan/blue
+                const m = obj.material as THREE.MeshBasicMaterial;
+                const c = m.color;
+                const isBlue = c.b > c.g && c.g >= 0.55; // bluish
+                if (isBlue) {
+                    this.jetConeMesh = obj as any;
+                    this.jetConeMat = m;
+                }
+            }
+            // Outer warm cone: ConeGeometry + MeshBasicMaterial (yellow/orange)
+            if (!this.outerConeMesh && obj.geometry instanceof THREE.ConeGeometry && obj.material instanceof THREE.MeshBasicMaterial) {
+                const m = obj.material as THREE.MeshBasicMaterial;
+                const c = m.color;
+                const isWarm = c.r > 0.9 && c.g > 0.6 && c.b < 0.3;
+                if (isWarm) {
+                    this.outerConeMesh = obj as any;
+                    this.outerConeMat = m;
+                }
+            }
+        });
+
+        // Fallback: legacy gradient cone
+        if (!this.jetConeMesh) {
+            root.traverse(obj => {
+                if (!(obj instanceof THREE.Mesh)) return;
                 const mat = obj.material as any;
                 const isBasic = mat instanceof THREE.MeshBasicMaterial;
                 const hasVC = !!(obj.geometry as any)?.attributes?.color;
                 const isCone = obj.geometry instanceof THREE.ConeGeometry;
-                if (isBasic && hasVC && isCone) {
-                    foundMesh = obj as any;
+                if (isBasic && hasVC && isCone && !this.engineGlowMesh) {
                     this.engineGlowMesh = obj as any;
                     this.engineGlowMat = obj.material as THREE.MeshBasicMaterial;
-                    // Hide engine glow in viewer to prevent tiny bright point artifacts
-                    (this.engineGlowMesh as any).visible = false;
+                    (this.engineGlowMesh as any).visible = true;
+                    this.engineGlowMat.transparent = true;
+                    this.engineGlowMat.depthWrite = false;
+                    this.engineGlowMat.blending = THREE.AdditiveBlending;
+                    this.engineGlowMat.toneMapped = false;
+                    this.engineGlowOpacityCurrent = 0.18;
+                    this.engineGlowScaleCurrent = 0.95;
+                    this.engineGlowMat.opacity = this.engineGlowOpacityCurrent;
+                    if (this.engineGlowMesh) {
+                        this.engineGlowMesh.scale.set(this.engineGlowScaleCurrent, this.engineGlowScaleCurrent, this.engineGlowScaleCurrent);
+                    }
                 }
-            }
-        });
-        // engineGlowMesh/Mat set within traverse when found
+            });
+        }
     }
 
     private updateBoost(dt: number) {
-        // Engine glow pulse
-        if (this.engineGlowMesh && this.engineGlowMat) {
-            if (this.ui.boost) {
-                const pulse = 0.85 + Math.sin(this.nowSec * 12.0) * 0.15;
-                this.engineGlowMat.opacity = THREE.MathUtils.clamp(pulse, 0.2, 1.0);
-                const s = 1.0 + 0.05 * Math.sin(this.nowSec * 10.0);
-                this.engineGlowMesh.scale.set(s, s, s);
-            } else {
-                this.engineGlowMat.opacity = 0.85;
-                this.engineGlowMesh.scale.set(1.0, 1.0, 1.0);
-            }
-        }
-
         // Drive boost particle system
         if (this.boostProxy && this.shipBoostParticles) {
             this.boostProxy.state.boosting = !!this.ui.boost;
             this.shipBoostParticles.update(dt);
         }
+    }
+
+    private updateEngineGlow(dt: number) {
+        // If new engine meshes are present, drive them and hide overlap
+        if (this.idleDiscMesh && this.idleDiscMat && this.jetConeMesh && this.jetConeMat) {
+            const boosting = this.ui.boost;
+            const trackBoosting = this.ui.trackBoost;
+            const active = boosting || trackBoosting; // treat as moving/ignited
+
+            // Idle disc: visible only when not active
+            const idlePulse = 0.9 + 0.1 * (0.5 + 0.5 * Math.sin(this.nowSec * 4.0));
+            const idleOpacity = THREE.MathUtils.clamp((active ? 0.0 : 0.32 * idlePulse), 0, 0.6);
+            this.idleDiscMat.uniforms.uOpacity.value = idleOpacity;
+            this.idleDiscMesh.visible = idleOpacity > 0.01 && !active;
+
+            // Blue cone: always visible; small/dim at idle, larger/brighter when active
+            const baseScale = active ? 1.0 : 0.85;
+            const lengthScale = active ? 1.06 : 0.9;
+            const flicker = 1.0 + 0.05 * Math.sin(this.nowSec * 11.0);
+            const targetOpacity = active ? 0.9 : 0.6;
+            this.jetConeMat.opacity = THREE.MathUtils.clamp(targetOpacity * flicker, 0, 1);
+            this.jetConeMesh.scale.set(baseScale, baseScale, lengthScale);
+            this.jetConeMesh.visible = true;
+
+            // Outer warm cone: only when active (moving/boost/track boost)
+            if (this.outerConeMesh && this.outerConeMat) {
+                const outerFlicker = 1.0 + 0.08 * Math.sin(this.nowSec * 8.0);
+                this.outerConeMat.opacity = active ? THREE.MathUtils.clamp(0.45 * outerFlicker, 0, 1) : 0;
+                this.outerConeMesh.visible = active;
+                if (active) this.outerConeMesh.scale.set(1.0, 1.0, 1.04);
+            }
+            return;
+        }
+
+        // Legacy fallback: gradient cone
+        if (!this.engineGlowMesh || !this.engineGlowMat) return;
+        const isMoving = this.ui.boost || this.ui.trackBoost;
+        let targetOpacity = isMoving ? 0.9 : 0.18;
+        let targetScale = isMoving ? 1.05 : 0.95;
+        if (isMoving) {
+            const pulse = 1.0 + 0.05 * Math.sin(this.nowSec * 12.0);
+            targetOpacity *= THREE.MathUtils.clamp(0.95 + 0.05 * Math.sin(this.nowSec * 10.0), 0.9, 1.05);
+            targetScale *= pulse;
+        } else {
+            targetOpacity *= 0.95 + 0.05 * Math.sin(this.nowSec * 6.0);
+            targetScale *= 0.995 + 0.005 * Math.sin(this.nowSec * 5.0);
+        }
+        const damp = (current: number, target: number, k: number) => THREE.MathUtils.damp(current, target, k, dt);
+        this.engineGlowOpacityCurrent = damp(this.engineGlowOpacityCurrent, targetOpacity, isMoving ? 8 : 4);
+        this.engineGlowScaleCurrent = damp(this.engineGlowScaleCurrent, targetScale, isMoving ? 8 : 4);
+        this.engineGlowMat.opacity = THREE.MathUtils.clamp(this.engineGlowOpacityCurrent, 0.08, 1.0);
+        const s = this.engineGlowScaleCurrent;
+        this.engineGlowMesh.scale.set(s, s, s);
+        this.engineGlowMesh.visible = true;
     }
 
     private updateTrackBoost(dt: number) {
@@ -445,7 +577,8 @@ export class ShipViewer {
         if (!this.driftTrail || !this.driftState || !this.miniTrack) return;
         const active = this.ui.drift;
         this.driftState.isDrifting = active;
-        this.driftState.lateralOffset = active ? Math.sin(this.nowSec * 0.8) * 0.4 : 0;
+        // Keep trail centered under the ship in the viewer
+        this.driftState.lateralOffset = 0;
         const mps = this.driftState.speedKmh / 3.6;
         const L = this.miniTrack.length;
         this.driftState.t = (this.driftState.t + (mps * dt) / L) % 1;
@@ -457,13 +590,40 @@ export class ShipViewer {
         if (this.ui.draft) {
             this.draftingParticles.setVisible(true);
             this.draftingLines.setVisible(true);
-            this.draftProxy.state.speedKmh = 200;
+            // Tie drafting visuals to simulated speed
+            this.draftProxy.state.speedKmh = this.getSimulatedSpeedKmh();
         } else {
             this.draftingParticles.setVisible(false);
             this.draftingLines.setVisible(false);
         }
         this.draftingParticles.update(dt);
         this.draftingLines.update(dt);
+    }
+
+    private getSimulatedSpeedKmh(): number {
+        // Boost states run near max speed; otherwise use drift/draft presets or base speed
+        if (this.ui.boost || this.ui.trackBoost) return PHYSICS.maxSpeed * 0.92;
+        const driftKmh = this.driftState?.speedKmh ?? 0;
+        const draftKmh = this.draftProxy?.state.speedKmh ?? 0;
+        const base = PHYSICS.baseSpeed;
+        return Math.max(driftKmh, draftKmh, base);
+    }
+
+    private updateSimulatedWorldFlow(dt: number) {
+        if (!this.envGroup) return;
+        // Advance environment along the ship's forward to simulate motion
+        const speedKmh = this.getSimulatedSpeedKmh();
+        const mps = speedKmh / 3.6;
+        this.envTravel += mps * dt;
+
+        // Compute ship forward in world space (viewer ship faces +Z by default)
+        const forward = new THREE.Vector3(0, 0, 1);
+        if (this.viewerShip) forward.applyQuaternion(this.viewerShip.quaternion);
+
+        // Wrap travel to keep grid nearby (use small loop distance)
+        const loop = 10; // meters
+        const wrapped = -(this.envTravel % loop);
+        this.envGroup.position.copy(forward.multiplyScalar(wrapped));
     }
 
     private cloneShipGeometry(ship: Ship): THREE.Group {

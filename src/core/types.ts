@@ -9,6 +9,7 @@ export interface ShipState {
     t: number; // curve position [0..1]
     speedKmh: number;
     lateralOffset: number; // meters sideways
+    verticalOffset: number; // meters up/down relative to hover height
     pitch: number; // radians
     flow: number; // [0..1]
     boosting: boolean;
@@ -86,6 +87,15 @@ export type BoostPadInfo = {
     onPad: boolean; // currently driving over a boost pad
     boostActive: boolean; // boost effect is currently active (includes duration after leaving pad)
     boostTimer: number; // remaining boost duration in seconds
+};
+
+export type RampSegment = {
+    t: number; // position on track [0..1]
+    lengthT: number; // length in t units
+};
+
+export type RampInfo = {
+    onRamp: boolean; // currently in a ramp trigger zone
 };
 
 export type RacePosition = {
