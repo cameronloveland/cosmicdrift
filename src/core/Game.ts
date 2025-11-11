@@ -454,6 +454,11 @@ export class Game {
             });
         });
 
+        // MP3 seeking
+        this.ui.onMp3Seek((percent) => {
+            this.audio.seekMp3ToPercent(percent);
+        });
+
         // MP3 volume now handled by unified volume control above
 
         // MP3 auto-advance handler
@@ -533,6 +538,11 @@ export class Game {
     private onPauseKey(e: KeyboardEvent, down: boolean) {
         if (e.code === 'Escape' && down && this.started) {
             this.togglePause();
+        }
+
+        // Draft lock-on with 'E' key (only during race, not paused/free-flying)
+        if (e.code === 'KeyE' && down && this.started && !this.paused && !this.freeFlying) {
+            this.drafting.tryLockOn();
         }
 
         // Free flight mode toggle with '-' key
@@ -763,6 +773,9 @@ export class Game {
             steps++;
         }
 
+        // Update MP3 progress UI every frame (very cheap)
+        this.updateMp3ProgressUI();
+
         this.render();
         this.stats.end();
     };
@@ -791,7 +804,8 @@ export class Game {
             // Drafting first so Ship can use drafting speed in update
             this.drafting.update(dt, this.track, this.ship, this.npcShips);
             this.ship.update(dt);
-            this.ui.showDrafting(this.drafting.isActive());
+            this.ui.showDrafting(this.drafting.isLocked());
+            this.ui.showDraftLockHint(this.drafting.isEligible() && !this.drafting.isLocked());
             this.shipBoost.update(dt);
             this.driftTrail.update(dt, this.ship.state);
             // NPC drift trails in free-fly updates too
@@ -845,7 +859,8 @@ export class Game {
             // Drafting before ship update so target speed can incorporate it
             this.drafting.update(dt, this.track, this.ship, this.npcShips);
             this.ship.update(dt);
-            this.ui.showDrafting(this.drafting.isActive());
+            this.ui.showDrafting(this.drafting.isLocked());
+            this.ui.showDraftLockHint(this.drafting.isEligible() && !this.drafting.isLocked());
 
             // Visual effects use dilated dt for time dilation effect
             const visualDt = this.getEffectiveDt(dt);
@@ -1418,6 +1433,11 @@ export class Game {
             this.mp3Mode.currentTrackIndex = trackInfo.index;
         }
         this.mp3Mode.playing = isPlaying;
+    }
+
+    private updateMp3ProgressUI() {
+        const times = this.audio.getMp3Times();
+        this.ui.updateMp3Progress(times.current, times.duration);
     }
 
     private updateTunnelBackground(dt: number) {

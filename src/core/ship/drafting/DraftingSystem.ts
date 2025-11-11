@@ -7,9 +7,16 @@ import { DraftingParticles } from './DraftingParticles';
 import { DraftingVectorLines } from './DraftingVectorLines';
 
 export class DraftingSystem {
-    private active = false;
+    // Eligibility/lock state
+    private eligibleLead: NPCShip | null = null;
+    private lockedLead: NPCShip | null = null;
+    private locked = false;
+
+    // Timers
     private lockTimer = 0;
     private failTimer = 0;
+
+    // Cached values while locked
     private leadSpeedKmh = 0;
     private shield: THREE.Mesh | null = null;
     private particles: DraftingParticles | null = null;
@@ -20,6 +27,7 @@ export class DraftingSystem {
         playerForward: new THREE.Vector3(),
         leadPos: new THREE.Vector3(),
         leadForward: new THREE.Vector3(),
+        leadUp: new THREE.Vector3(),
         v: new THREE.Vector3(),
         up: new THREE.Vector3(),
         right: new THREE.Vector3(),
@@ -65,7 +73,12 @@ export class DraftingSystem {
     private ensureParticles(ship: Ship) {
         if (this.particles) return;
         this.particles = new DraftingParticles(ship as any);
-        ship.root.add(this.particles.root);
+        // IMPORTANT: Particles compute world-space positions using the ship's world
+        // transform. Parenting them to the ship would apply the transform twice,
+        // pushing them too high/away. Add to the same parent as the ship (scene).
+        const parent = ship.root.parent;
+        if (parent) parent.add(this.particles.root);
+        else ship.root.add(this.particles.root); // fallback if not yet attached
     }
 
     private ensureVectorLines(ship: Ship) {
@@ -74,8 +87,15 @@ export class DraftingSystem {
         ship.root.add(this.vectorLines.root);
     }
 
-    public isActive(): boolean {
-        return this.active;
+    public isEligible(): boolean { return !!this.eligibleLead; }
+    public isLocked(): boolean { return this.locked; }
+    public tryLockOn(): void {
+        if (this.eligibleLead && !this.locked) {
+            this.locked = true;
+            this.lockedLead = this.eligibleLead;
+            // reset dropout timer on lock
+            this.failTimer = 0;
+        }
     }
 
     public update(dt: number, track: Track, player: Ship, npcs: NPCShip[]) {
@@ -83,7 +103,7 @@ export class DraftingSystem {
         this.ensureParticles(player);
         this.ensureVectorLines(player);
 
-        // Find best lead candidate
+        // Find best lead candidate (for eligibility)
         const cosCone = Math.cos(THREE.MathUtils.degToRad(DRAFTING.coneDeg));
         let bestLead: NPCShip | null = null;
         let bestDist = Infinity;
@@ -114,28 +134,65 @@ export class DraftingSystem {
             }
         }
 
-        const conditionsOk = !!bestLead;
-        if (conditionsOk) {
-            this.lockTimer += dt;
-            this.failTimer = 0;
-        } else {
-            this.failTimer += dt;
-            this.lockTimer = 0;
+        // Update eligibility timers (only when not locked)
+        if (!this.locked) {
+            const conditionsOk = !!bestLead;
+            if (conditionsOk) {
+                this.lockTimer += dt;
+            } else {
+                this.lockTimer = 0;
+            }
+            this.eligibleLead = (this.lockTimer >= DRAFTING.lockTime) ? bestLead : null;
         }
 
-        // Activate after lock, deactivate after grace
-        if (!this.active && this.lockTimer >= DRAFTING.lockTime) {
-            this.active = true;
-        }
-        if (this.active && !conditionsOk && this.failTimer >= DRAFTING.dropoutGrace) {
-            this.active = false;
+        // Handle lock maintenance and dropout
+        if (this.locked && this.lockedLead) {
+            // Compute player vs lockedLead current conditions
+            track.getShipWorldPosition(this.lockedLead.state.t, this.lockedLead.state.lateralOffset, this.tmp.leadPos);
+            this.tmp.leadForward.set(0, 0, 1).applyQuaternion(this.lockedLead.root.quaternion).normalize();
+            this.tmp.v.subVectors(this.tmp.playerPos, this.tmp.leadPos);
+            const dist = this.tmp.v.length();
+            const inRange = (dist >= DRAFTING.minDistance && dist <= DRAFTING.maxDistance);
+            const dirLeadToPlayer = this.tmp.v.clone().normalize();
+            const behindDot = dirLeadToPlayer.dot(this.tmp.leadForward.clone().negate());
+            const aligned = this.tmp.playerForward.dot(this.tmp.leadForward) >= DRAFTING.alignmentMinDot;
+            const inCone = behindDot >= cosCone;
+
+            // Immediate dropout if boosting or fully sideways
+            const leadIsBoosting = this.lockedLead.state.boosting === true;
+            this.tmp.leadUp.set(0, 1, 0).applyQuaternion(this.lockedLead.root.quaternion).normalize();
+            const worldUp = new THREE.Vector3(0, 1, 0);
+            const upDot = Math.abs(this.tmp.leadUp.dot(worldUp));
+            const fullySideways = upDot < DRAFTING.sidewaysUpDot;
+
+            if (leadIsBoosting || fullySideways) {
+                this.locked = false;
+                this.lockedLead = null;
+                this.failTimer = 0;
+            } else {
+                const lockedConditionsOk = inRange && inCone && aligned;
+                if (!lockedConditionsOk) {
+                    this.failTimer += dt;
+                    if (this.failTimer >= DRAFTING.dropoutGrace) {
+                        this.locked = false;
+                        this.lockedLead = null;
+                        this.failTimer = 0;
+                    }
+                } else {
+                    // Conditions are OK - keep lock and reset fail timer
+                    this.failTimer = 0;
+                }
+            }
         }
 
-        // Effects when active
-        if (this.active && bestLead) {
+        // When locked, apply effects and speed/flow
+        if (this.locked && this.lockedLead) {
             // Store lead speed for matching and inform ship for target speed calc
-            this.leadSpeedKmh = bestLead.state.speedKmh;
+            this.leadSpeedKmh = this.lockedLead.state.speedKmh;
             player.setDraftingActive(true, this.leadSpeedKmh);
+
+            // Lateral follow assist toward lead's lane
+            player.setDraftFollowAssist(this.lockedLead.state.lateralOffset, DRAFTING.lockFollowStrength);
 
             // Focus(flow) recharge
             player.state.flow = THREE.MathUtils.clamp(
@@ -146,10 +203,10 @@ export class DraftingSystem {
         }
 
         // Visuals
-        this.setShieldVisible(this.active);
-        if (this.particles) this.particles.setVisible(this.active);
-        if (this.vectorLines) this.vectorLines.setVisible(this.active);
-        if (this.shield && this.active) {
+        this.setShieldVisible(this.locked);
+        if (this.particles) this.particles.setVisible(this.locked);
+        if (this.vectorLines) this.vectorLines.setVisible(this.locked);
+        if (this.shield && this.locked) {
             // Subtle emissive pulse while active
             const mat = this.shield.material as THREE.MeshPhysicalMaterial;
             const t = player.getNow ? (player.getNow() % 1000) : 0; // Ship has getNow(); NPC differs

@@ -8,6 +8,10 @@ interface Particle {
     maxAge: number;
     opacity: number;
     scale: number;
+    // Axis convergence data to shape plume
+    axisOrigin: THREE.Vector3; // world-space point on axis at spawn (nozzle exit)
+    axisDir: THREE.Vector3;    // world-space backward axis direction at spawn
+    radialDir: THREE.Vector3;  // world-space unit vector perpendicular to axis (spawn rim direction)
 }
 
 type Boostable = { root: Group; state: { boosting: boolean } };
@@ -73,24 +77,39 @@ export class ShipBoostParticles {
 
         const shipPos = this.ship.root.position.clone();
         const shipDir = new THREE.Vector3(0, 0, 1).applyQuaternion(this.ship.root.quaternion);
+        const shipUp = new THREE.Vector3(0, 1, 0).applyQuaternion(this.ship.root.quaternion);
         const shipRight = new THREE.Vector3(1, 0, 0).applyQuaternion(this.ship.root.quaternion);
 
         // Spawn particles from the jet engine nozzle
         // Jet engine nozzle is at (0, 0, -0.72) in body local space
         // Ship root is scaled by 3x, so nozzle is at -0.72 * 3 = -2.16 units behind root origin
         const nozzleOffset = -0.72 * 3; // -2.16 units behind ship root
-        const offset = (Math.random() - 0.5) * 0.6; // Spread across ship width
+
+        // Approximate nozzle radius in world units (geometry radius 0.15 scaled by 3x)
+        const nozzleRadius = 0.15 * 3;
+
+        // Sample around the nozzle rim to create a cylindrical shell emission
+        const theta = Math.random() * Math.PI * 2;
+        const rimRadius = nozzleRadius * (0.75 + Math.random() * 0.25); // bias near the edge
+        const radialDir = shipRight.clone().multiplyScalar(Math.cos(theta))
+            .add(shipUp.clone().multiplyScalar(Math.sin(theta))).normalize();
+
         const spawnPos = shipPos.clone()
-            .addScaledVector(shipRight, offset)
-            .addScaledVector(shipDir, nozzleOffset); // Spawn from jet engine nozzle
+            .addScaledVector(shipDir, nozzleOffset)
+            .addScaledVector(radialDir, rimRadius); // ring around the nozzle axis
 
         const particle: Particle = {
             position: spawnPos,
-            velocity: shipDir.clone().multiplyScalar(-2 - Math.random() * 3), // Move backward
+            // Backward along ship direction with slight radial convergence so plume narrows into a shaft
+            velocity: shipDir.clone().multiplyScalar(-(2 + Math.random() * 3))
+                .add(radialDir.clone().multiplyScalar(-(0.5 + Math.random() * 0.7))),
             age: 0,
             maxAge: 0.5 + Math.random() * 1.0, // 0.5-1.5 seconds
             opacity: 1.0,
-            scale: 0.5 + Math.random() * 0.5 // 0.5-1.0 scale
+            scale: 0.5 + Math.random() * 0.5, // 0.5-1.0 scale
+            axisOrigin: shipPos.clone().addScaledVector(shipDir, nozzleOffset),
+            axisDir: shipDir.clone().normalize(),
+            radialDir: radialDir.clone()
         };
 
         this.particles.push(particle);
@@ -116,6 +135,30 @@ export class ShipBoostParticles {
 
             // Move particle
             particle.position.addScaledVector(particle.velocity, dt);
+
+            // Converge toward a shaft radius along the axis defined at spawn
+            // Target smaller radius than nozzle to create a tapered entry that stabilizes
+            const targetRadius = 0.15 * 3 * 0.4; // 40% of nozzle radius
+            const radialStiffness = 10.0; // how fast we correct toward target radius
+
+            // Closest point on axis line to current position
+            const originToPos = new THREE.Vector3().subVectors(particle.position, particle.axisOrigin);
+            const t = originToPos.dot(particle.axisDir); // signed distance along axis
+            const closestOnAxis = particle.axisOrigin.clone().addScaledVector(particle.axisDir, t);
+            const radialVec = new THREE.Vector3().subVectors(particle.position, closestOnAxis);
+            const radialLen = radialVec.length();
+
+            // Compute desired radial vector toward target radius, stable direction even if near axis
+            const desiredDir = radialLen > 1e-4 ? radialVec.clone().multiplyScalar(1 / radialLen) : particle.radialDir;
+            const desiredRadial = desiredDir.clone().multiplyScalar(targetRadius);
+            const radialError = radialVec.sub(desiredRadial); // current - desired
+
+            // Apply spring-like correction to position (visual shaping) and lightly damp radial velocity
+            particle.position.addScaledVector(radialError, -radialStiffness * dt);
+            // Dampen any residual radial velocity so it doesn't expand
+            const velAlongAxis = particle.axisDir.clone().multiplyScalar(particle.velocity.dot(particle.axisDir));
+            const velRadial = particle.velocity.clone().sub(velAlongAxis).multiplyScalar(0.5); // keep half radial component
+            particle.velocity.copy(velAlongAxis.add(velRadial));
 
             // Fade out over time
             particle.opacity = 1 - (particle.age / particle.maxAge);

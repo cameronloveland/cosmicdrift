@@ -28,6 +28,12 @@ export class DraftingParticles {
     private spawnAccumulator = 0;
     private scaleMultiplier = 1.0;
 
+    // Tuning: wider lateral spread and gentler narrowing for a broader ribbon
+    // These are local ship-space units (before any external scaling)
+    private static readonly LATERAL_SPREAD = 3.8; // total width across wings (was 1.0)
+    private static readonly LATERAL_FALLOFF = 0.6; // keeps width longer, was 0.8
+    private static readonly START_Z = -0.35; // start slightly behind center so it reads as from wings
+
     constructor(ship: Draftable, opts?: DraftingOptions) {
         this.ship = ship;
         if (opts?.scaleMultiplier !== undefined) this.scaleMultiplier = opts.scaleMultiplier;
@@ -59,7 +65,10 @@ export class DraftingParticles {
             const p: Particle = {
                 s: Math.random() * 0.15, // start near the nose
                 speed: 0.8 + Math.random() * 0.8, // path speed
-                lateral: (Math.random() - 0.5) * 0.6, // +/- sideways
+                // Edge-biased lateral so most dots originate near wing edges
+                // Map uniform [-0.5, 0.5] -> edge-heavy distribution in same range
+                lateral: (Math.sign(Math.random() - 0.5) * Math.pow(Math.abs((Math.random() - 0.5) * 2), 0.35) * 0.5)
+                    * DraftingParticles.LATERAL_SPREAD,
                 scale: 0.7 + Math.random() * 0.6,
                 hue: 0.52 + Math.random() * 0.06
             };
@@ -101,7 +110,7 @@ export class DraftingParticles {
         // Move in the negative-forward direction so it renders behind the nose in chase view
         const lengthMeters = 3.2;
         const heightMeters = 0.6;
-        const startForwardOffset = 0.2; // small forward offset from nose
+        const startForwardOffset = DraftingParticles.START_Z; // align with wings
 
         for (let i = this.particles.length - 1; i >= 0; i--) {
             const p = this.particles[i];
@@ -115,8 +124,8 @@ export class DraftingParticles {
             const z = -s * lengthMeters + startForwardOffset;
             // Smooth arc: rise then settle
             const rise = Math.sin(Math.PI * Math.min(1, s)) * heightMeters;
-            // Lateral falloff so lines converge near end
-            const latFalloff = 1.0 - s * 0.8;
+            // Lateral falloff so lines converge near end (curve keeps width longer at start)
+            const latFalloff = 1.0 - Math.pow(s, 1.6) * DraftingParticles.LATERAL_FALLOFF;
             const pos = new THREE.Vector3()
                 .copy(origin)
                 .addScaledVector(forward, z)

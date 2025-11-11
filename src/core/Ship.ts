@@ -409,7 +409,8 @@ export class Ship {
         this.rocketTail = new ShipRocketTail(
             this,
             new THREE.Vector3(0, 0, -0.85),
-            0 // no baseClipOffset for player ship
+            0, // no baseClipOffset for player ship
+            { singleCone: true, lengthScale: 2.2, color: 0xffdd55 }
         );
         this.root.add(this.rocketTail.root);
 

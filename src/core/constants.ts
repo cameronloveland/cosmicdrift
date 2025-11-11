@@ -56,7 +56,15 @@ export const PHYSICS = {
     // Roll (player-controlled) tuning
     rollMax: 0.6,        // radians (~34 deg)
     rollAccel: 2.4,      // how fast roll builds with input
-    rollDamping: 3.2,    // how fast roll recenters without input
+    rollDamping: 5.0,    // how fast roll approaches target (higher = faster response)
+    // Turn hold → sideways bank and flip
+    rollSideAngle: Math.PI * 0.5, // 90° fully sideways bank
+    rollHoldToSideSec: 0.6,       // seconds holding turn to reach sideways bank (faster)
+    // Sideways behavior: pause at full bank, then return on release
+    rollSidePauseSec: 0.5,        // pause duration at 90° before returning after release
+    // Legacy flip values (unused)
+    rollHoldToFlipSec: 1.0,       // legacy
+    rollFlipDurationSec: 0.9,     // legacy
     // Coupling strength for roll+pitch producing lateral turn
     turnCouplingStrength: 1.0,
     flowFillSpeed: 0.12,
@@ -447,7 +455,10 @@ export const DRAFTING = {
     flowRefillRate: 0.20, // focus(flow) per second while drafting (0..1 scale)
     speedLerp: 6.0, // how quickly we match the lead speed
     matchMaxDelta: 2.0, // km/h extra above lead to avoid rubber-banding artifacts
-    showCone: false // visual: show forward cone; particles are always enabled
+    showCone: false, // visual: show forward cone; particles are always enabled
+    // Lock-on specific tuning
+    sidewaysUpDot: 0.2, // if |up·worldUp| < this, consider fully sideways → drop lock
+    lockFollowStrength: 6.0 // strength of magnetic lateral follow while locked
 };
 
 

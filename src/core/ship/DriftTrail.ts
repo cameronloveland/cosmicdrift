@@ -16,16 +16,23 @@ export class DriftTrail {
     public root = new THREE.Group();
     private track: Track;
     private color: THREE.Color;
-    private points: RibbonPoint[] = [];
-    private geometry: THREE.BufferGeometry;
+    // Dual wing-tip ribbons
+    private pointsL: RibbonPoint[] = [];
+    private pointsR: RibbonPoint[] = [];
+    private geometryL: THREE.BufferGeometry;
+    private geometryR: THREE.BufferGeometry;
     private material: THREE.MeshBasicMaterial;
-    private mesh: THREE.Mesh;
+    private meshL: THREE.Mesh;
+    private meshR: THREE.Mesh;
     private maxPoints: number;
     private lastShipT: number = -1; // last sampled track position
     private baseHalfWidth: number;
-    private posBuffer: Float32Array;
-    private colorBuffer: Float32Array;
-    private indexBuffer: Uint32Array;
+    private posBufferL: Float32Array;
+    private colorBufferL: Float32Array;
+    private indexBufferL: Uint32Array;
+    private posBufferR: Float32Array;
+    private colorBufferR: Float32Array;
+    private indexBufferR: Uint32Array;
     private _tmpL = new THREE.Vector3();
     private _tmpR = new THREE.Vector3();
     private lastOffset = 0;
@@ -42,6 +49,7 @@ export class DriftTrail {
     private sparkMax: number;
     private sparkIndex = 0;
     private sparkSpawnAcc = 0;
+    private sparkSideToggle = false;
     private _tmpPos = new THREE.Vector3();
     private _tmpN = new THREE.Vector3();
     private _tmpB = new THREE.Vector3();
@@ -51,35 +59,58 @@ export class DriftTrail {
         this.track = track;
         this.color = color.clone();
         this.maxPoints = DRIFT.trailMaxSegments; // reuse existing limit
-        this.baseHalfWidth = (track.width * (DRIFT.ribbonWidthRatio ?? 0.18) * (DRIFT.ribbonWidthScale ?? 1.0)) * 0.5;
+        // Use dedicated narrow width for wing-tip tails
+        this.baseHalfWidth = (DRIFT.wingTailHalfWidthMeters ?? 0.06);
 
-        // Allocate buffers for a triangle strip (2 verts per point)
+        // Allocate buffers for each ribbon (2 verts per point)
         const maxVerts = this.maxPoints * 2;
         const maxQuads = Math.max(0, this.maxPoints - 1);
-        this.posBuffer = new Float32Array(maxVerts * 3);
-        this.colorBuffer = new Float32Array(maxVerts * 3); // RGB per vertex (use brightness as opacity proxy)
-        this.indexBuffer = new Uint32Array(maxQuads * 6);
-
-        // Precompute indices for max quads
+        // Left
+        this.posBufferL = new Float32Array(maxVerts * 3);
+        this.colorBufferL = new Float32Array(maxVerts * 3);
+        this.indexBufferL = new Uint32Array(maxQuads * 6);
         for (let i = 0; i < maxQuads; i++) {
             const a = i * 2;
             const b = a + 1;
             const c = a + 2;
             const d = a + 3;
             const base = i * 6;
-            this.indexBuffer[base] = a;
-            this.indexBuffer[base + 1] = b;
-            this.indexBuffer[base + 2] = c;
-            this.indexBuffer[base + 3] = b;
-            this.indexBuffer[base + 4] = d;
-            this.indexBuffer[base + 5] = c;
+            this.indexBufferL[base] = a;
+            this.indexBufferL[base + 1] = b;
+            this.indexBufferL[base + 2] = c;
+            this.indexBufferL[base + 3] = b;
+            this.indexBufferL[base + 4] = d;
+            this.indexBufferL[base + 5] = c;
+        }
+        // Right
+        this.posBufferR = new Float32Array(maxVerts * 3);
+        this.colorBufferR = new Float32Array(maxVerts * 3);
+        this.indexBufferR = new Uint32Array(maxQuads * 6);
+        for (let i = 0; i < maxQuads; i++) {
+            const a = i * 2;
+            const b = a + 1;
+            const c = a + 2;
+            const d = a + 3;
+            const base = i * 6;
+            this.indexBufferR[base] = a;
+            this.indexBufferR[base + 1] = b;
+            this.indexBufferR[base + 2] = c;
+            this.indexBufferR[base + 3] = b;
+            this.indexBufferR[base + 4] = d;
+            this.indexBufferR[base + 5] = c;
         }
 
-        this.geometry = new THREE.BufferGeometry();
-        this.geometry.setAttribute('position', new THREE.BufferAttribute(this.posBuffer, 3));
-        this.geometry.setAttribute('color', new THREE.BufferAttribute(this.colorBuffer, 3));
-        this.geometry.setIndex(new THREE.BufferAttribute(this.indexBuffer, 1));
-        this.geometry.setDrawRange(0, 0);
+        this.geometryL = new THREE.BufferGeometry();
+        this.geometryL.setAttribute('position', new THREE.BufferAttribute(this.posBufferL, 3));
+        this.geometryL.setAttribute('color', new THREE.BufferAttribute(this.colorBufferL, 3));
+        this.geometryL.setIndex(new THREE.BufferAttribute(this.indexBufferL, 1));
+        this.geometryL.setDrawRange(0, 0);
+
+        this.geometryR = new THREE.BufferGeometry();
+        this.geometryR.setAttribute('position', new THREE.BufferAttribute(this.posBufferR, 3));
+        this.geometryR.setAttribute('color', new THREE.BufferAttribute(this.colorBufferR, 3));
+        this.geometryR.setIndex(new THREE.BufferAttribute(this.indexBufferR, 1));
+        this.geometryR.setDrawRange(0, 0);
 
         this.material = new THREE.MeshBasicMaterial({
             color: 0xffffff,
@@ -92,10 +123,14 @@ export class DriftTrail {
             toneMapped: false
         });
 
-        this.mesh = new THREE.Mesh(this.geometry, this.material);
-        this.mesh.frustumCulled = false;
-        this.mesh.renderOrder = 998; // render above track, below line trails
-        this.root.add(this.mesh);
+        this.meshL = new THREE.Mesh(this.geometryL, this.material);
+        this.meshL.frustumCulled = false;
+        this.meshL.renderOrder = 998;
+        this.root.add(this.meshL);
+        this.meshR = new THREE.Mesh(this.geometryR, this.material);
+        this.meshR.frustumCulled = false;
+        this.meshR.renderOrder = 998;
+        this.root.add(this.meshR);
 
         // --- Sparks ---
         this.sparkMax = DRIFT.sparkMaxCount ?? 400;
@@ -136,7 +171,7 @@ export class DriftTrail {
         // Add new points only while drifting; always age and fade existing
         if (shipState.isDrifting) {
             const t = THREE.MathUtils.euclideanModulo(shipState.t, 1);
-            const needFirst = this.points.length === 0 || this.lastShipT < 0;
+            const needFirst = (this.pointsL.length === 0 && this.pointsR.length === 0) || this.lastShipT < 0;
             const movedEnough = !needFirst && Math.abs(t - this.lastShipT) > (DRIFT.trailSegmentLength / this.track.length);
 
             if (needFirst || movedEnough) {
@@ -145,13 +180,14 @@ export class DriftTrail {
                 const binormal = new THREE.Vector3();
                 const tangent = new THREE.Vector3();
 
-
                 this.track.getPointAtT(t, pos);
                 this.track.getFrenetFrame(t, normal, binormal, tangent);
 
-                // Center ribbon under the ship (apply lateral offset) and lift slightly
-                pos.addScaledVector(binormal, shipState.lateralOffset);
-                pos.addScaledVector(normal, 0.02);
+                // Compute wing tip bases: under each wing tip along binormal
+                const wingOffset = 0;
+                const baseCenter = new THREE.Vector3().copy(pos).addScaledVector(binormal, shipState.lateralOffset);
+                const posL = new THREE.Vector3().copy(baseCenter).addScaledVector(binormal, -wingOffset).addScaledVector(normal, 0.02);
+                const posR = new THREE.Vector3().copy(baseCenter).addScaledVector(binormal, wingOffset).addScaledVector(normal, 0.02);
 
                 // Dynamic width based on lateral turning speed
                 const dtSafe = Math.max(1e-4, dt);
@@ -161,9 +197,17 @@ export class DriftTrail {
                 const widthFactor = THREE.MathUtils.lerp(1.0, (DRIFT.ribbonMinWidthFactor ?? 0.55), turnRatio);
                 const halfWidth = this.baseHalfWidth * widthFactor;
 
-                // Newest at the front
-                this.points.unshift({
-                    position: pos.clone(),
+                // Newest at the front for both sides
+                this.pointsL.unshift({
+                    position: posL,
+                    normal: normal.clone(),
+                    binormal: binormal.clone(),
+                    age: 0,
+                    t,
+                    halfWidth
+                });
+                this.pointsR.unshift({
+                    position: posR,
                     normal: normal.clone(),
                     binormal: binormal.clone(),
                     age: 0,
@@ -172,7 +216,8 @@ export class DriftTrail {
                 });
 
                 // Cap length
-                if (this.points.length > this.maxPoints) this.points.pop();
+                if (this.pointsL.length > this.maxPoints) this.pointsL.pop();
+                if (this.pointsR.length > this.maxPoints) this.pointsR.pop();
                 this.lastShipT = t;
                 this.lastOffset = shipState.lateralOffset;
             }
@@ -182,22 +227,28 @@ export class DriftTrail {
         }
 
         // Age and prune
-        for (let i = this.points.length - 1; i >= 0; i--) {
-            const p = this.points[i];
+        for (let i = this.pointsL.length - 1; i >= 0; i--) {
+            const p = this.pointsL[i];
             p.age += dt;
-            if (p.age >= DRIFT.trailFadeTime) this.points.splice(i, 1);
+            if (p.age >= DRIFT.trailFadeTime) this.pointsL.splice(i, 1);
+        }
+        for (let i = this.pointsR.length - 1; i >= 0; i--) {
+            const p = this.pointsR[i];
+            p.age += dt;
+            if (p.age >= DRIFT.trailFadeTime) this.pointsR.splice(i, 1);
         }
 
-        this.updateGeometry();
+        this.updateGeometrySide(this.pointsL, this.geometryL, this.posBufferL, this.colorBufferL);
+        this.updateGeometrySide(this.pointsR, this.geometryR, this.posBufferR, this.colorBufferR);
 
         // Update and spawn sparks
         this.updateSparks(dt, shipState);
     }
 
-    private updateGeometry() {
-        const count = this.points.length;
+    private updateGeometrySide(points: RibbonPoint[], geometry: THREE.BufferGeometry, posBuffer: Float32Array, colorBuffer: Float32Array) {
+        const count = points.length;
         if (count === 0) {
-            this.geometry.setDrawRange(0, 0);
+            geometry.setDrawRange(0, 0);
             return;
         }
 
@@ -206,7 +257,7 @@ export class DriftTrail {
         const glow = DRIFT.trailGlowIntensity;
 
         for (let i = 0; i < count; i++) {
-            const p = this.points[i];
+            const p = points[i];
             const center = p.position;
             const bin = p.binormal;
             const up = p.normal;
@@ -217,13 +268,13 @@ export class DriftTrail {
 
             const vi = i * 2;
             // left vertex
-            this.posBuffer[vi * 3 + 0] = left.x;
-            this.posBuffer[vi * 3 + 1] = left.y;
-            this.posBuffer[vi * 3 + 2] = left.z;
+            posBuffer[vi * 3 + 0] = left.x;
+            posBuffer[vi * 3 + 1] = left.y;
+            posBuffer[vi * 3 + 2] = left.z;
             // right vertex
-            this.posBuffer[(vi + 1) * 3 + 0] = right.x;
-            this.posBuffer[(vi + 1) * 3 + 1] = right.y;
-            this.posBuffer[(vi + 1) * 3 + 2] = right.z;
+            posBuffer[(vi + 1) * 3 + 0] = right.x;
+            posBuffer[(vi + 1) * 3 + 1] = right.y;
+            posBuffer[(vi + 1) * 3 + 2] = right.z;
 
             // Intensity fades with age and along the ribbon tail
             const ageFactor = Math.max(0, 1 - (p.age / DRIFT.trailFadeTime));
@@ -235,13 +286,13 @@ export class DriftTrail {
             const b = color.b * intensity;
 
             // left color
-            this.colorBuffer[vi * 3 + 0] = r;
-            this.colorBuffer[vi * 3 + 1] = g;
-            this.colorBuffer[vi * 3 + 2] = b;
+            colorBuffer[vi * 3 + 0] = r;
+            colorBuffer[vi * 3 + 1] = g;
+            colorBuffer[vi * 3 + 2] = b;
             // right color
-            this.colorBuffer[(vi + 1) * 3 + 0] = r;
-            this.colorBuffer[(vi + 1) * 3 + 1] = g;
-            this.colorBuffer[(vi + 1) * 3 + 2] = b;
+            colorBuffer[(vi + 1) * 3 + 0] = r;
+            colorBuffer[(vi + 1) * 3 + 1] = g;
+            colorBuffer[(vi + 1) * 3 + 2] = b;
         }
 
         // Update attributes
@@ -249,11 +300,11 @@ export class DriftTrail {
         const quadCount = Math.max(0, count - 1);
         const indexCount = quadCount * 6;
 
-        (this.geometry.attributes.position as THREE.BufferAttribute).needsUpdate = true;
-        (this.geometry.attributes.color as THREE.BufferAttribute).needsUpdate = true;
-        this.geometry.computeBoundingSphere();
-        this.geometry.computeBoundingBox();
-        this.geometry.setDrawRange(0, indexCount);
+        (geometry.attributes.position as THREE.BufferAttribute).needsUpdate = true;
+        (geometry.attributes.color as THREE.BufferAttribute).needsUpdate = true;
+        geometry.computeBoundingSphere();
+        geometry.computeBoundingBox();
+        geometry.setDrawRange(0, indexCount);
     }
 
     private spawnSpark(at: THREE.Vector3, normal: THREE.Vector3, binormal: THREE.Vector3, tangent: THREE.Vector3, halfWidth: number) {
@@ -323,30 +374,33 @@ export class DriftTrail {
             (this.sparkGeometry.attributes.color as THREE.BufferAttribute).needsUpdate = true;
         }
 
-        // Spawn new sparks near newest ribbon point while drifting
+        // Spawn new sparks near newest ribbon points while drifting, alternating sides
         if (!shipState.isDrifting) return;
         const spawnRate = DRIFT.sparkSpawnRate ?? 140;
         this.sparkSpawnAcc += spawnRate * dt;
-        if (this.points.length === 0) return;
-
-        // Use newest point as emission reference
-        const p0 = this.points[0];
-        const at = p0.position;
-        const n = p0.normal;
-        const b = p0.binormal;
-        // Recover tangent from cross(n, b)
-        const tVec = this._tmpT.copy(b).cross(n).normalize();
+        const hasL = this.pointsL.length > 0;
+        const hasR = this.pointsR.length > 0;
+        if (!hasL && !hasR) return;
 
         while (this.sparkSpawnAcc >= 1) {
-            this.spawnSpark(at, n, b, tVec, p0.halfWidth ?? this.baseHalfWidth);
+            const useLeft = hasL && (!hasR || this.sparkSideToggle === false);
+            const p = useLeft ? this.pointsL[0] : this.pointsR[0];
+            const at = p.position;
+            const n = p.normal;
+            const b = p.binormal;
+            const tVec = this._tmpT.copy(b).cross(n).normalize();
+            this.spawnSpark(at, n, b, tVec, p.halfWidth ?? this.baseHalfWidth);
             this.sparkSpawnAcc -= 1;
+            this.sparkSideToggle = !this.sparkSideToggle;
         }
     }
 
     public dispose() {
-        this.geometry.dispose();
+        this.geometryL.dispose();
+        this.geometryR.dispose();
         this.material.dispose();
-        this.root.remove(this.mesh);
+        this.root.remove(this.meshL);
+        this.root.remove(this.meshR);
     }
 }
 

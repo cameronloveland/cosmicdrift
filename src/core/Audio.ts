@@ -408,6 +408,25 @@ export class AudioSystem {
     setMp3OnEnded(handler: () => void) {
         this.mp3OnEndedHandler = handler;
     }
+
+    // MP3 progress helpers
+    getMp3Times(): { current: number; duration: number } {
+        const el = this.mp3Media;
+        if (!el) return { current: 0, duration: 0 };
+        const duration = isFinite(el.duration) && el.duration > 0 ? el.duration : 0;
+        const current = el.currentTime || 0;
+        return { current, duration };
+    }
+
+    seekMp3ToPercent(percent: number) {
+        const el = this.mp3Media;
+        if (!el) return;
+        const p = THREE.MathUtils.clamp(percent || 0, 0, 1);
+        const duration = isFinite(el.duration) && el.duration > 0 ? el.duration : 0;
+        if (duration > 0) {
+            el.currentTime = p * duration;
+        }
+    }
 }
 
 

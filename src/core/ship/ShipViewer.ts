@@ -89,7 +89,7 @@ export class ShipViewer {
         const aspect = Math.max(1, rect.width) / Math.max(1, rect.height);
         const camera = new THREE.PerspectiveCamera(65, aspect, 0.1, 2000);
         // Position camera to see the ship and grid centered at origin
-        camera.position.set(2.5, 1.5, 3.0);
+        camera.position.set(3.1, 6.6, 4.9);
         camera.lookAt(0, PHYSICS.hoverHeight, 0); // Look at where ship will be
         this.camera = camera;
 
@@ -179,8 +179,8 @@ export class ShipViewer {
         const controls = new OrbitControls(camera, renderer.domElement);
         controls.enableDamping = true;
         controls.dampingFactor = 0.08;
-        controls.minDistance = 1.0;
-        controls.maxDistance = 8.0;
+        controls.minDistance = 2.0;
+        controls.maxDistance = 20.0;
         controls.target.set(0, PHYSICS.hoverHeight, 0); // Target where ship is positioned
         controls.update();
         this.controls = controls;
@@ -381,7 +381,9 @@ export class ShipViewer {
             toneMapped: true
         } as any);
         this.draftingLines = new DraftingVectorLines(this.draftProxy as any, { count: 22, points: 26 });
-        this.viewerShip.add(this.draftingParticles.root);
+        // Particles use world coordinates -> add to scene (avoid double transform).
+        // Vector lines are authored in local space -> keep as child of ship.
+        this.scene?.add(this.draftingParticles.root);
         this.viewerShip.add(this.draftingLines.root);
         this.draftingParticles.setVisible(false);
         this.draftingLines.setVisible(false);

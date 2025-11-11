@@ -40,6 +40,16 @@ export class Ship {
     private velocityRoll = 0;
     private baseSpeedKmh = 0; // throttle-controlled non-boost speed
     private driftYaw = 0; // visual yaw used during boost drifting
+    // Turn hold → sideways bank state
+    private turnHoldTimer = 0;
+    private turnHoldDir = 0; // -1 left, 1 right, 0 none
+    // Sideways hold/return state
+    private rollSideReached = false;
+    private rollSideDir = 0; // direction when sideways reached
+    private rollSidePauseTimer = 0; // time held paused at full sideways
+    private rollReturnAnimating = false;
+    private rollReturnProgress = 0;
+    private rollReturnStartAngle = 0;
     private boostTimer = 0; // visual intensity for camera/shake
     private wasDrifting = false; // track previous frame's drift state
     private boostEnergy = 1; // 0..1 manual boost resource
@@ -98,10 +108,20 @@ export class Ship {
     // Drafting integration
     private draftingActive = false;
     private draftingLeadSpeedKmh = 0;
+    // Draft lock follow assist
+    private draftFollowActive = false;
+    private draftFollowTarget = 0;
+    private draftFollowStrength = 0;
 
     public setDraftingActive(active: boolean, leadSpeedKmh: number) {
         this.draftingActive = active;
         this.draftingLeadSpeedKmh = leadSpeedKmh;
+    }
+
+    public setDraftFollowAssist(target: number, strength: number) {
+        this.draftFollowActive = true;
+        this.draftFollowTarget = target;
+        this.draftFollowStrength = strength;
     }
 
     private addEdgeLines(mesh: THREE.Mesh): void {
@@ -211,6 +231,7 @@ export class Ship {
         const wingMaterial = this.shipMaterial.clone();
         const wingTop = -0.01;    // Top of wing (lowered on body)
         const wingBottom = -0.05; // Bottom of wing (lower on body)
+        const wingAnhedral = THREE.MathUtils.degToRad(10); // slight downward tilt
 
         // Left wing - swept back with blunt/square tip (touching center wedge, thin)
         const leftWingGeo = new THREE.BufferGeometry();
@@ -253,6 +274,7 @@ export class Ship {
 
         const leftWing = new THREE.Mesh(leftWingGeo, wingMaterial);
         body.add(leftWing);
+        leftWing.rotation.z = wingAnhedral;
         this.addEdgeLines(leftWing);
 
         // Right wing - swept back with blunt/square tip (mirrored, touching center wedge, thin)
@@ -296,6 +318,7 @@ export class Ship {
 
         const rightWing = new THREE.Mesh(rightWingGeo, wingMaterial);
         body.add(rightWing);
+        rightWing.rotation.z = -wingAnhedral;
         this.addEdgeLines(rightWing);
 
         // Tail fins (vertical stabilizers) - triangular/trapezoidal shape, wider at bottom, tapering to top
@@ -415,7 +438,8 @@ export class Ship {
         this.rocketTail = new ShipRocketTail(
             this,
             new THREE.Vector3(0, 0, -0.74),
-            0 // no baseClipOffset for player ship
+            0, // no baseClipOffset for player ship
+            { singleCone: true, lengthScale: 2.2, color: 0xffdd55 }
         );
         this.root.add(this.rocketTail.root);
 
@@ -580,6 +604,14 @@ export class Ship {
         this.state.roll = 0;
         this.velocityRoll = 0;
         this.verticalVelocity = 0;
+        // Reset sideways/return state
+        this.turnHoldTimer = 0;
+        this.turnHoldDir = 0;
+        this.rollSideReached = false;
+        this.rollSideDir = 0;
+        this.rollSidePauseTimer = 0;
+        this.rollReturnAnimating = false;
+        this.rollReturnProgress = 0;
 
         // Clear input
         this.clearInput();
@@ -819,15 +851,104 @@ export class Ship {
         const lateralLimit = half * 0.95;
         this.state.lateralOffset = THREE.MathUtils.clamp(this.state.lateralOffset + this.velocitySide * dt, -lateralLimit, lateralLimit);
 
+        // Apply draft lock follow assist (gentle magnetic alignment toward lead lane)
+        if (this.draftFollowActive) {
+            const k = THREE.MathUtils.clamp(this.draftFollowStrength * dt, 0, 1);
+            const assisted = THREE.MathUtils.lerp(this.state.lateralOffset, this.draftFollowTarget, k);
+            this.state.lateralOffset = THREE.MathUtils.clamp(assisted, -lateralLimit, lateralLimit);
+            // one-frame flag; must be re-enabled every frame by DraftingSystem
+            this.draftFollowActive = false;
+        }
 
-        // Visual banking: roll into the turn and pitch slightly down while turning
+
+        // Visual pitch: minimal downforce while turning; ease back on release
         const turning = Math.abs(yawInput) > 0.01;
-        const desiredPitch = turning ? -PHYSICS.yawDownPitchMax * Math.min(1, Math.abs(yawInput)) : 0;
+        const desiredPitch = turning ? -PHYSICS.yawDownPitchMax * 0.5 : 0;
         this.state.pitch = THREE.MathUtils.damp(this.state.pitch, desiredPitch, PHYSICS.yawDownPitchSpeed, dt);
         this.velocityPitch = 0;
 
-        // Smooth roll into the turn so wings visibly bank (roll dominates over yaw)
-        const desiredRoll = THREE.MathUtils.clamp(yawInput * PHYSICS.rollMax, -PHYSICS.rollMax, PHYSICS.rollMax);
+        // Turn-and-roll behavior:
+        // - Hold to ramp to sideways (±90°) over rollHoldToSideSec
+        // - When fully sideways, hold that orientation
+        // - Do not level while the turn is held
+        // - After release: pause at sideways for rollSidePauseSec, then return to level over rollHoldToSideSec
+        const dir = yawInput > 0 ? 1 : (yawInput < 0 ? -1 : 0);
+        // Consider any non-zero turn as active for roll holding
+        const turningActive = dir !== 0;
+        let desiredRoll = this.state.roll;
+
+        // Update hold timers and direction state
+        if (turningActive) {
+            if (this.turnHoldDir === 0 || this.turnHoldDir === dir) {
+                this.turnHoldTimer += dt;
+                this.turnHoldDir = dir;
+            } else {
+                // Direction changed while holding: reset timers and sideways state
+                this.turnHoldDir = dir;
+                this.turnHoldTimer = 0;
+                this.rollSideReached = false;
+                this.rollSideDir = 0;
+                this.rollSidePauseTimer = 0;
+                this.rollReturnAnimating = false;
+                this.rollReturnProgress = 0;
+            }
+        } else {
+            // Not turning: stop accumulating hold timer
+            this.turnHoldDir = 0;
+        }
+
+        // Determine desired roll
+        if (turningActive) {
+            // Cancel any pending return if user resumes holding turn
+            if (this.rollReturnAnimating) {
+                this.rollReturnAnimating = false;
+                this.rollReturnProgress = 0;
+            }
+            // Ramp toward sideways
+            const progress = THREE.MathUtils.clamp(this.turnHoldTimer / PHYSICS.rollHoldToSideSec, 0, 1);
+            const targetSide = dir * PHYSICS.rollSideAngle;
+            desiredRoll = THREE.MathUtils.lerp(0, targetSide, progress);
+            // Mark sideways reached
+            if (progress >= 1) {
+                this.rollSideReached = true;
+                this.rollSideDir = dir;
+                // While holding, keep timer at pause minimum but we don't use it until release
+            } else {
+                // Not yet sideways; ensure pause timer not accumulating
+                this.rollSidePauseTimer = 0;
+            }
+        } else {
+            // Not turning: if sideways was reached before, enforce a pause at sideways, then return
+            if (this.rollSideReached && !this.rollReturnAnimating) {
+                // Accumulate pause time at full sideways
+                this.rollSidePauseTimer += dt;
+                desiredRoll = this.rollSideDir * PHYSICS.rollSideAngle;
+                if (this.rollSidePauseTimer >= PHYSICS.rollSidePauseSec) {
+                    // Begin return to level at same rate it took to reach sideways
+                    this.rollReturnAnimating = true;
+                    this.rollReturnProgress = 0;
+                    this.rollReturnStartAngle = this.state.roll;
+                }
+            } else if (this.rollReturnAnimating) {
+                // Animate return to level over rollHoldToSideSec
+                this.rollReturnProgress = Math.min(1, this.rollReturnProgress + dt / PHYSICS.rollHoldToSideSec);
+                desiredRoll = THREE.MathUtils.lerp(this.rollReturnStartAngle, 0, this.rollReturnProgress);
+                if (this.rollReturnProgress >= 1) {
+                    // Reset all state after completing return
+                    this.rollReturnAnimating = false;
+                    this.rollSideReached = false;
+                    this.rollSideDir = 0;
+                    this.rollSidePauseTimer = 0;
+                    this.turnHoldTimer = 0;
+                }
+            } else {
+                // No special state: simple return to level
+                desiredRoll = 0;
+                // Reset hold timer to avoid unintended progress accumulation on next press
+                this.turnHoldTimer = 0;
+            }
+        }
+
         this.state.roll = THREE.MathUtils.damp(this.state.roll, desiredRoll, PHYSICS.rollDamping, dt);
         this.velocityRoll = 0;
 

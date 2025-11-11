@@ -26,6 +26,9 @@ export class UI {
     private mp3NextBtn = document.getElementById('mp3NextBtn')! as HTMLDivElement;
     private mp3TrackName = document.getElementById('mp3TrackName')! as HTMLDivElement;
     private mp3TrackList = document.getElementById('mp3TrackList')! as HTMLDivElement;
+    private mp3TimeEl = document.getElementById('mp3Time')! as HTMLDivElement;
+    private mp3ProgressFillEl = document.getElementById('mp3ProgressFill')! as HTMLDivElement;
+    private mp3SeekEl = document.getElementById('mp3Seek')! as HTMLInputElement;
     private debugGameTimeEl = document.getElementById('debugGameTime')!;
     private debugStarsAheadEl = document.getElementById('debugStarsAhead')!;
     private debugStarsBehindEl = document.getElementById('debugStarsBehind')!;
@@ -40,6 +43,7 @@ export class UI {
     private lastLapTimeEl: HTMLElement | null = null;
     private pausedLabelEl: HTMLElement | null = null;
     private draftingLabelEl: HTMLDivElement | null = null;
+    private draftLockHintEl: HTMLDivElement | null = null;
 
     constructor() {
         // Initialize speedometer gauge
@@ -79,6 +83,53 @@ export class UI {
             speedometerContainer.appendChild(label);
             this.draftingLabelEl = label as HTMLDivElement;
         }
+
+        // Create DRAFT LOCK hint dynamically (above instruction label)
+        const speedometerContainer2 = document.querySelector('.speedometer-container');
+        if (speedometerContainer2) {
+            const hint = document.createElement('div');
+            hint.className = 'speedometer-label draft-lock-hint hidden';
+            hint.textContent = "PRESS 'E' TO LOCK-ON";
+            (hint.style as any).top = '-100px';
+            (hint.style as any).color = '#53d7ff';
+            speedometerContainer2.appendChild(hint);
+            this.draftLockHintEl = hint as HTMLDivElement;
+        }
+    }
+
+    // MP3 progress/time
+    updateMp3Progress(currentSeconds: number, durationSeconds: number) {
+        const safeDuration = Math.max(0, durationSeconds || 0);
+        const safeCurrent = Math.min(Math.max(currentSeconds || 0, 0), safeDuration || 0);
+        const percent = safeDuration > 0 ? safeCurrent / safeDuration : 0;
+        if (this.mp3ProgressFillEl) {
+            this.mp3ProgressFillEl.style.width = `${(percent * 100).toFixed(2)}%`;
+        }
+        if (this.mp3SeekEl) {
+            this.mp3SeekEl.value = String(percent || 0);
+        }
+        if (this.mp3TimeEl) {
+            const cur = this.formatTimeShort(safeCurrent);
+            const dur = this.formatTimeShort(safeDuration);
+            this.mp3TimeEl.textContent = `${cur} / ${dur}`;
+        }
+    }
+
+    onMp3Seek(handler: (percent: number) => void) {
+        const invoke = () => {
+            const v = parseFloat(this.mp3SeekEl.value || '0');
+            const p = Math.min(1, Math.max(0, isNaN(v) ? 0 : v));
+            handler(p);
+        };
+        this.mp3SeekEl.addEventListener('input', invoke);
+        this.mp3SeekEl.addEventListener('change', invoke);
+    }
+
+    private formatTimeShort(totalSeconds: number): string {
+        const secs = Math.max(0, Math.floor(totalSeconds || 0));
+        const m = Math.floor(secs / 60);
+        const s = secs % 60;
+        return `${m}:${String(s).padStart(2, '0')}`;
     }
 
     private started = false;
@@ -114,6 +165,20 @@ export class UI {
         } else {
             this.draftingLabelEl.classList.remove('visible');
             this.draftingLabelEl.classList.add('hidden');
+        }
+    }
+
+    // Show/hide LOCK-ON hint (suppressed when instruction label is visible)
+    showDraftLockHint(show: boolean) {
+        if (!this.draftLockHintEl) return;
+        const instructionVisible = !this.instructionLabel.classList.contains('hidden');
+        const shouldShow = show && !instructionVisible;
+        if (shouldShow) {
+            this.draftLockHintEl.classList.remove('hidden');
+            this.draftLockHintEl.classList.add('visible');
+        } else {
+            this.draftLockHintEl.classList.remove('visible');
+            this.draftLockHintEl.classList.add('hidden');
         }
     }
 

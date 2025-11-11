@@ -44,6 +44,8 @@ export class ShipRocketTail {
         const coreRadius = nozzleRadius * 0.35;
         const coreLength = tailLength * 0.7; // Shorter core
         const coreGeometry = new THREE.ConeGeometry(coreRadius, coreLength, radialSegments);
+        // Move base of cone to origin so nothing extends into the ship before rotation
+        coreGeometry.translate(0, coreLength * 0.5, 0);
         const coreColor = new THREE.Color(1, 0.95, 0.9); // Bright white-hot
         const coreMaterial = new THREE.MeshBasicMaterial({
             color: coreColor,
@@ -64,6 +66,8 @@ export class ShipRocketTail {
         const middleRadius = nozzleRadius * 0.7;
         const middleLength = tailLength * 0.95;
         const middleGeometry = new THREE.ConeGeometry(middleRadius, middleLength, radialSegments);
+        // Ensure only the portion outside the nozzle is visible
+        middleGeometry.translate(0, middleLength * 0.5, 0);
         const middleColor = new THREE.Color(1, 0.55, 0.1); // Bright orange
         const middleMaterial = new THREE.MeshBasicMaterial({
             color: middleColor,
@@ -86,6 +90,8 @@ export class ShipRocketTail {
         const outerRadius = nozzleRadius;
         const outerLength = tailLength;
         const outerGeometry = new THREE.ConeGeometry(outerRadius, outerLength, radialSegments);
+        // Shift geometry forward so its base aligns with nozzle plane
+        outerGeometry.translate(0, outerLength * 0.5, 0);
         const outerColor = new THREE.Color(1, 0.65, 0.15); // Slightly more yellow-orange
         const outerMaterial = new THREE.MeshBasicMaterial({
             color: outerColor,
@@ -111,6 +117,8 @@ export class ShipRocketTail {
         const radialSegments = 24;
 
         const geometry = new THREE.ConeGeometry(nozzleRadius, baseLength, radialSegments);
+        // Place cone base at origin so only the part outside the jet is rendered
+        geometry.translate(0, baseLength * 0.5, 0);
         const color = opts?.color instanceof THREE.Color ? opts.color : new THREE.Color(opts?.color ?? 0xffdd55);
         const material = new THREE.MeshBasicMaterial({
             color,

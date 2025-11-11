@@ -102,6 +102,17 @@ export class NPCShip {
         tangent: new THREE.Vector3()
     };
 
+    // Roll flip animation state (match player visual behavior)
+    private flipAnimating = false;
+    private flipProgress = 0;
+    private flipDir = 0;
+    private flipStartAngle = 0;
+    private flipCompletedDir = 0;
+    private visualRoll = 0;
+    private turnHoldTimer = 0;
+    private turnHoldDir = 0;
+    private lastVisualUpdateSec = 0;
+
 
     // Add this field to the class properties (after line 55)
     private hasCrossedCheckpointThisFrame = false;
@@ -276,7 +287,10 @@ export class NPCShip {
     private ensureDraftingParticles() {
         if (this.draftingParticles) return;
         this.draftingParticles = new DraftingParticles(this as any);
-        this.root.add(this.draftingParticles.root);
+        // Add to the same parent (scene) to avoid double-transforming world-space positions
+        const parent = this.root.parent;
+        if (parent) parent.add(this.draftingParticles.root);
+        else this.root.add(this.draftingParticles.root);
     }
 
     private ensureDraftingLines() {
@@ -558,12 +572,11 @@ export class NPCShip {
 
         // Create rocket tail boost effect (initially hidden) - exactly like player
         // Position at jet engine nozzle opening (z=-0.72) so tail starts right at the nozzle
-        const nozzleRadius = 0.15;
-        const baseClipOffset = -nozzleRadius * 0.15; // Small backward offset to clip base
         this.rocketTail = new ShipRocketTail(
             this,
             new THREE.Vector3(0, 0, -0.74),
-            baseClipOffset
+            0,
+            { singleCone: true, lengthScale: 2.2, color: 0xffdd55 }
         );
         this.root.add(this.rocketTail.root);
 
@@ -716,7 +729,7 @@ export class NPCShip {
         if (this.airborneTimer > 0) this.airborneTimer = Math.max(0, this.airborneTimer - dt);
 
         // Clamp to corridor
-        const vHalf = PHYSICS.corridorHalfHeight;
+        const vHalf = this.airborneTimer > 0 ? RAMP.airCorridorHalfHeight : PHYSICS.corridorHalfHeight;
         if (this.state.verticalOffset < 0) {
             this.state.verticalOffset = 0;
             if (this.verticalVelocity < 0) this.verticalVelocity = 0;
@@ -1174,11 +1187,6 @@ export class NPCShip {
 
         // Allow NPCs to legitimately get ahead; rubber banding below will prevent runaway leads
 
-        // Ensure minimum speed to prevent NPCs from getting completely stuck
-        // Minimum is 50% of base speed (allows rubber banding to slow them when ahead, but not stop them)
-        const minSpeed = PHYSICS.baseSpeed * 0.5;
-        targetSpeed = Math.max(targetSpeed, minSpeed);
-
         // Soft cap when ahead: don't exceed player speed by more than 2%
         {
             const ourPosition = this.getTrackPosition();
@@ -1197,19 +1205,19 @@ export class NPCShip {
             }
         }
 
-        // Smooth speed transitions (same lerp rate as player ship for consistency)
-        const speedLerp = 1 - Math.pow(0.001, dt);
+        // Acceleration-limited speed change so NPCs start from 0 and ramp up naturally
         const prevSpeed = this.state.speedKmh;
-        this.state.speedKmh = THREE.MathUtils.lerp(this.state.speedKmh, targetSpeed, speedLerp);
-
-        // Force minimum speed if somehow speed dropped too low (prevent getting stuck)
-        if (this.state.speedKmh < minSpeed * 0.8) {
-            console.warn(`NPC ${this.racerId} speed too low (${this.state.speedKmh.toFixed(1)} km/h), forcing minimum`, {
-                targetSpeed,
-                minSpeed
-            });
-            this.state.speedKmh = minSpeed;
+        const accelKmhPerSec = PHYSICS.throttleAccelKmhPerSec;
+        const decelKmhPerSec = PHYSICS.coastDecelKmhPerSec;
+        let newSpeed = prevSpeed;
+        if (targetSpeed > prevSpeed) {
+            newSpeed = Math.min(prevSpeed + accelKmhPerSec * dt, targetSpeed);
+        } else {
+            newSpeed = Math.max(prevSpeed - decelKmhPerSec * dt, targetSpeed);
         }
+        this.state.speedKmh = newSpeed;
+
+        // No artificial minimum speed clamp: NPCs should start at 0 and accelerate naturally
 
         // Debug logging for significant speed drops (>20% drop in one frame)
         if (prevSpeed > 50 && this.state.speedKmh < prevSpeed * 0.8) {
@@ -1351,11 +1359,68 @@ export class NPCShip {
             m.makeBasis(x, y, z);
             const baseQ = new THREE.Quaternion().setFromRotationMatrix(m);
 
-            // Apply input-like yaw and bank based on lateral velocity (match player feel)
+            // Roll behavior mirrors player: ramp to sideways, one 360° flip, then stay sideways; on release, back to level
+            const nowSec = this.getNow();
+            const dtVis = this.lastVisualUpdateSec > 0 ? Math.min(0.05, nowSec - this.lastVisualUpdateSec) : 1 / 60;
+            this.lastVisualUpdateSec = nowSec;
+
             const yawRatio = THREE.MathUtils.clamp(this.lateralVelocity / PHYSICS.lateralAccel, -1, 1);
-            const shipYaw = -yawRatio * CAMERA.shipYawFromInput;
-            const bankAngle = THREE.MathUtils.degToRad(22) * yawRatio;
-            const inputEuler = new THREE.Euler(this.state.pitch || 0, shipYaw, -bankAngle, 'YXZ');
+            const turnDir = yawRatio > 0.25 ? 1 : (yawRatio < -0.25 ? -1 : 0);
+
+            // Update hold timers and direction state
+            if (turnDir !== 0) {
+                if (this.turnHoldDir === 0 || this.turnHoldDir === turnDir) {
+                    this.turnHoldTimer += dtVis;
+                    this.turnHoldDir = turnDir;
+                } else {
+                    this.turnHoldDir = turnDir;
+                    this.turnHoldTimer = 0;
+                    this.flipAnimating = false;
+                    this.flipProgress = 0;
+                    this.flipCompletedDir = 0;
+                }
+            } else {
+                this.turnHoldTimer = 0;
+                this.turnHoldDir = 0;
+                if (this.flipAnimating) {
+                    this.flipAnimating = false;
+                    this.flipProgress = 0;
+                }
+                this.flipCompletedDir = 0;
+            }
+
+            // Ramp to sideways while holding
+            if (turnDir !== 0) {
+                const progress = THREE.MathUtils.clamp(this.turnHoldTimer / PHYSICS.rollHoldToSideSec, 0, 1);
+                const targetSide = turnDir * PHYSICS.rollSideAngle;
+                this.visualRoll = THREE.MathUtils.lerp(this.visualRoll, targetSide, progress);
+            } else {
+                // Not turning: roll back to level
+                this.visualRoll = THREE.MathUtils.damp(this.visualRoll, 0, PHYSICS.rollDamping, dtVis);
+            }
+
+            // Start flip after sideways reached, once per direction hold
+            if (!this.flipAnimating && turnDir !== 0 && this.flipCompletedDir !== turnDir && this.turnHoldTimer >= PHYSICS.rollHoldToSideSec) {
+                this.flipAnimating = true;
+                this.flipProgress = 0;
+                this.flipDir = turnDir;
+                this.flipStartAngle = this.visualRoll;
+            }
+            if (this.flipAnimating) {
+                this.flipProgress = Math.min(1, this.flipProgress + dtVis / PHYSICS.rollFlipDurationSec);
+                const fullTurn = Math.PI * 2;
+                this.visualRoll = this.flipStartAngle + this.flipDir * fullTurn * this.flipProgress;
+                if (this.flipProgress >= 1) {
+                    this.flipAnimating = false;
+                    this.flipProgress = 0;
+                    this.flipCompletedDir = this.flipDir;
+                    // After flip, remain sideways while still holding
+                    this.visualRoll = this.flipDir * PHYSICS.rollSideAngle;
+                }
+            }
+
+            const shipYaw = -yawRatio * CAMERA.shipYawFromInput * 0.4;
+            const inputEuler = new THREE.Euler(this.state.pitch || 0, shipYaw, this.visualRoll, 'YXZ');
             const inputQ = new THREE.Quaternion().setFromEuler(inputEuler);
 
             baseQ.multiply(inputQ);
