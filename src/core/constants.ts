@@ -444,6 +444,15 @@ export const BLACKHOLE = {
 };
 
 
+// Ship shield configuration
+export const SHIELD = {
+    // Ellipsoid radii in ship local units before the global 3x scale on the ship root.
+    // Sized to fully enclose the ship including wings and tail while remaining tight.
+    radiusX: 0.9, // width
+    radiusY: 0.6, // height
+    radiusZ: 1.2  // length
+};
+
 // Drafting (slipstream) configuration
 export const DRAFTING = {
     minDistance: 3.5, // must be right behind the lead ship

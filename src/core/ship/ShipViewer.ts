@@ -9,6 +9,7 @@ import { DraftingParticles } from './drafting/DraftingParticles';
 import { DraftingVectorLines } from './drafting/DraftingVectorLines';
 import type { ShipState } from '../types';
 import { ShipBoostParticles } from './ShipBoostParticles';
+import { ShipShield } from './ShipShield';
 
 export class ShipViewer {
     private mount: HTMLElement;
@@ -22,7 +23,7 @@ export class ShipViewer {
     private onResizeBound: (() => void) | null = null;
 
     // UI state and overlay
-	private ui = { boost: true, trackBoost: false, drift: false, draft: false };
+    private ui = { boost: true, trackBoost: false, drift: false, draft: false, shield: false };
     private controlsEl: HTMLDivElement | null = null;
 
     // Viewer ship clone and engine refs
@@ -37,6 +38,8 @@ export class ShipViewer {
     private idleDiscMat: THREE.ShaderMaterial | null = null;
     private jetConeMesh: THREE.Mesh | null = null;
     private jetConeMat: THREE.MeshBasicMaterial | null = null;
+    private coreConeMesh: THREE.Mesh | null = null;
+    private coreConeMat: THREE.MeshBasicMaterial | null = null;
     private outerConeMesh: THREE.Mesh | null = null;
     private outerConeMat: THREE.MeshBasicMaterial | null = null;
 
@@ -65,6 +68,9 @@ export class ShipViewer {
     // Boost particles
     private shipBoostParticles: ShipBoostParticles | null = null;
     private boostProxy: { root: THREE.Group; state: { boosting: boolean } } | null = null;
+
+    // Shield
+    private shield: ShipShield | null = null;
 
     constructor(mount: HTMLElement, ship: Ship) {
         this.mount = mount;
@@ -226,6 +232,7 @@ export class ShipViewer {
             this.updateTrackBoost(dt);
             this.updateDrift(dt);
             this.updateDrafting(dt);
+            this.updateShield(dt);
 
             // Use composer (with bloom) instead of direct renderer
             if (this.composer && this.scene && this.camera) {
@@ -332,26 +339,35 @@ export class ShipViewer {
             if (this.draftingParticles) this.draftingParticles.setVisible(this.ui.draft);
             if (this.draftingLines) this.draftingLines.setVisible(this.ui.draft);
         });
+        const shieldBtn = mkBtn('Shield', () => {
+            this.ui.shield = !this.ui.shield;
+            shieldBtn.classList.toggle('active', this.ui.shield);
+            setActiveButtonStyle(shieldBtn, this.ui.shield);
+            if (this.shield) this.shield.setActive(this.ui.shield);
+        });
 
         container.appendChild(boostBtn);
         container.appendChild(trackBoostBtn);
         container.appendChild(driftBtn);
         container.appendChild(draftBtn);
+        container.appendChild(shieldBtn);
 
         const mountStyle = getComputedStyle(this.mount);
         if (mountStyle.position === 'static') {
             this.mount.style.position = 'relative';
         }
-		// Ensure initial active classes reflect UI state
-		boostBtn.classList.toggle('active', this.ui.boost);
-		trackBoostBtn.classList.toggle('active', this.ui.trackBoost);
-		driftBtn.classList.toggle('active', this.ui.drift);
-		draftBtn.classList.toggle('active', this.ui.draft);
+        // Ensure initial active classes reflect UI state
+        boostBtn.classList.toggle('active', this.ui.boost);
+        trackBoostBtn.classList.toggle('active', this.ui.trackBoost);
+        driftBtn.classList.toggle('active', this.ui.drift);
+        draftBtn.classList.toggle('active', this.ui.draft);
+        shieldBtn.classList.toggle('active', this.ui.shield);
         // Initialize default inactive visual style
         setActiveButtonStyle(boostBtn, this.ui.boost);
         setActiveButtonStyle(trackBoostBtn, this.ui.trackBoost);
         setActiveButtonStyle(driftBtn, this.ui.drift);
         setActiveButtonStyle(draftBtn, this.ui.draft);
+        setActiveButtonStyle(shieldBtn, this.ui.shield);
 
         this.mount.appendChild(container);
         this.controlsEl = container;
@@ -437,6 +453,13 @@ export class ShipViewer {
             driftDuration: 0,
             driftLength: 0
         } as ShipState;
+
+        // Create shield effect
+        this.shield = new ShipShield(new THREE.Vector3(0, 0, 0));
+        this.viewerShip.add(this.shield.root);
+        // Center the shield on the ship geometry
+        this.shield.centerOn(this.viewerShip);
+        this.shield.setActive(this.ui.shield);
     }
 
     private locateEngineMeshes(root: THREE.Object3D) {
@@ -464,8 +487,17 @@ export class ShipViewer {
                 const c = m.color;
                 const isBlue = c.b > c.g && c.g >= 0.55; // bluish
                 if (isBlue) {
-                    this.jetConeMesh = obj as any;
-                    this.jetConeMat = m;
+                    // Check if this is the inner core (smaller radius) or main cone
+                    const geo = obj.geometry as THREE.ConeGeometry;
+                    const radius = geo.parameters?.radius ?? 0;
+                    // Core cone is smaller (radius ~0.06), main cone is larger (radius ~0.10)
+                    if (radius < 0.08) {
+                        this.coreConeMesh = obj as any;
+                        this.coreConeMat = m;
+                    } else {
+                        this.jetConeMesh = obj as any;
+                        this.jetConeMat = m;
+                    }
                 }
             }
             // Outer warm cone: ConeGeometry + MeshBasicMaterial (yellow/orange)
@@ -520,29 +552,77 @@ export class ShipViewer {
         if (this.idleDiscMesh && this.idleDiscMat && this.jetConeMesh && this.jetConeMat) {
             const boosting = this.ui.boost;
             const trackBoosting = this.ui.trackBoost;
-            const active = boosting || trackBoosting; // treat as moving/ignited
+            const isMoving = boosting || trackBoosting; // treat as moving/ignited
+            // Regular boost (not track boost) should show larger blue cone
+            // Track boost takes precedence - when active, show rocket tail instead of enlarged blue cone
+            const isRegularBoost = boosting && !trackBoosting;
 
-            // Idle disc: visible only when not active
+            // Idle disc: visible only when not moving
             const idlePulse = 0.9 + 0.1 * (0.5 + 0.5 * Math.sin(this.nowSec * 4.0));
-            const idleOpacity = THREE.MathUtils.clamp((active ? 0.0 : 0.32 * idlePulse), 0, 0.6);
+            const idleOpacity = THREE.MathUtils.clamp((isMoving ? 0.0 : 0.32 * idlePulse), 0, 0.6);
             this.idleDiscMat.uniforms.uOpacity.value = idleOpacity;
-            this.idleDiscMesh.visible = idleOpacity > 0.01 && !active;
+            this.idleDiscMesh.visible = idleOpacity > 0.01 && !isMoving;
 
-            // Blue cone: always visible; small/dim at idle, larger/brighter when active
-            const baseScale = active ? 1.0 : 0.85;
-            const lengthScale = active ? 1.06 : 0.9;
-            const flicker = 1.0 + 0.05 * Math.sin(this.nowSec * 11.0);
-            const targetOpacity = active ? 0.9 : 0.6;
-            this.jetConeMat.opacity = THREE.MathUtils.clamp(targetOpacity * flicker, 0, 1);
-            this.jetConeMesh.scale.set(baseScale, baseScale, lengthScale);
+            // Blue cone: scale and brightness based on boost state
+            // When regular boost: larger (length ~1.14, radius ~1.05) and brighter
+            // When just moving: normal size (length ~1.0, radius ~1.0)
+            // When idle: smaller (length ~0.9, radius ~0.85)
+            const conePulse = 1.0 + 0.08 * Math.sin(this.nowSec * 12.0);
+            let radiusScale: number;
+            let lengthScale: number;
+            let targetOpacity: number;
+            let targetColor: THREE.Color;
+
+            if (isRegularBoost) {
+                // Regular boost: larger and brighter blue cone (matching ShipJetEngine)
+                radiusScale = 1.05;
+                lengthScale = 1.0 + 0.14 + 0.06 * Math.sin(this.nowSec * 9.0); // ~1.14-1.20
+                targetOpacity = 1.0;
+                targetColor = new THREE.Color(0.28, 0.82, 1.0); // Brighter, hotter blue
+            } else if (isMoving) {
+                // Just moving (track boost or moving without regular boost): normal size
+                radiusScale = 1.0;
+                lengthScale = 1.0 + 0.06 * Math.sin(this.nowSec * 9.0); // ~1.0-1.06
+                targetOpacity = 0.98;
+                targetColor = new THREE.Color(0.2, 0.65, 1.0); // Standard blue
+            } else {
+                // Idle: smaller and dimmer
+                radiusScale = 0.85;
+                lengthScale = 0.9;
+                targetOpacity = 0.85;
+                targetColor = new THREE.Color(0.2, 0.65, 1.0); // Standard blue
+            }
+
+            this.jetConeMat.opacity = THREE.MathUtils.clamp(targetOpacity * conePulse, 0, 1);
+            this.jetConeMat.color.copy(targetColor);
+            this.jetConeMesh.scale.set(radiusScale, radiusScale, lengthScale);
             this.jetConeMesh.visible = true;
 
-            // Outer warm cone: only when active (moving/boost/track boost)
+            // Inner core cone: visible when regular boost is active (matching ShipJetEngine)
+            if (this.coreConeMesh && this.coreConeMat) {
+                const coreTargetOpacity = isRegularBoost ? 1.0 : (isMoving ? 0.35 : 0.0);
+                const corePulse = 0.98 + 0.12 * Math.sin(this.nowSec * 18.0);
+                const coreOpacity = THREE.MathUtils.clamp(coreTargetOpacity * corePulse, 0, 1);
+                this.coreConeMat.opacity = coreOpacity;
+                this.coreConeMesh.visible = coreOpacity > 0.02;
+                // Core is brighter when boosting
+                if (isRegularBoost) {
+                    this.coreConeMat.color.setRGB(0.45, 0.95, 1.0); // Brightest hot blue
+                } else {
+                    this.coreConeMat.color.setRGB(0.35, 0.85, 1.0); // Standard hot blue
+                }
+                this.coreConeMesh.scale.set(1.0, 1.0, isRegularBoost ? 1.2 : 1.0);
+            }
+
+            // Outer warm cone: completely hidden during boost (boost shows only blue-white)
             if (this.outerConeMesh && this.outerConeMat) {
-                const outerFlicker = 1.0 + 0.08 * Math.sin(this.nowSec * 8.0);
-                this.outerConeMat.opacity = active ? THREE.MathUtils.clamp(0.45 * outerFlicker, 0, 1) : 0;
-                this.outerConeMesh.visible = active;
-                if (active) this.outerConeMesh.scale.set(1.0, 1.0, 1.04);
+                const outerTargetOpacity = isMoving && !isRegularBoost ? 0.28 : 0.0;
+                const outerPulse = 1.0 + 0.08 * Math.sin(this.nowSec * 8.0);
+                // Immediately set opacity to 0 when boost is active (no damping delay)
+                const outerOpacity = isRegularBoost ? 0.0 : THREE.MathUtils.clamp(outerTargetOpacity * outerPulse, 0, 1);
+                this.outerConeMat.opacity = outerOpacity;
+                this.outerConeMesh.visible = isMoving && !isRegularBoost && outerOpacity > 0.02;
+                if (isMoving && !isRegularBoost) this.outerConeMesh.scale.set(1.0, 1.0, 1.04);
             }
             return;
         }
@@ -571,7 +651,14 @@ export class ShipViewer {
 
     private updateTrackBoost(dt: number) {
         if (!this.rocketTail) return;
-        this.trackBoostTimer = this.ui.trackBoost ? BOOST_PAD.boostDuration : Math.max(0, this.trackBoostTimer - dt);
+        // Only update timer when track boost UI is active; immediately reset to 0 when inactive
+        if (this.ui.trackBoost) {
+            this.trackBoostTimer = BOOST_PAD.boostDuration;
+        } else {
+            this.trackBoostTimer = 0; // Immediately hide track boost when UI is off
+        }
+        // Hard guard: never show rocket tail unless Track Boost toggle is ON
+        this.rocketTail.root.visible = !!this.ui.trackBoost;
         this.rocketTail.update(dt);
     }
 
@@ -600,6 +687,12 @@ export class ShipViewer {
         }
         this.draftingParticles.update(dt);
         this.draftingLines.update(dt);
+    }
+
+    private updateShield(dt: number) {
+        if (!this.shield) return;
+        this.shield.setActive(this.ui.shield);
+        this.shield.update(dt);
     }
 
     private getSimulatedSpeedKmh(): number {
@@ -686,7 +779,12 @@ export class ShipViewer {
                         const isOrangeColor = color.r > 0.9 && color.g > 0.5 && color.g < 0.7 && color.b > 0.05 && color.b < 0.2;
                         // Check for white-hot core: (1, 0.9-1.0, 0.85-1.0)
                         const isWhiteCore = color.r > 0.95 && color.g > 0.9 && color.b > 0.85;
+                        // Also treat bright yellow (single-cone track tail color like 0xffdd55)
+                        const isYellow = color.r > 0.9 && color.g > 0.75 && color.b < 0.5;
                         if (isOrangeColor || isWhiteCore) {
+                            return true;
+                        }
+                        if (isYellow) {
                             return true;
                         }
                     }
@@ -699,7 +797,9 @@ export class ShipViewer {
                     const color = mesh.material.color;
                     // Boost color is bright orange: (1, 0.55, 0.1)
                     const isBoostColor = color.r > 0.9 && color.g > 0.5 && color.g < 0.6 && color.b > 0.05 && color.b < 0.15;
-                    if (isBoostColor) {
+                    // Track tail single-cone often uses bright yellow (e.g. 0xffdd55)
+                    const isTrackTailYellow = color.r > 0.9 && color.g > 0.75 && color.b < 0.5;
+                    if (isBoostColor || isTrackTailYellow) {
                         return true;
                     }
                 }

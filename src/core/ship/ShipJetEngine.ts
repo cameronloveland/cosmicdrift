@@ -18,10 +18,7 @@ export class ShipJetEngine {
     private coreMesh!: THREE.Mesh;
     private coreOpacity: number = 0.0;
 
-    // Moving (outer warm cone overlay)
-    private outerMaterial!: THREE.MeshBasicMaterial;
-    private outerMesh!: THREE.Mesh;
-    private outerOpacity: number = 0.0;
+    // (Removed warm outer cone)
 
     // Animation state
     private timeSec: number = 0;
@@ -118,24 +115,7 @@ export class ShipJetEngine {
         this.coreMesh.renderOrder = 1; // draw with inner stack
         this.root.add(this.coreMesh);
 
-        // Outer warm cone (yellow/orange) that wraps blue cone when moving
-        this.outerMaterial = new THREE.MeshBasicMaterial({
-            color: new THREE.Color(1.0, 0.72, 0.18),
-            transparent: true,
-            opacity: this.outerOpacity,
-            blending: THREE.AdditiveBlending,
-            depthWrite: false,
-            toneMapped: false
-        });
-        const outerGeo = new THREE.ConeGeometry(coneRadius * 1.1, coneHeight * 1.05, 20, 1, false);
-        outerGeo.translate(0, coneHeight * 0.5, 0);
-        this.outerMesh = new THREE.Mesh(outerGeo, this.outerMaterial);
-        this.outerMesh.position.copy(position);
-        this.outerMesh.position.z -= 0.001;
-        this.outerMesh.rotation.x = -Math.PI / 2;
-        this.outerMesh.visible = false;
-        this.outerMesh.renderOrder = 2;
-        this.root.add(this.outerMesh);
+        // No outer warm cone; engine visuals are purely blue
     }
 
     // isMoving=true when the ship has non-zero forward speed
@@ -184,14 +164,7 @@ export class ShipJetEngine {
         this.coreMesh.visible = this.coreMaterial.opacity > 0.02;
         this.coreMesh.scale.set(1.0, 1.0, isBoosting ? 1.2 : 1.0);
 
-        // Outer warm cone overlay when moving
-        // Keep visible but don't overpower the core during boost
-        const outerTargetOpacity = isMoving ? (isBoosting ? 0.22 : 0.28) : 0.0;
-        const outerPulse = 1.0 + 0.08 * Math.sin(this.timeSec * 8.0);
-        this.outerOpacity = THREE.MathUtils.damp(this.outerOpacity, outerTargetOpacity, 10, dt);
-        this.outerMaterial.opacity = THREE.MathUtils.clamp(this.outerOpacity * outerPulse, 0.0, 1.0);
-        this.outerMesh.visible = isMoving && this.outerMaterial.opacity > 0.02;
-        this.outerMesh.scale.set(1.0, 1.0, 1.04);
+        // No outer warm cone to update
     }
 
     public dispose() {
@@ -207,9 +180,7 @@ export class ShipJetEngine {
         if (this.coreMesh.geometry) this.coreMesh.geometry.dispose();
         this.root.remove(this.coreMesh);
 
-        this.outerMaterial.dispose();
-        if (this.outerMesh.geometry) this.outerMesh.geometry.dispose();
-        this.root.remove(this.outerMesh);
+        // No outer warm cone resources to dispose
     }
 }
 
