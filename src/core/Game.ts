@@ -110,8 +110,7 @@ export class Game {
         on: false, // Start off - only plays when radio tab is active
         stationIndex: 0,
         stations: [
-            { name: 'Nightride FM', url: 'https://stream.nightride.fm/nightride.mp3' },
-            { name: 'Nightwave Plaza', url: 'https://radio.plaza.one/mp3' },
+            { name: 'Nightride FM', url: 'https://stream.nightride.fm/nightride.mp3' }
 
         ] as { name: string; url: string; }[]
     };
