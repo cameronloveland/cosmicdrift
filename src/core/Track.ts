@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import { COLORS, TRACK_OPTS, TRACK_SOURCE, CUSTOM_TRACK_POINTS, TUNNEL, BOOST_PAD } from './constants';
-import type { TrackOptions, TrackSample, TunnelSegment, TunnelInfo, BoostPadSegment, BoostPadInfo } from './types';
+import { COLORS, TRACK_OPTS, TRACK_SOURCE, CUSTOM_TRACK_POINTS, TUNNEL, BOOST_PAD, RAMP, BANK_PROFILE, FRAME_PROFILES } from './constants';
+import type { TrackOptions, TrackSample, TunnelSegment, TunnelInfo, BoostPadSegment, BoostPadInfo, RampSegment, RampInfo } from './types';
 
 function mulberry32(seed: number) {
     let t = seed >>> 0;
@@ -23,6 +23,15 @@ export class Track {
     private tunnels = new THREE.Group();
     private boostPads: BoostPadSegment[] = [];
     private boostPadGroup = new THREE.Group();
+    private ramps: RampSegment[] = [];
+    private rampGroup = new THREE.Group();
+    private rampChevronMaterials: THREE.MeshBasicMaterial[] = [];
+
+    // Start line gate fade-out state
+    private gateMaterials: THREE.MeshBasicMaterial[] = [];
+    private gateBaseOpacities: number[] = []; // Store original opacities
+    private gateFadeStartTime: number | null = null;
+    private gateFadeDuration = 3.0; // 3 seconds fade (duration of countdown)
 
     private opts: TrackOptions = TRACK_OPTS;
 
@@ -77,6 +86,10 @@ export class Track {
                 return;
             }
         }
+        // Optional curvature-aware relax (before arc-length and length fetch)
+        this.relaxByCurvature();
+        this.separateCloseSegments();
+
         // Increase arc length precision to remove quantization artifacts
         this.curve.arcLengthDivisions = Math.max(200, this.samples * 16);
 
@@ -107,8 +120,14 @@ export class Track {
         this.buildMarkers();
         this.buildTunnels();
         this.buildBoostPads();
+        this.buildRamps();
         this.buildStartLine(); // Build after tunnels so we can position relative to first tunnel
         this.updateTrackAlphaForTunnels();
+
+        // Optional debug helpers
+        if (this.opts.debugFrames) {
+            this.buildDebugVisualization();
+        }
     }
 
     private makeControlPoints(opts: TrackOptions): THREE.Vector3[] {
@@ -203,10 +222,19 @@ export class Track {
             const tan = this.curve.getTangentAt(t).normalize();
             if (i === 0) tmpPrevTangent.copy(tan);
 
-            // Parallel transport: adjust normal to stay perpendicular and smooth
+            // Parallel transport with degeneracy fallback:
             // project previous normal onto plane perpendicular to current tangent
             tmp.copy(tmpNormal).sub(tan.clone().multiplyScalar(tmpNormal.dot(tan))).normalize();
-            if (!Number.isFinite(tmp.x)) tmp.set(0, 1, 0);
+            // Fallbacks to avoid degeneracy/flip
+            if (!Number.isFinite(tmp.x) || tmp.length() < 0.1) {
+                const cross = new THREE.Vector3().crossVectors(tan, tmpNormal);
+                if (cross.length() > 0.01) {
+                    tmp.copy(cross).cross(tan).normalize();
+                } else {
+                    const arbitrary = Math.abs(tan.x) < 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+                    tmp.copy(arbitrary).sub(tan.clone().multiplyScalar(arbitrary.dot(tan))).normalize();
+                }
+            }
             tmpNormal.copy(tmp);
             tmpBinormal.copy(tan).cross(tmpNormal).normalize();
 
@@ -219,7 +247,11 @@ export class Track {
             const d = new THREE.Vector3().crossVectors(tmpPrevTangent, tan);
             const curveStrength = THREE.MathUtils.clamp(d.length(), 0, this.opts.maxCurvature * 100); // heuristic scale
             const sign = Math.sign(d.y || 0);
-            const bank = THREE.MathUtils.degToRad(this.opts.bankMaxDeg) * curveStrength * sign;
+            let bank = THREE.MathUtils.degToRad(this.opts.bankMaxDeg) * curveStrength * sign;
+            // Apply bank profile shaping
+            try {
+                bank *= BANK_PROFILE(t);
+            } catch { }
             this.cachedBank[i] = bank;
             tmpPrevTangent.copy(tan);
         }
@@ -259,6 +291,11 @@ export class Track {
             this.cachedNormals[i].applyQuaternion(q);
             this.cachedBinormals[i].applyQuaternion(q);
         }
+
+        // Optional per-section frame customization
+        if (TRACK_OPTS.enableFrameProfiles && FRAME_PROFILES.length > 0) {
+            this.applyFrameProfiles();
+        }
     }
 
     private computeBoundingRadius(): number {
@@ -283,7 +320,8 @@ export class Track {
         const indices: number[] = [];
 
         // Initialize with full opacity - we'll update this after tunnels are built
-        for (let i = 0; i <= segments; i++) {
+        // Build exactly 'segments' vertices (no duplicate seam)
+        for (let i = 0; i < segments; i++) {
             const idx = i % segments;
             const center = this.cachedPositions[idx];
             const binormal = this.cachedBinormals[idx];
@@ -311,8 +349,8 @@ export class Track {
         for (let i = 0; i < segments; i++) {
             const a = i * 2;
             const b = a + 1;
-            const c = a + 2;
-            const d = a + 3;
+            const c = ((i + 1) % segments) * 2;
+            const d = c + 1;
             indices.push(a, b, d, a, d, c);
         }
 
@@ -326,11 +364,11 @@ export class Track {
         const mat = new THREE.MeshPhysicalMaterial({
             color: new THREE.Color(0x0e1130),
             roughness: 0.35,
-            metalness: 0.05,
+            metalness: 0.1, // Slightly increased for more reflection
             transparent: true,
             opacity: 0.98,
-            emissive: COLORS.deepBlue.clone().multiplyScalar(0.25),
-            envMapIntensity: 0.4,
+            emissive: COLORS.deepBlue.clone().multiplyScalar(0.4), // Increased from 0.25 for stronger glow
+            envMapIntensity: 1.2, // Increased from 0.4 for stronger reflective lighting
             vertexColors: true,
             alphaTest: 0.01 // Ensure alpha blending works properly
         });
@@ -418,6 +456,10 @@ export class Track {
             toneMapped: false
         });
 
+        // Store material reference and base opacity for fade-out animation
+        this.gateMaterials.push(gateMat);
+        this.gateBaseOpacities.push(1.0);
+
         // Gate dimensions
         const gateHeight = 12;
         const postRadius = 0.4; // Make poles thicker for better visibility
@@ -427,13 +469,23 @@ export class Track {
         // Create vertical posts (left and right) - position them directly at start line
         const postGeom = new THREE.CylinderGeometry(postRadius, postRadius, gateHeight, 12);
 
+        // Orient posts to be perpendicular to track surface (along track's up vector)
+        // CylinderGeometry is oriented along Y-axis by default, so we need to rotate it
+        // to align with the track's local up vector (normal)
+        const postX = new THREE.Vector3().copy(tan).normalize(); // X perpendicular to up and bin
+        const postY = new THREE.Vector3().copy(up).normalize(); // Y along track up (normal)
+        const postZ = new THREE.Vector3().copy(bin).normalize(); // Z along track width
+        const postM = new THREE.Matrix4().makeBasis(postX, postY, postZ);
+        const postQ = new THREE.Quaternion().setFromRotationMatrix(postM);
+
         // Left post - position at track edge at start line
         const leftPost = new THREE.Mesh(postGeom, gateMat);
         const leftPostPos = new THREE.Vector3()
             .copy(center)
             .addScaledVector(bin, -this.width * 0.5 - 0.1) // Just outside left track edge
-            .addScaledVector(up, gateHeight * 0.5);
+            .addScaledVector(up, gateHeight * 0.5); // Center vertically along track normal
         leftPost.position.copy(leftPostPos);
+        leftPost.quaternion.copy(postQ); // Orient perpendicular to track surface
         this.root.add(leftPost); // Add directly to root, not gate group
 
         // Right post - position at track edge at start line
@@ -441,22 +493,48 @@ export class Track {
         const rightPostPos = new THREE.Vector3()
             .copy(center)
             .addScaledVector(bin, this.width * 0.5 + 0.1) // Just outside right track edge
-            .addScaledVector(up, gateHeight * 0.5);
+            .addScaledVector(up, gateHeight * 0.5); // Center vertically along track normal
         rightPost.position.copy(rightPostPos);
+        rightPost.quaternion.copy(postQ); // Orient perpendicular to track surface
         this.root.add(rightPost); // Add directly to root, not gate group
 
 
         // Create gate group for text only
         const gateGroup = new THREE.Group();
 
-        // Horizontal crossbar connecting the posts - position directly at start line
-        const crossbarLength = this.width + 0.2; // Span the track width plus small margin
-        const crossbarGeom = new THREE.BoxGeometry(crossbarLength, crossbarHeight, crossbarWidth);
-        const crossbar = new THREE.Mesh(crossbarGeom, gateMat);
-        const crossbarPos = new THREE.Vector3()
+        // Calculate exact positions of post outer edges at top for flush alignment
+        const leftPostOuterEdge = new THREE.Vector3()
             .copy(center)
-            .addScaledVector(up, gateHeight);
+            .addScaledVector(bin, -this.width * 0.5 - 0.1 - postRadius) // Left post outer edge
+            .addScaledVector(up, gateHeight); // At top of posts
+        const rightPostOuterEdge = new THREE.Vector3()
+            .copy(center)
+            .addScaledVector(bin, this.width * 0.5 + 0.1 + postRadius) // Right post outer edge
+            .addScaledVector(up, gateHeight); // At top of posts
+
+        // Calculate exact distance between post outer edges for perfect flush alignment
+        const crossbarLength = leftPostOuterEdge.distanceTo(rightPostOuterEdge);
+
+        // Horizontal crossbar connecting the posts - position flush with post tops
+        const crossbarGeom = new THREE.BoxGeometry(crossbarHeight, crossbarWidth, crossbarLength);
+        const crossbar = new THREE.Mesh(crossbarGeom, gateMat);
+
+        // Position crossbar at midpoint between post outer edges, at top of posts
+        const crossbarPos = new THREE.Vector3()
+            .copy(leftPostOuterEdge)
+            .add(rightPostOuterEdge)
+            .multiplyScalar(0.5);
         crossbar.position.copy(crossbarPos);
+
+        // Orient crossbar: length is along Z-axis, span across track width (binormal)
+        // BoxGeometry(X=height, Y=width, Z=length) -> need Z along binormal
+        const crossbarX = new THREE.Vector3().copy(tan).normalize(); // X perpendicular to bin and up
+        const crossbarY = new THREE.Vector3().copy(up).normalize(); // Y up
+        const crossbarZ = new THREE.Vector3().copy(bin).normalize(); // Z along track width
+        const crossbarM = new THREE.Matrix4().makeBasis(crossbarX, crossbarY, crossbarZ);
+        const crossbarQ = new THREE.Quaternion().setFromRotationMatrix(crossbarM);
+        crossbar.quaternion.copy(crossbarQ);
+
         this.root.add(crossbar); // Add directly to root, not gate group
 
         // Create "START" text using simple box geometry letters
@@ -544,12 +622,12 @@ export class Track {
         const trackUp = new THREE.Vector3().copy(up).normalize(); // track up
 
         // Create rotation matrix where text is perpendicular to track direction
-        // Text should read left-to-right across the track width
-        const m = new THREE.Matrix4().makeBasis(trackForward, trackUp, trackRight.clone().negate());
+        // Text should read left-to-right across the track width (X = binormal, Y = up, Z = -tangent)
+        const m = new THREE.Matrix4().makeBasis(trackRight, trackUp, trackForward.clone().negate());
         const q = new THREE.Quaternion().setFromRotationMatrix(m);
 
         gateGroup.quaternion.copy(q);
-        gateGroup.position.copy(center).addScaledVector(up, textYOffset);
+        gateGroup.position.copy(center).addScaledVector(up, textYOffset + 2); // Move text up slightly
 
         this.root.add(gateGroup);
 
@@ -573,6 +651,98 @@ export class Track {
         stripeMesh.position.copy(center).addScaledVector(up, 0.5);
         stripeMesh.scale.set(this.width, 2.0, 1); // Make it thicker
         this.root.add(stripeMesh);
+
+        // Create glowing holographic wall at start line
+        // Width spans between the inner edges of the posts
+        const wallWidth = crossbarLength; // Match the crossbar span
+        const wallHeight = gateHeight; // Match the height of the side columns (posts)
+        const wallGeom = new THREE.PlaneGeometry(wallWidth, wallHeight);
+
+        // Create holographic glowing material
+        const wallMat = new THREE.MeshBasicMaterial({
+            color: 0x53d7ff, // Cyan blue
+            transparent: true,
+            opacity: 0.3, // Semi-transparent for holographic effect
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+            side: THREE.DoubleSide, // Visible from both sides
+            toneMapped: false
+        });
+
+        // Store wall materials and base opacity for fade-out animation
+        this.gateMaterials.push(wallMat);
+        this.gateBaseOpacities.push(0.3);
+
+        const wallMesh = new THREE.Mesh(wallGeom, wallMat);
+
+        // Position wall aligned with posts - bottom at track level, top at post top
+        const wallPos = new THREE.Vector3()
+            .copy(center)
+            .addScaledVector(up, gateHeight * 0.5); // Center vertically to match posts
+
+        // Orient wall perpendicular to track direction - standing upright like a barrier
+        // PlaneGeometry: default plane lies in XY, with +Z as normal (outward facing)
+        // For upright wall: width along X (bin), height along Y (up), normal along -Z (faces backward/opposite track)
+        // Since ships come from behind start line, wall faces backward (negative tangent)
+        const wallX = new THREE.Vector3().copy(bin).normalize(); // Width spans across track (X-axis)
+        const wallY = new THREE.Vector3().copy(up).normalize(); // Height goes up (Y-axis)  
+        const wallZ = new THREE.Vector3().copy(tan).negate().normalize(); // Normal faces backward (negative Z, opposite track direction)
+        const wallM = new THREE.Matrix4().makeBasis(wallX, wallY, wallZ);
+        const wallQ = new THREE.Quaternion().setFromRotationMatrix(wallM);
+        wallMesh.quaternion.copy(wallQ);
+        wallMesh.position.copy(wallPos);
+
+        this.root.add(wallMesh);
+
+        // Add edge glow effect with a slightly larger, brighter rectangle
+        const edgeGeom = new THREE.PlaneGeometry(wallWidth + 0.2, wallHeight + 0.2);
+        const edgeMat = new THREE.MeshBasicMaterial({
+            color: 0x00ffff, // Bright cyan
+            transparent: true,
+            opacity: 0.15, // Subtle edge glow
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+            side: THREE.DoubleSide,
+            toneMapped: false
+        });
+
+        // Store edge material and base opacity for fade-out animation
+        this.gateMaterials.push(edgeMat);
+        this.gateBaseOpacities.push(0.15);
+
+        const edgeMesh = new THREE.Mesh(edgeGeom, edgeMat);
+        edgeMesh.quaternion.copy(wallQ);
+        edgeMesh.position.copy(wallPos);
+        this.root.add(edgeMesh);
+    }
+
+    public startGateFade(currentTime: number) {
+        // Start the fade-out animation
+        if (this.gateFadeStartTime === null) {
+            // Store base opacities before starting fade
+            this.gateFadeStartTime = currentTime;
+        }
+    }
+
+    public updateGateFade(currentTime: number) {
+        if (this.gateFadeStartTime === null) return;
+
+        const elapsed = currentTime - this.gateFadeStartTime;
+        const fadeProgress = Math.min(elapsed / this.gateFadeDuration, 1.0);
+
+        // Calculate opacity (fade from base opacity to 0.0)
+        this.gateMaterials.forEach((mat, index) => {
+            const baseOpacity = this.gateBaseOpacities[index];
+            const opacity = baseOpacity * (1.0 - fadeProgress);
+            mat.opacity = opacity;
+        });
+
+        // If fade is complete, keep materials at 0 opacity
+        if (fadeProgress >= 1.0) {
+            this.gateMaterials.forEach(mat => {
+                mat.opacity = 0;
+            });
+        }
     }
 
     private buildTunnels() {
@@ -713,7 +883,7 @@ export class Track {
         const colors = colorAttr.array as Float32Array;
 
         // For each vertex pair (left and right edge of track)
-        for (let i = 0; i <= this.samples; i++) {
+        for (let i = 0; i < this.samples; i++) {
             const idx = i % this.samples;
             const t = idx / this.samples;
 
@@ -805,7 +975,7 @@ export class Track {
         const mat = new THREE.MeshBasicMaterial({
             color: color,
             transparent: true,
-            opacity: 0.95, // Slightly higher opacity for better visibility
+            opacity: 1.0, // Increased from 0.95 for stronger neon glow
             blending: THREE.AdditiveBlending,
             depthWrite: false,
             toneMapped: false,
@@ -859,7 +1029,7 @@ export class Track {
         const mat = new THREE.MeshBasicMaterial({
             color: color,
             transparent: true,
-            opacity: 0.4, // Slightly higher opacity for better visibility
+            opacity: 0.5, // Increased from 0.4 for stronger edge glow
             blending: THREE.AdditiveBlending,
             depthWrite: false,
             toneMapped: false,
@@ -872,6 +1042,284 @@ export class Track {
 
     public updateResolution(width: number, height: number) {
         // No longer needed with TubeGeometry rails
+    }
+
+    // --- Curvature-aware relax -------------------------------------------------
+    private relaxByCurvature() {
+        const limit = this.opts.curvatureLimit ?? 0;
+        const iters = Math.max(0, (this.opts.curvatureRelaxIters ?? 0) | 0);
+        if (!this.curve || limit <= 0 || iters <= 0) return;
+
+        // Sample a manageable number of points (tie to samples but cap for cost)
+        const n = Math.max(256, Math.min(this.samples, 3000));
+        const pts: THREE.Vector3[] = new Array(n);
+        const tans: THREE.Vector3[] = new Array(n);
+        const tmp = new THREE.Vector3();
+
+        for (let i = 0; i < n; i++) {
+            const t = i / n;
+            pts[i] = this.curve.getPointAt(t);
+            tans[i] = this.curve.getTangentAt(t).normalize();
+        }
+
+        const getKappa = (i: number) => {
+            const i0 = (i - 1 + n) % n;
+            const i2 = (i + 1) % n;
+            const a = pts[i].clone().sub(pts[i0]);
+            const b = pts[i2].clone().sub(pts[i]);
+            const la = Math.max(1e-4, a.length());
+            const lb = Math.max(1e-4, b.length());
+            const angle = Math.acos(THREE.MathUtils.clamp(a.clone().normalize().dot(b.clone().normalize()), -1, 1));
+            const ds = 0.5 * (la + lb);
+            return angle / ds; // ≈ curvature
+        };
+
+        for (let it = 0; it < iters; it++) {
+            for (let i = 0; i < n; i++) {
+                const kappa = getKappa(i);
+                const kappaMax = (this.opts.minTurnRadiusMeters && this.opts.minTurnRadiusMeters > 0)
+                    ? 1 / this.opts.minTurnRadiusMeters : Infinity;
+                const limitEff = Math.min(limit, kappaMax);
+                if (kappa > limitEff) {
+                    // Move point toward averaged direction corridor
+                    const prev = pts[(i - 1 + n) % n];
+                    const next = pts[(i + 1) % n];
+                    const mid = tmp.copy(prev).add(next).multiplyScalar(0.5);
+                    // Severity factor
+                    const severity = THREE.MathUtils.clamp((kappa - limitEff) / limitEff, 0, 2);
+                    pts[i].lerp(mid, 0.25 * severity);
+                }
+            }
+            // Small Taubin-style smoothing to reduce shrinkage
+            const lambda = 0.28, mu = -0.24;
+            for (let i = 0; i < n; i++) {
+                const a = pts[(i - 1 + n) % n];
+                const b = pts[i];
+                const c = pts[(i + 1) % n];
+                const mid = tmp.copy(a).add(c).multiplyScalar(0.5);
+                const delta = mid.sub(b);
+                b.addScaledVector(delta, lambda);
+            }
+            for (let i = 0; i < n; i++) {
+                const a = pts[(i - 1 + n) % n];
+                const b = pts[i];
+                const c = pts[(i + 1) % n];
+                const mid = tmp.copy(a).add(c).multiplyScalar(0.5);
+                const delta = mid.sub(b);
+                b.addScaledVector(delta, mu);
+            }
+        }
+
+        // Optional jerk smoothing of curvature changes (G2-like)
+        const jerkLimit = this.opts.curvatureJerkLimit ?? 0;
+        const jerkIters = Math.max(0, (this.opts.jerkRelaxIters ?? 0) | 0);
+        if (jerkLimit > 0 && jerkIters > 0) {
+            const kappaAt = (i: number) => getKappa(i);
+            for (let it = 0; it < jerkIters; it++) {
+                for (let i = 0; i < n; i++) {
+                    const i0 = (i - 1 + n) % n;
+                    const i2 = (i + 1) % n;
+                    const kapPrev = kappaAt(i0);
+                    const kap = kappaAt(i);
+                    const kapNext = kappaAt(i2);
+                    const dsPrev = pts[i].clone().sub(pts[i0]).length();
+                    const dsNext = pts[i2].clone().sub(pts[i]).length();
+                    const ds = Math.max(1e-4, 0.5 * (dsPrev + dsNext));
+                    const avg = 0.5 * (kapPrev + kapNext);
+                    const delta = kap - avg;
+                    const limitDelta = jerkLimit * ds;
+                    if (Math.abs(delta) > limitDelta) {
+                        // Pull point toward neighbor midpoint to reduce curvature spike
+                        const prev = pts[i0];
+                        const next = pts[i2];
+                        const mid = prev.clone().add(next).multiplyScalar(0.5);
+                        const w = THREE.MathUtils.clamp((Math.abs(delta) - limitDelta) / Math.max(Math.abs(delta), 1e-6), 0, 1);
+                        pts[i].lerp(mid, 0.18 * w);
+                    }
+                }
+                // Light smoothing to keep noise down
+                const l2 = 0.18, m2 = -0.15;
+                for (let i = 0; i < n; i++) {
+                    const a = pts[(i - 1 + n) % n];
+                    const b = pts[i];
+                    const c = pts[(i + 1) % n];
+                    const mid = a.clone().add(c).multiplyScalar(0.5);
+                    b.addScaledVector(mid.sub(b), l2);
+                }
+                for (let i = 0; i < n; i++) {
+                    const a = pts[(i - 1 + n) % n];
+                    const b = pts[i];
+                    const c = pts[(i + 1) % n];
+                    const mid = a.clone().add(c).multiplyScalar(0.5);
+                    b.addScaledVector(mid.sub(b), m2);
+                }
+            }
+        }
+
+        // Rebuild curve from relaxed/jerk-smoothed samples
+        this.curve = new THREE.CatmullRomCurve3(pts, true, 'centripetal');
+    }
+
+    // --- Self-repel pass to avoid pinched corners / near self-intersections ----
+    private separateCloseSegments() {
+        const clearance = this.opts.minClearanceMeters ?? 0;
+        const iters = Math.max(0, (this.opts.selfRepelIters ?? 0) | 0);
+        if (!this.curve || clearance <= 0 || iters <= 0) return;
+
+        const n = Math.max(256, Math.min(this.samples, 2000));
+        const pts: THREE.Vector3[] = new Array(n);
+        for (let i = 0; i < n; i++) {
+            pts[i] = this.curve.getPointAt(i / n);
+        }
+
+        const neighborSkipMeters = this.opts.repelNeighborSkipMeters ?? (this.width * 0.8);
+        const minGap = Math.max(1, Math.floor((neighborSkipMeters / this.length) * n));
+        const clearance2 = clearance * clearance;
+
+        const dir = new THREE.Vector3();
+        for (let it = 0; it < iters; it++) {
+            for (let i = 0; i < n; i++) {
+                // Local radius around i to limit pair checks
+                for (let dj = minGap; dj < n - minGap; dj += 1) {
+                    const j = (i + dj) % n;
+                    // Ensure unique pairs
+                    if (j <= i) continue;
+                    const d2 = pts[i].distanceToSquared(pts[j]);
+                    if (d2 < clearance2) {
+                        const d = Math.sqrt(Math.max(d2, 1e-8));
+                        dir.subVectors(pts[j], pts[i]).multiplyScalar(1 / d);
+                        const push = (clearance - d) / clearance;
+                        const amt = 0.25 * push; // conservative
+                        // Move opposite directions; preserve loop centroid over many pairs
+                        pts[i].addScaledVector(dir, -amt);
+                        pts[j].addScaledVector(dir, +amt);
+                    }
+                }
+            }
+            // Light smoothing to prevent zig-zags
+            const lambda = 0.18, mu = -0.15;
+            for (let i = 0; i < n; i++) {
+                const a = pts[(i - 1 + n) % n];
+                const b = pts[i];
+                const c = pts[(i + 1) % n];
+                const mid = a.clone().add(c).multiplyScalar(0.5);
+                b.addScaledVector(mid.sub(b), lambda);
+            }
+            for (let i = 0; i < n; i++) {
+                const a = pts[(i - 1 + n) % n];
+                const b = pts[i];
+                const c = pts[(i + 1) % n];
+                const mid = a.clone().add(c).multiplyScalar(0.5);
+                b.addScaledVector(mid.sub(b), mu);
+            }
+        }
+
+        this.curve = new THREE.CatmullRomCurve3(pts, true, 'centripetal');
+    }
+
+    // --- Frame profiles --------------------------------------------------------
+    private applyFrameProfiles() {
+        const sections = FRAME_PROFILES;
+        if (!sections || sections.length === 0) return;
+
+        const n = this.samples;
+        const smoothstep = (x: number) => x * x * (3 - 2 * x);
+
+        for (let i = 0; i < n; i++) {
+            const t = i / n;
+
+            for (const s of sections) {
+                // Determine if t is within [startT,endT] with wrap
+                let inSection = false;
+                let localT = 0;
+                if (s.startT <= s.endT) {
+                    inSection = t >= s.startT && t <= s.endT;
+                    if (inSection) localT = (t - s.startT) / Math.max(1e-6, s.endT - s.startT);
+                } else {
+                    inSection = t >= s.startT || t <= s.endT;
+                    if (inSection) {
+                        const len = (1 - s.startT) + s.endT;
+                        localT = (t >= s.startT) ? (t - s.startT) / len : (1 - s.startT + t) / len;
+                    }
+                }
+                if (!inSection) continue;
+
+                // Edge feather
+                const feather = THREE.MathUtils.clamp(s.feather ?? 0.1, 0, 0.49);
+                let w = 1.0;
+                if (feather > 0) {
+                    const f0 = feather;
+                    const f1 = 1 - feather;
+                    if (localT < f0) w = smoothstep(localT / f0);
+                    else if (localT > f1) w = smoothstep((1 - localT) / feather);
+                }
+
+                // Compute roll/twist radians
+                const rollDeg = typeof s.rollDeg === 'function' ? s.rollDeg(localT, t) : (s.rollDeg ?? 0);
+                const twistDeg = typeof s.twistDeg === 'function' ? s.twistDeg(localT, t) : (s.twistDeg ?? 0);
+                const rollRad = THREE.MathUtils.degToRad(rollDeg) * w;
+                const twistRad = THREE.MathUtils.degToRad(twistDeg) * w;
+
+                const tan = this.cachedTangents[i];
+                const qRoll = new THREE.Quaternion().setFromAxisAngle(tan, rollRad);
+                const qTwist = new THREE.Quaternion().setFromAxisAngle(tan, twistRad);
+                const q = qRoll.multiply(qTwist);
+
+                this.cachedNormals[i].applyQuaternion(q);
+                this.cachedBinormals[i].applyQuaternion(q);
+
+                // Up bias
+                if (s.upBias) {
+                    const target =
+                        typeof s.upBias === 'function' ? s.upBias(localT, t) : s.upBias;
+                    if (target && Number.isFinite(target.x)) {
+                        const currentUp = this.cachedNormals[i].clone().normalize();
+                        const desiredUp = target.clone().normalize();
+                        // Build quaternion rotating currentUp toward desiredUp around tangent
+                        const axis = tan.clone().normalize();
+                        // project desired onto plane ⟂ axis
+                        const projDesired = desiredUp.sub(axis.clone().multiplyScalar(desiredUp.dot(axis))).normalize();
+                        const projCurrent = currentUp.sub(axis.clone().multiplyScalar(currentUp.dot(axis))).normalize();
+                        const dot = THREE.MathUtils.clamp(projCurrent.dot(projDesired), -1, 1);
+                        const ang = Math.acos(dot) * w;
+                        const qBias = new THREE.Quaternion().setFromAxisAngle(axis, ang);
+                        this.cachedNormals[i].applyQuaternion(qBias);
+                        this.cachedBinormals[i].applyQuaternion(qBias);
+                    }
+                }
+            }
+        }
+    }
+
+    // --- Debug visualization ---------------------------------------------------
+    private buildDebugVisualization() {
+        const group = new THREE.Group();
+        const step = Math.max(1, Math.floor(this.samples / 180));
+        const len = 2.0;
+        const matT = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.5, toneMapped: false });
+        const matN = new THREE.LineBasicMaterial({ color: 0x00ff00, transparent: true, opacity: 0.8, toneMapped: false });
+        const matB = new THREE.LineBasicMaterial({ color: 0x0000ff, transparent: true, opacity: 0.8, toneMapped: false });
+
+        for (let i = 0; i < this.samples; i += step) {
+            const p = this.cachedPositions[i];
+            const t = this.cachedTangents[i];
+            const n = this.cachedNormals[i];
+            const b = this.cachedBinormals[i];
+
+            const makeLine = (dir: THREE.Vector3, mat: THREE.LineBasicMaterial) => {
+                const g = new THREE.BufferGeometry().setFromPoints([
+                    p.clone(),
+                    p.clone().addScaledVector(dir, len)
+                ]);
+                const line = new THREE.Line(g, mat);
+                group.add(line);
+            };
+            makeLine(t, matT);
+            makeLine(n, matN);
+            makeLine(b, matB);
+        }
+
+        this.root.add(group);
     }
 
     public getPointAtT(t: number, target: THREE.Vector3): THREE.Vector3 {
@@ -987,6 +1435,57 @@ export class Track {
         return this.tunnelSegments;
     }
 
+    // Check if any track segments are inside the event horizon
+    public isTrackInsideEventHorizon(eventHorizonRadius: number, sampleCount: number = 100): boolean {
+        // Sample track positions to check if any are inside
+        const step = 1.0 / sampleCount;
+        for (let i = 0; i <= sampleCount; i++) {
+            const t = i * step;
+            const idx = Math.floor(THREE.MathUtils.euclideanModulo(t, 1) * this.samples) % this.samples;
+            const position = this.cachedPositions[idx];
+            const distance = position.length();
+
+            if (distance < eventHorizonRadius) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Check if the entire track is completely engulfed by the blackhole
+    public isTrackFullyEngulfed(coreRadius: number, sampleCount: number = 200): boolean {
+        // Sample track positions more densely to check if ALL are inside
+        const step = 1.0 / sampleCount;
+        for (let i = 0; i <= sampleCount; i++) {
+            const t = i * step;
+            const idx = Math.floor(THREE.MathUtils.euclideanModulo(t, 1) * this.samples) % this.samples;
+            const position = this.cachedPositions[idx];
+            const distance = position.length();
+
+            // If any point is outside, track is not fully engulfed
+            if (distance >= coreRadius) {
+                return false;
+            }
+        }
+        // All sampled points are inside
+        return true;
+    }
+
+    // Get ship world position based on track position
+    public getShipWorldPosition(t: number, lateralOffset: number, target: THREE.Vector3): THREE.Vector3 {
+        const normalizedT = THREE.MathUtils.euclideanModulo(t, 1);
+        const idx = Math.floor(normalizedT * this.samples) % this.samples;
+        const center = this.cachedPositions[idx];
+        const binormal = this.cachedBinormals[idx];
+        const normal = this.cachedNormals[idx];
+
+        target.copy(center)
+            .addScaledVector(binormal, lateralOffset)
+            .addScaledVector(normal, 0.3); // Ship hovers above track
+
+        return target;
+    }
+
     private buildBoostPads() {
         // Clear old boost pads
         if (this.boostPadGroup.parent) this.root.remove(this.boostPadGroup);
@@ -1017,6 +1516,194 @@ export class Track {
         }
 
         this.root.add(this.boostPadGroup);
+    }
+
+    private buildRamps() {
+        // Clear old ramps
+        if (this.rampGroup.parent) this.root.remove(this.rampGroup);
+        this.rampGroup = new THREE.Group();
+        this.ramps = [];
+        this.rampChevronMaterials = [];
+
+        const minStartT = RAMP.minStartOffset / this.length;
+        const count = Math.max(1, RAMP.count | 0);
+        const segLengthT = RAMP.lengthMeters / this.length;
+        const tStep = 5 / this.length; // 5m forward step when nudging out of tunnels
+
+        for (let i = 0; i < count; i++) {
+            let startT = THREE.MathUtils.euclideanModulo(minStartT + i * (1 / count), 1);
+
+            // Avoid tunnels: nudge forward until clear or after one full loop
+            let tries = 0;
+            const maxTries = Math.ceil(1 / tStep) + 2;
+            while (this.isTInAnyTunnel(startT) && tries < maxTries) {
+                startT = THREE.MathUtils.euclideanModulo(startT + tStep, 1);
+                tries++;
+            }
+
+            this.ramps.push({ t: startT, lengthT: segLengthT });
+            this.createRampVisual(startT, segLengthT);
+        }
+
+        this.root.add(this.rampGroup);
+    }
+
+    private isTInAnyTunnel(t: number): boolean {
+        const normalizedT = THREE.MathUtils.euclideanModulo(t, 1);
+        for (const tunnel of this.tunnelSegments) {
+            if (tunnel.startT <= tunnel.endT) {
+                if (normalizedT >= tunnel.startT && normalizedT <= tunnel.endT) return true;
+            } else {
+                // wrap case
+                if (normalizedT >= tunnel.startT || normalizedT <= tunnel.endT) return true;
+            }
+        }
+        return false;
+    }
+
+    private createRampVisual(startT: number, lengthT: number) {
+        // Create multiple chevrons indicating a launch zone; visually distinct from boost pads
+        const chevronCount = Math.max(3, Math.floor((RAMP.lengthMeters / 10)));
+        for (let i = 0; i < chevronCount; i++) {
+            const progress = i / chevronCount;
+            const t = startT + progress * lengthT;
+            const idx = Math.floor(THREE.MathUtils.euclideanModulo(t, 1) * this.samples) % this.samples;
+            const center = this.cachedPositions[idx];
+            const binormal = this.cachedBinormals[idx];
+            const up = this.cachedNormals[idx];
+            const tangent = this.cachedTangents[idx];
+
+            const color = new THREE.Color().lerpColors(RAMP.colorStart, RAMP.colorEnd, 0.5);
+            const chevronWidth = this.width * 0.9;
+            const chevronLength = 7.5; // slightly shorter segments
+            const chevronThickness = 1.5; // thicker bars to differentiate from boost pads
+
+            const tipOffset = chevronLength * 0.5;
+            const backOffset = -chevronLength * 0.5;
+            const sideOffset = chevronWidth * 0.5;
+
+            const tip = new THREE.Vector3()
+                .copy(center)
+                .addScaledVector(tangent, tipOffset)
+                .addScaledVector(up, RAMP.thickness);
+            const rightBack = new THREE.Vector3()
+                .copy(center)
+                .addScaledVector(tangent, backOffset)
+                .addScaledVector(binormal, sideOffset)
+                .addScaledVector(up, RAMP.thickness);
+            const leftBack = new THREE.Vector3()
+                .copy(center)
+                .addScaledVector(tangent, backOffset)
+                .addScaledVector(binormal, -sideOffset)
+                .addScaledVector(up, RAMP.thickness);
+
+            // Create shared animated materials for arrows (store for pulsing)
+            const chevronMat = new THREE.MeshBasicMaterial({
+                color: color,
+                transparent: true,
+                opacity: 0.8,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false,
+                toneMapped: false
+            });
+            this.rampChevronMaterials.push(chevronMat);
+            const chevronMat2 = chevronMat.clone();
+            this.rampChevronMaterials.push(chevronMat2);
+
+            // Build bars with animated materials
+            this.addChevronBarWithMaterial(tip, rightBack, chevronThickness, up, binormal, chevronMat, this.rampGroup);
+            this.addChevronBarWithMaterial(tip, leftBack, chevronThickness, up, binormal, chevronMat2, this.rampGroup);
+        }
+
+        // Add a subtle translucent plate spanning the ramp length for glow
+        // Build at the center of the ramp
+        const midT = THREE.MathUtils.euclideanModulo(startT + lengthT * 0.5, 1);
+        const midIdx = Math.floor(midT * this.samples) % this.samples;
+        const midCenter = this.cachedPositions[midIdx];
+        const midUp = this.cachedNormals[midIdx];
+        const midBin = this.cachedBinormals[midIdx];
+        const midTan = this.cachedTangents[midIdx];
+
+        const plateGeom = new THREE.PlaneGeometry(this.width * 0.98, RAMP.lengthMeters * 0.85);
+        const plateMat = new THREE.MeshBasicMaterial({
+            color: new THREE.Color().lerpColors(RAMP.colorStart, RAMP.colorEnd, 0.5),
+            transparent: true,
+            opacity: 0.22,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+            side: THREE.DoubleSide,
+            toneMapped: false
+        });
+        const plate = new THREE.Mesh(plateGeom, plateMat);
+        const z = midUp.clone().normalize(); // plane normal
+        const x = midBin.clone().normalize(); // width across track
+        const y = new THREE.Vector3().crossVectors(z, x).normalize(); // along track
+        const m = new THREE.Matrix4().makeBasis(x, y, z);
+        const q = new THREE.Quaternion().setFromRotationMatrix(m);
+        plate.quaternion.copy(q);
+        plate.position.copy(midCenter).addScaledVector(midUp, RAMP.thickness * 0.5);
+        this.rampGroup.add(plate);
+    }
+
+    public getRampAtT(t: number): RampInfo {
+        const normalizedT = THREE.MathUtils.euclideanModulo(t, 1);
+        for (const seg of this.ramps) {
+            const endT = seg.t + seg.lengthT;
+            if (endT <= 1.0) {
+                if (normalizedT >= seg.t && normalizedT <= endT) {
+                    return { onRamp: true };
+                }
+            } else {
+                const wrappedEndT = endT - 1.0;
+                if (normalizedT >= seg.t || normalizedT <= wrappedEndT) {
+                    return { onRamp: true };
+                }
+            }
+        }
+        return { onRamp: false };
+    }
+
+    // Animate ramp arrow opacity to create a forward-moving pulse
+    public updateRampAnimation(currentTime: number) {
+        if (this.rampChevronMaterials.length === 0) return;
+        const speed = 3.2; // wave speed
+        const base = 0.35;
+        const range = 0.6;
+        const count = this.rampChevronMaterials.length;
+        for (let i = 0; i < count; i++) {
+            const phase = (i / count) * Math.PI * 2;
+            const s = Math.sin(currentTime * speed + phase) * 0.5 + 0.5; // 0..1
+            const opacity = base + range * s;
+            const mat = this.rampChevronMaterials[i];
+            mat.opacity = opacity;
+        }
+    }
+
+    private addChevronBarWithMaterial(
+        start: THREE.Vector3,
+        end: THREE.Vector3,
+        thickness: number,
+        up: THREE.Vector3,
+        binormal: THREE.Vector3,
+        material: THREE.MeshBasicMaterial,
+        group: THREE.Group
+    ) {
+        const direction = new THREE.Vector3().subVectors(end, start);
+        const length = direction.length();
+        const center = new THREE.Vector3().addVectors(start, end).multiplyScalar(0.5);
+
+        const barGeom = new THREE.BoxGeometry(thickness, thickness * 0.5, length);
+        const bar = new THREE.Mesh(barGeom, material);
+        bar.position.copy(center);
+
+        const forward = direction.clone().normalize();
+        const right = new THREE.Vector3().crossVectors(up, forward).normalize();
+        const upNorm = new THREE.Vector3().crossVectors(forward, right).normalize();
+        const m = new THREE.Matrix4().makeBasis(right, upNorm, forward);
+        const q = new THREE.Quaternion().setFromRotationMatrix(m);
+        bar.quaternion.copy(q);
+
+        group.add(bar);
     }
 
     private createBoostPadVisual(startT: number, lengthT: number) {

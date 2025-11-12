@@ -52,6 +52,7 @@ export class RaceManager {
         const currentRacer = this.racers.get(this.playerId);
         if (currentRacer) {
             currentRacer.lapCurrent = playerState.lapCurrent;
+            currentRacer.t = playerState.t;
             currentRacer.finished = playerState.lapCurrent >= playerState.lapTotal;
 
             if (currentRacer.finished && !currentRacer.finishTime) {
@@ -64,6 +65,7 @@ export class RaceManager {
         const currentRacer = this.racers.get(racerId);
         if (currentRacer) {
             currentRacer.lapCurrent = npcState.lapCurrent;
+            currentRacer.t = npcState.t;
             currentRacer.finished = npcState.lapCurrent >= npcState.lapTotal;
 
             if (currentRacer.finished && !currentRacer.finishTime) {
@@ -72,25 +74,96 @@ export class RaceManager {
         }
     }
 
+    /**
+     * Calculate total progress through the race.
+     * This combines lap number and track position into a continuous value.
+     * Handles negative t values (before start line) and t wrapping (0-1).
+     * 
+     * Based on racing game best practices: combine checkpoint progress (lap) 
+     * with distance-to-next-checkpoint (t) into single comparable metric.
+     */
+    private calculateTotalProgress(racer: RacePosition): number {
+        const lapCurrent = racer.lapCurrent || 0;
+        let t = racer.t ?? 0;
+
+        // If racer hasn't started (negative t), keep negative value for proper sorting
+        // Negative values represent distance behind start line
+        // More negative = further behind, so higher (less negative) is ahead
+        if (t < 0) {
+            // For pre-race, use raw t value so racers can be properly sorted
+            // t = -0.01 is ahead of t = -0.02
+            return lapCurrent + t; // Keep negative, will sort correctly
+        }
+
+        // Normalize t to [0, 1) range (handle wrap-around beyond 1)
+        t = t % 1;
+        if (t < 0) {
+            t += 1;
+        }
+
+        // Total progress = lap number + progress within lap
+        // This creates a continuous value that never wraps
+        // Example: lap 2, t=0.5 = totalProgress 2.5
+        //         lap 1, t=0.8 = totalProgress 1.8  
+        // Higher totalProgress = ahead in race
+        return lapCurrent + t;
+    }
+
     public calculatePositions(): RacePosition[] {
         const allRacers = Array.from(this.racers.values());
 
-        // Sort by lap progress, then by track position within same lap
+        // Safety check: ensure we have racers to calculate
+        if (allRacers.length === 0) {
+            return [];
+        }
+
+        // Calculate progress per racer (used internally for sorting below)
+        // Note: detailed debug logging removed for performance and cleanliness
+
+        // Sort by total progress through the race (racing game standard approach)
         allRacers.sort((a, b) => {
-            // First by lap (higher is better)
-            if (a.lapCurrent !== b.lapCurrent) {
-                return b.lapCurrent - a.lapCurrent;
+            // Ensure both racers have valid data
+            if (!a || !b) return 0;
+
+            const progressA = this.calculateTotalProgress(a);
+            const progressB = this.calculateTotalProgress(b);
+
+            // Higher progress = ahead (sort descending)
+            // If finished, they're ahead of non-finished
+            if (a.finished !== b.finished) {
+                return a.finished ? -1 : 1; // Finished racers first
             }
 
-            // Then by track position (lower t is better for same lap)
-            // This is a simplified calculation - in a real implementation
-            // you'd need to track actual track positions
-            return 0; // For now, maintain current order
+            // Compare total progress (higher = ahead)
+            const diff = progressB - progressA;
+
+            // If very close (within floating point error), use tie-breaker
+            if (Math.abs(diff) < 0.0001) {
+                // Tie-breaker: compare raw t values for more precise sorting
+                const tA = a.t ?? 0;
+                const tB = b.t ?? 0;
+                const tDiff = tB - tA;
+
+                // If still tied, maintain stable order by racerId (consistent ordering)
+                if (Math.abs(tDiff) < 0.0001) {
+                    // Stable sort: compare racerIds alphabetically
+                    return a.racerId.localeCompare(b.racerId);
+                }
+
+                return tDiff;
+            }
+
+            return diff;
         });
 
-        // Assign positions
+        // Detailed sorted order logging removed
+
+        // Assign positions (1 = first place, 2 = second, etc.)
+        // Ensure position is always a valid number
         allRacers.forEach((racer, index) => {
-            racer.position = index + 1;
+            if (racer) {
+                racer.position = Math.max(1, index + 1);
+            }
         });
 
         return allRacers;
@@ -115,7 +188,12 @@ export class RaceManager {
 
     public getRaceResults(): RaceResults {
         const positions = this.calculatePositions();
-        const playerPosition = this.getPlayerPosition();
+        // Find player position from the calculated positions array
+        const playerRacer = positions.find(r => r.racerId === this.playerId);
+        // Ensure position is always a valid number (never undefined)
+        const playerPosition = (playerRacer?.position && !isNaN(playerRacer.position))
+            ? Math.floor(playerRacer.position)
+            : 1;
 
         return {
             positions,

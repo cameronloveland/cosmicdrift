@@ -1,0 +1,17 @@
+PLACEHOLDER: Player Manual Boost Sound
+========================================
+Replace this file with: boost.wav
+
+DESCRIPTION:
+- Player-triggered boost sound (when player presses boost key)
+- Short, aggressive whoosh/thrust sound
+- Non-looping, triggered once per boost activation
+- Target volume: ~60% (set in Audio.ts)
+
+RECOMMENDATIONS:
+- Duration: 0.3-0.8 seconds
+- Character: Aggressive, engine-like, thrust-forward
+- Should feel powerful and direct (player action)
+- More "punchy" than track boost pad sound
+- Examples: Rocket thruster, jet engine burst, energy surge
+

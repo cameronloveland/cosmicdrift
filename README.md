@@ -29,8 +29,14 @@ npm run preview
 Controls
 --------
 
-- WASD or Arrow keys: steer and pitch
+- A/D or ← →: steer (turn)
+- W/S or ↑ ↓: throttle / brake
+- Shift: hold to drift
 - Space: hold to boost, press to start
+
+Extras
+------
+- E: draft lock-on (when eligible)
 
 HUD
 ---
