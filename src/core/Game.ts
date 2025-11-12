@@ -10,6 +10,7 @@ import { ShipBoostParticles } from './ship/ShipBoostParticles';
 import { ShipSpeedStars } from './ship/ShipSpeedStars';
 import { AudioSystem } from './Audio';
 import { DriftTrail } from './ship/DriftTrail';
+import { DriftSpeedLines } from './ship/DriftSpeedLines';
 import { WormholeTunnel } from './WormholeTunnel';
 import { NPCShip } from './NPCShip';
 import { RaceManager } from './RaceManager';
@@ -58,6 +59,7 @@ export class Game {
     private env!: Environment;
     private shipBoost!: ShipBoostParticles;
     private driftTrail!: DriftTrail;
+    private driftSpeedLines!: DriftSpeedLines;
     private speedStars!: ShipSpeedStars;
     private wormholeTunnel!: WormholeTunnel;
     private shootingStars!: ShootingStars;
@@ -206,6 +208,10 @@ export class Game {
         // Drift trail effect (player color)
         this.driftTrail = new DriftTrail(this.track, this.ship.getColor());
         this.scene.add(this.driftTrail.root);
+
+        // Drift speed lines coming off the ship
+        this.driftSpeedLines = new DriftSpeedLines(this.ship, this.track);
+        this.scene.add(this.driftSpeedLines.root);
 
         // Drafting system
         this.drafting = new DraftingSystem();
@@ -807,6 +813,7 @@ export class Game {
             this.ui.showDraftLockHint(this.drafting.isEligible() && !this.drafting.isLocked());
             this.shipBoost.update(dt);
             this.driftTrail.update(dt, this.ship.state);
+            this.driftSpeedLines.update(dt);
             // NPC drift trails in free-fly updates too
             this.npcShips.forEach((npc, i) => this.npcDriftTrails[i]?.update(dt, npc.state));
             this.speedStars.update(dt);
@@ -865,6 +872,7 @@ export class Game {
             const visualDt = this.getEffectiveDt(dt);
             this.shipBoost.update(visualDt);
             this.driftTrail.update(visualDt, this.ship.state);
+            this.driftSpeedLines.update(visualDt);
             // NPC drift trails (visual)
             this.npcShips.forEach((npc, i) => this.npcDriftTrails[i]?.update(visualDt, npc.state));
             this.speedStars.update(visualDt, this.insideBlackholeProgress);

@@ -1,5 +1,5 @@
 import { Color, Vector3 } from 'three';
-import type { TrackOptions } from './types';
+import type { TrackOptions, FrameProfileSection } from './types';
 
 export const COLORS = {
     bgDeep: new Color(0x0a0324),
@@ -133,12 +133,37 @@ export const TRACK_OPTS: Readonly<TrackOptions> = {
     controlPointSmoothPasses: 10,
     minChord: 60,
     // radians; max angular change between rail segments before subdivision
-    railMaxAngle: 0.05
+    railMaxAngle: 0.05,
+    // Curvature-aware relax (clothoid-like)
+    curvatureLimit: 0.0020, // meters^-1 (lower → smoother corners)
+    curvatureRelaxIters: 5,
+    // Minimum turn radius and jerk smoothing
+    minTurnRadiusMeters: 90,
+    curvatureJerkLimit: 0.00004,
+    jerkRelaxIters: 2,
+    // Repel close segments to avoid pinched corners (>= track width * 3 recommended)
+    minClearanceMeters: 110, // widen hairpins; raise if tracks still pinch
+    selfRepelIters: 4,
+    repelNeighborSkipMeters: 18,
+    // Debug / profiles
+    debugFrames: false,
+    enableFrameProfiles: false
 };
 
 export const STARFIELD_MIN_RADIUS = 6000;
 
 export const CUSTOM_TRACK_POINTS: Vector3[] = [];
+
+// Bank profile multiplier over t in [0..1]
+// Allows shaping default computed banking (1.0 = unchanged)
+export function BANK_PROFILE(t: number): number {
+    // Subtle ease in straights (reduce banking around quarter points)
+    const s = Math.sin(t * Math.PI * 2);
+    return 0.9 + 0.1 * Math.abs(s); // 0.9..1.0
+}
+
+// Optional frame profile sections (empty by default)
+export const FRAME_PROFILES: FrameProfileSection[] = [];
 
 // Tunnel configuration
 export const TUNNEL = {
@@ -396,6 +421,18 @@ export const DRIFT = {
     sparkUpwardSpeed: 1.6, // base upward velocity (m/s)
     sparkLateralSpeed: 1.2, // across-track binormal jitter (m/s)
     sparkForwardSpeed: 0.6, // along-track forward push (m/s)
+    // Speed lines coming off the ship during drift
+    speedLines: {
+        maxCount: 260, // total instanced quads
+        spawnRateBase: 220, // per second at full speed (scaled by speed ratio)
+        lifetime: 0.28, // seconds
+        lengthMin: 0.6, // world units
+        lengthMax: 1.8, // world units
+        width: 0.03, // line thickness
+        spawnRadiusRight: 0.9, // around ship in right/up plane (world units; ship scaled x3)
+        spawnRadiusUp: 0.5,
+        opacity: 0.9
+    },
     // Control parameters for Shift-hold drifting
     driftGripFactor: 0.4,         // lower grip for more lateral slide
     driftDampingFactor: 0.35,     // lower damping while drifting

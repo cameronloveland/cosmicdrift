@@ -52,6 +52,22 @@ export type TrackOptions = {
     controlPointSmoothPasses: number; // Chaikin passes for controls
     minChord: number; // minimum distance between control points
     railMaxAngle: number; // max radians between rail segments before subdivision
+    // Curvature-aware relax pass
+    curvatureLimit?: number; // meters^-1 maximum allowed curvature (approx)
+    curvatureRelaxIters?: number; // iterations of relax pass
+    // Self-repel to avoid pinched corners (minimum separation between non-adjacent samples)
+    minClearanceMeters?: number; // desired minimum spacing between distant segments
+    selfRepelIters?: number; // iterations of repulsion pass
+    // Minimum turn radius and neighbor skip in meters
+    minTurnRadiusMeters?: number;
+    repelNeighborSkipMeters?: number;
+    // Curvature jerk smoothing (limit change of curvature along arc length)
+    curvatureJerkLimit?: number; // max allowed delta-kappa per meter
+    jerkRelaxIters?: number;
+    // Debug
+    debugFrames?: boolean;
+    // Enable section profiles
+    enableFrameProfiles?: boolean;
 };
 
 export type TrackSample = {
@@ -96,6 +112,23 @@ export type RampSegment = {
 
 export type RampInfo = {
     onRamp: boolean; // currently in a ramp trigger zone
+};
+
+// Frame profile system
+export type ScalarProfileFn = (localT: number, globalT: number) => number;
+export type VectorProfileFn = (localT: number, globalT: number) => Vector3;
+
+export type FrameProfileSection = {
+    startT: number; // inclusive
+    endT: number;   // inclusive (wrap supported)
+    // Additional roll (bank) in degrees along the section
+    rollDeg?: number | ScalarProfileFn;
+    // Additional twist (deg) around tangent, applied after roll
+    twistDeg?: number | ScalarProfileFn;
+    // Bias the up vector toward a target direction in world space
+    upBias?: Vector3 | VectorProfileFn;
+    // Edge feather as fraction of section length (0..0.5)
+    feather?: number;
 };
 
 export type RacePosition = {

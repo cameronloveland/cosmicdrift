@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { COLORS, TRACK_OPTS, TRACK_SOURCE, CUSTOM_TRACK_POINTS, TUNNEL, BOOST_PAD, RAMP } from './constants';
+import { COLORS, TRACK_OPTS, TRACK_SOURCE, CUSTOM_TRACK_POINTS, TUNNEL, BOOST_PAD, RAMP, BANK_PROFILE, FRAME_PROFILES } from './constants';
 import type { TrackOptions, TrackSample, TunnelSegment, TunnelInfo, BoostPadSegment, BoostPadInfo, RampSegment, RampInfo } from './types';
 
 function mulberry32(seed: number) {
@@ -86,6 +86,10 @@ export class Track {
                 return;
             }
         }
+        // Optional curvature-aware relax (before arc-length and length fetch)
+        this.relaxByCurvature();
+        this.separateCloseSegments();
+
         // Increase arc length precision to remove quantization artifacts
         this.curve.arcLengthDivisions = Math.max(200, this.samples * 16);
 
@@ -119,6 +123,11 @@ export class Track {
         this.buildRamps();
         this.buildStartLine(); // Build after tunnels so we can position relative to first tunnel
         this.updateTrackAlphaForTunnels();
+
+        // Optional debug helpers
+        if (this.opts.debugFrames) {
+            this.buildDebugVisualization();
+        }
     }
 
     private makeControlPoints(opts: TrackOptions): THREE.Vector3[] {
@@ -238,7 +247,11 @@ export class Track {
             const d = new THREE.Vector3().crossVectors(tmpPrevTangent, tan);
             const curveStrength = THREE.MathUtils.clamp(d.length(), 0, this.opts.maxCurvature * 100); // heuristic scale
             const sign = Math.sign(d.y || 0);
-            const bank = THREE.MathUtils.degToRad(this.opts.bankMaxDeg) * curveStrength * sign;
+            let bank = THREE.MathUtils.degToRad(this.opts.bankMaxDeg) * curveStrength * sign;
+            // Apply bank profile shaping
+            try {
+                bank *= BANK_PROFILE(t);
+            } catch { }
             this.cachedBank[i] = bank;
             tmpPrevTangent.copy(tan);
         }
@@ -277,6 +290,11 @@ export class Track {
             const q = new THREE.Quaternion().setFromAxisAngle(this.cachedTangents[i], bank);
             this.cachedNormals[i].applyQuaternion(q);
             this.cachedBinormals[i].applyQuaternion(q);
+        }
+
+        // Optional per-section frame customization
+        if (TRACK_OPTS.enableFrameProfiles && FRAME_PROFILES.length > 0) {
+            this.applyFrameProfiles();
         }
     }
 
@@ -1024,6 +1042,284 @@ export class Track {
 
     public updateResolution(width: number, height: number) {
         // No longer needed with TubeGeometry rails
+    }
+
+    // --- Curvature-aware relax -------------------------------------------------
+    private relaxByCurvature() {
+        const limit = this.opts.curvatureLimit ?? 0;
+        const iters = Math.max(0, (this.opts.curvatureRelaxIters ?? 0) | 0);
+        if (!this.curve || limit <= 0 || iters <= 0) return;
+
+        // Sample a manageable number of points (tie to samples but cap for cost)
+        const n = Math.max(256, Math.min(this.samples, 3000));
+        const pts: THREE.Vector3[] = new Array(n);
+        const tans: THREE.Vector3[] = new Array(n);
+        const tmp = new THREE.Vector3();
+
+        for (let i = 0; i < n; i++) {
+            const t = i / n;
+            pts[i] = this.curve.getPointAt(t);
+            tans[i] = this.curve.getTangentAt(t).normalize();
+        }
+
+        const getKappa = (i: number) => {
+            const i0 = (i - 1 + n) % n;
+            const i2 = (i + 1) % n;
+            const a = pts[i].clone().sub(pts[i0]);
+            const b = pts[i2].clone().sub(pts[i]);
+            const la = Math.max(1e-4, a.length());
+            const lb = Math.max(1e-4, b.length());
+            const angle = Math.acos(THREE.MathUtils.clamp(a.clone().normalize().dot(b.clone().normalize()), -1, 1));
+            const ds = 0.5 * (la + lb);
+            return angle / ds; // ≈ curvature
+        };
+
+        for (let it = 0; it < iters; it++) {
+            for (let i = 0; i < n; i++) {
+                const kappa = getKappa(i);
+                const kappaMax = (this.opts.minTurnRadiusMeters && this.opts.minTurnRadiusMeters > 0)
+                    ? 1 / this.opts.minTurnRadiusMeters : Infinity;
+                const limitEff = Math.min(limit, kappaMax);
+                if (kappa > limitEff) {
+                    // Move point toward averaged direction corridor
+                    const prev = pts[(i - 1 + n) % n];
+                    const next = pts[(i + 1) % n];
+                    const mid = tmp.copy(prev).add(next).multiplyScalar(0.5);
+                    // Severity factor
+                    const severity = THREE.MathUtils.clamp((kappa - limitEff) / limitEff, 0, 2);
+                    pts[i].lerp(mid, 0.25 * severity);
+                }
+            }
+            // Small Taubin-style smoothing to reduce shrinkage
+            const lambda = 0.28, mu = -0.24;
+            for (let i = 0; i < n; i++) {
+                const a = pts[(i - 1 + n) % n];
+                const b = pts[i];
+                const c = pts[(i + 1) % n];
+                const mid = tmp.copy(a).add(c).multiplyScalar(0.5);
+                const delta = mid.sub(b);
+                b.addScaledVector(delta, lambda);
+            }
+            for (let i = 0; i < n; i++) {
+                const a = pts[(i - 1 + n) % n];
+                const b = pts[i];
+                const c = pts[(i + 1) % n];
+                const mid = tmp.copy(a).add(c).multiplyScalar(0.5);
+                const delta = mid.sub(b);
+                b.addScaledVector(delta, mu);
+            }
+        }
+
+        // Optional jerk smoothing of curvature changes (G2-like)
+        const jerkLimit = this.opts.curvatureJerkLimit ?? 0;
+        const jerkIters = Math.max(0, (this.opts.jerkRelaxIters ?? 0) | 0);
+        if (jerkLimit > 0 && jerkIters > 0) {
+            const kappaAt = (i: number) => getKappa(i);
+            for (let it = 0; it < jerkIters; it++) {
+                for (let i = 0; i < n; i++) {
+                    const i0 = (i - 1 + n) % n;
+                    const i2 = (i + 1) % n;
+                    const kapPrev = kappaAt(i0);
+                    const kap = kappaAt(i);
+                    const kapNext = kappaAt(i2);
+                    const dsPrev = pts[i].clone().sub(pts[i0]).length();
+                    const dsNext = pts[i2].clone().sub(pts[i]).length();
+                    const ds = Math.max(1e-4, 0.5 * (dsPrev + dsNext));
+                    const avg = 0.5 * (kapPrev + kapNext);
+                    const delta = kap - avg;
+                    const limitDelta = jerkLimit * ds;
+                    if (Math.abs(delta) > limitDelta) {
+                        // Pull point toward neighbor midpoint to reduce curvature spike
+                        const prev = pts[i0];
+                        const next = pts[i2];
+                        const mid = prev.clone().add(next).multiplyScalar(0.5);
+                        const w = THREE.MathUtils.clamp((Math.abs(delta) - limitDelta) / Math.max(Math.abs(delta), 1e-6), 0, 1);
+                        pts[i].lerp(mid, 0.18 * w);
+                    }
+                }
+                // Light smoothing to keep noise down
+                const l2 = 0.18, m2 = -0.15;
+                for (let i = 0; i < n; i++) {
+                    const a = pts[(i - 1 + n) % n];
+                    const b = pts[i];
+                    const c = pts[(i + 1) % n];
+                    const mid = a.clone().add(c).multiplyScalar(0.5);
+                    b.addScaledVector(mid.sub(b), l2);
+                }
+                for (let i = 0; i < n; i++) {
+                    const a = pts[(i - 1 + n) % n];
+                    const b = pts[i];
+                    const c = pts[(i + 1) % n];
+                    const mid = a.clone().add(c).multiplyScalar(0.5);
+                    b.addScaledVector(mid.sub(b), m2);
+                }
+            }
+        }
+
+        // Rebuild curve from relaxed/jerk-smoothed samples
+        this.curve = new THREE.CatmullRomCurve3(pts, true, 'centripetal');
+    }
+
+    // --- Self-repel pass to avoid pinched corners / near self-intersections ----
+    private separateCloseSegments() {
+        const clearance = this.opts.minClearanceMeters ?? 0;
+        const iters = Math.max(0, (this.opts.selfRepelIters ?? 0) | 0);
+        if (!this.curve || clearance <= 0 || iters <= 0) return;
+
+        const n = Math.max(256, Math.min(this.samples, 2000));
+        const pts: THREE.Vector3[] = new Array(n);
+        for (let i = 0; i < n; i++) {
+            pts[i] = this.curve.getPointAt(i / n);
+        }
+
+        const neighborSkipMeters = this.opts.repelNeighborSkipMeters ?? (this.width * 0.8);
+        const minGap = Math.max(1, Math.floor((neighborSkipMeters / this.length) * n));
+        const clearance2 = clearance * clearance;
+
+        const dir = new THREE.Vector3();
+        for (let it = 0; it < iters; it++) {
+            for (let i = 0; i < n; i++) {
+                // Local radius around i to limit pair checks
+                for (let dj = minGap; dj < n - minGap; dj += 1) {
+                    const j = (i + dj) % n;
+                    // Ensure unique pairs
+                    if (j <= i) continue;
+                    const d2 = pts[i].distanceToSquared(pts[j]);
+                    if (d2 < clearance2) {
+                        const d = Math.sqrt(Math.max(d2, 1e-8));
+                        dir.subVectors(pts[j], pts[i]).multiplyScalar(1 / d);
+                        const push = (clearance - d) / clearance;
+                        const amt = 0.25 * push; // conservative
+                        // Move opposite directions; preserve loop centroid over many pairs
+                        pts[i].addScaledVector(dir, -amt);
+                        pts[j].addScaledVector(dir, +amt);
+                    }
+                }
+            }
+            // Light smoothing to prevent zig-zags
+            const lambda = 0.18, mu = -0.15;
+            for (let i = 0; i < n; i++) {
+                const a = pts[(i - 1 + n) % n];
+                const b = pts[i];
+                const c = pts[(i + 1) % n];
+                const mid = a.clone().add(c).multiplyScalar(0.5);
+                b.addScaledVector(mid.sub(b), lambda);
+            }
+            for (let i = 0; i < n; i++) {
+                const a = pts[(i - 1 + n) % n];
+                const b = pts[i];
+                const c = pts[(i + 1) % n];
+                const mid = a.clone().add(c).multiplyScalar(0.5);
+                b.addScaledVector(mid.sub(b), mu);
+            }
+        }
+
+        this.curve = new THREE.CatmullRomCurve3(pts, true, 'centripetal');
+    }
+
+    // --- Frame profiles --------------------------------------------------------
+    private applyFrameProfiles() {
+        const sections = FRAME_PROFILES;
+        if (!sections || sections.length === 0) return;
+
+        const n = this.samples;
+        const smoothstep = (x: number) => x * x * (3 - 2 * x);
+
+        for (let i = 0; i < n; i++) {
+            const t = i / n;
+
+            for (const s of sections) {
+                // Determine if t is within [startT,endT] with wrap
+                let inSection = false;
+                let localT = 0;
+                if (s.startT <= s.endT) {
+                    inSection = t >= s.startT && t <= s.endT;
+                    if (inSection) localT = (t - s.startT) / Math.max(1e-6, s.endT - s.startT);
+                } else {
+                    inSection = t >= s.startT || t <= s.endT;
+                    if (inSection) {
+                        const len = (1 - s.startT) + s.endT;
+                        localT = (t >= s.startT) ? (t - s.startT) / len : (1 - s.startT + t) / len;
+                    }
+                }
+                if (!inSection) continue;
+
+                // Edge feather
+                const feather = THREE.MathUtils.clamp(s.feather ?? 0.1, 0, 0.49);
+                let w = 1.0;
+                if (feather > 0) {
+                    const f0 = feather;
+                    const f1 = 1 - feather;
+                    if (localT < f0) w = smoothstep(localT / f0);
+                    else if (localT > f1) w = smoothstep((1 - localT) / feather);
+                }
+
+                // Compute roll/twist radians
+                const rollDeg = typeof s.rollDeg === 'function' ? s.rollDeg(localT, t) : (s.rollDeg ?? 0);
+                const twistDeg = typeof s.twistDeg === 'function' ? s.twistDeg(localT, t) : (s.twistDeg ?? 0);
+                const rollRad = THREE.MathUtils.degToRad(rollDeg) * w;
+                const twistRad = THREE.MathUtils.degToRad(twistDeg) * w;
+
+                const tan = this.cachedTangents[i];
+                const qRoll = new THREE.Quaternion().setFromAxisAngle(tan, rollRad);
+                const qTwist = new THREE.Quaternion().setFromAxisAngle(tan, twistRad);
+                const q = qRoll.multiply(qTwist);
+
+                this.cachedNormals[i].applyQuaternion(q);
+                this.cachedBinormals[i].applyQuaternion(q);
+
+                // Up bias
+                if (s.upBias) {
+                    const target =
+                        typeof s.upBias === 'function' ? s.upBias(localT, t) : s.upBias;
+                    if (target && Number.isFinite(target.x)) {
+                        const currentUp = this.cachedNormals[i].clone().normalize();
+                        const desiredUp = target.clone().normalize();
+                        // Build quaternion rotating currentUp toward desiredUp around tangent
+                        const axis = tan.clone().normalize();
+                        // project desired onto plane ⟂ axis
+                        const projDesired = desiredUp.sub(axis.clone().multiplyScalar(desiredUp.dot(axis))).normalize();
+                        const projCurrent = currentUp.sub(axis.clone().multiplyScalar(currentUp.dot(axis))).normalize();
+                        const dot = THREE.MathUtils.clamp(projCurrent.dot(projDesired), -1, 1);
+                        const ang = Math.acos(dot) * w;
+                        const qBias = new THREE.Quaternion().setFromAxisAngle(axis, ang);
+                        this.cachedNormals[i].applyQuaternion(qBias);
+                        this.cachedBinormals[i].applyQuaternion(qBias);
+                    }
+                }
+            }
+        }
+    }
+
+    // --- Debug visualization ---------------------------------------------------
+    private buildDebugVisualization() {
+        const group = new THREE.Group();
+        const step = Math.max(1, Math.floor(this.samples / 180));
+        const len = 2.0;
+        const matT = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.5, toneMapped: false });
+        const matN = new THREE.LineBasicMaterial({ color: 0x00ff00, transparent: true, opacity: 0.8, toneMapped: false });
+        const matB = new THREE.LineBasicMaterial({ color: 0x0000ff, transparent: true, opacity: 0.8, toneMapped: false });
+
+        for (let i = 0; i < this.samples; i += step) {
+            const p = this.cachedPositions[i];
+            const t = this.cachedTangents[i];
+            const n = this.cachedNormals[i];
+            const b = this.cachedBinormals[i];
+
+            const makeLine = (dir: THREE.Vector3, mat: THREE.LineBasicMaterial) => {
+                const g = new THREE.BufferGeometry().setFromPoints([
+                    p.clone(),
+                    p.clone().addScaledVector(dir, len)
+                ]);
+                const line = new THREE.Line(g, mat);
+                group.add(line);
+            };
+            makeLine(t, matT);
+            makeLine(n, matN);
+            makeLine(b, matB);
+        }
+
+        this.root.add(group);
     }
 
     public getPointAtT(t: number, target: THREE.Vector3): THREE.Vector3 {

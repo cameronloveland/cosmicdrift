@@ -5,6 +5,7 @@ import { COLORS, PHYSICS, POST, BOOST_PAD } from '../constants';
 import type { Ship } from './Ship';
 import { ShipRocketTail } from './ShipRocketTail';
 import { DriftTrail } from './DriftTrail';
+import { DriftSpeedLines } from './DriftSpeedLines';
 import { DraftingParticles } from './drafting/DraftingParticles';
 import { DraftingVectorLines } from './drafting/DraftingVectorLines';
 import type { ShipState } from '../types';
@@ -62,8 +63,10 @@ export class ShipViewer {
 
     // Drifting visuals
     private driftTrail: DriftTrail | null = null;
+    private driftSpeedLines: DriftSpeedLines | null = null;
     private miniTrack: { width: number; length: number; getPointAtT: (t: number, pos: THREE.Vector3) => void; getFrenetFrame: (t: number, n: THREE.Vector3, b: THREE.Vector3, tan: THREE.Vector3) => void } | null = null;
     private driftState: ShipState | null = null;
+    private speedLinesShipProxy: { root: THREE.Group; state: { isDrifting: boolean; speedKmh: number; t: number }; getColor: () => THREE.Color } | null = null;
 
     // Boost particles
     private shipBoostParticles: ShipBoostParticles | null = null;
@@ -434,6 +437,17 @@ export class ShipViewer {
         this.driftTrail = new DriftTrail(this.miniTrack as any, COLORS.neonCyan);
         this.scene?.add(this.driftTrail.root);
 
+        // Drift speed lines (viewer-local) using mini track + proxy ship
+        if (this.viewerShip) {
+            this.speedLinesShipProxy = {
+                root: this.viewerShip,
+                state: { isDrifting: false, speedKmh: 160, t: 0 },
+                getColor: () => COLORS.neonCyan
+            };
+            this.driftSpeedLines = new DriftSpeedLines(this.speedLinesShipProxy as any, this.miniTrack as any, { useTrackForward: true });
+            this.scene?.add(this.driftSpeedLines.root);
+        }
+
         this.driftState = {
             t: 0,
             speedKmh: 160,
@@ -672,6 +686,14 @@ export class ShipViewer {
         const L = this.miniTrack.length;
         this.driftState.t = (this.driftState.t + (mps * dt) / L) % 1;
         this.driftTrail.update(dt, this.driftState);
+
+        // Drive drift speed lines with same simulated state
+        if (this.driftSpeedLines && this.speedLinesShipProxy) {
+            this.speedLinesShipProxy.state.isDrifting = active;
+            this.speedLinesShipProxy.state.speedKmh = this.driftState.speedKmh;
+            this.speedLinesShipProxy.state.t = this.driftState.t;
+            this.driftSpeedLines.update(dt);
+        }
     }
 
     private updateDrafting(dt: number) {

@@ -60,7 +60,7 @@ export class DriftTrail {
         this.color = color.clone();
         this.maxPoints = DRIFT.trailMaxSegments; // reuse existing limit
         // Use dedicated narrow width for wing-tip tails
-        this.baseHalfWidth = (DRIFT.wingTailHalfWidthMeters ?? 0.06);
+        this.baseHalfWidth = (0.06);
 
         // Allocate buffers for each ribbon (2 verts per point)
         const maxVerts = this.maxPoints * 2;
