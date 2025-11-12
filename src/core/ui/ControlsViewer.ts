@@ -77,6 +77,24 @@ export class ControlsViewer {
                             Hold Space
                         </span>
                     </div>
+
+                    <div style="
+                        display: flex;
+                        justify-content: space-between;
+                        align-items: center;
+                        padding: 20px 30px;
+                        background: linear-gradient(90deg, rgba(83, 215, 255, .1), rgba(255, 43, 214, .05));
+                        border: 1px solid rgba(255, 255, 255, .1);
+                        border-radius: 8px;
+                        transition: all 0.3s ease;
+                    ">
+                        <span style="font-size: 16px; font-weight: 600; color: rgba(255, 255, 255, 0.9);">
+                            Drift
+                        </span>
+                        <span style="font-size: 14px; font-weight: 400; color: rgba(83, 215, 255, 1); font-family: monospace;">
+                            Hold Shift
+                        </span>
+                    </div>
                     
                     <div style="
                         display: flex;

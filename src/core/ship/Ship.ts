@@ -39,7 +39,8 @@ export class Ship {
     private verticalVelocity = 0;
     private velocityRoll = 0;
     private baseSpeedKmh = 0; // throttle-controlled non-boost speed
-    private driftYaw = 0; // visual yaw used during boost drifting
+    private driftYaw = 0; // visual yaw used during drifting
+    private driftSlipAngle = 0; // additional yaw offset to show body slip while drifting
     // Turn hold → sideways bank state
     private turnHoldTimer = 0;
     private turnHoldDir = 0; // -1 left, 1 right, 0 none
@@ -94,6 +95,8 @@ export class Ship {
     private shipMaterial!: THREE.MeshStandardMaterial;
     public jetEngine!: ShipJetEngine;
     public rocketTail!: ShipRocketTail;
+    // Auto-throttle after race start until user provides input
+    private autoThrottleActive = false;
 
     private tmp = {
         pos: new THREE.Vector3(),
@@ -460,7 +463,7 @@ export class Ship {
         this.cameraControlEnabled = false;
     }
 
-    public input = { left: false, right: false, up: false, down: false, boost: false, yawLeft: false, yawRight: false };
+    public input = { left: false, right: false, up: false, down: false, boost: false, yawLeft: false, yawRight: false, drift: false };
 
     private onKey(e: KeyboardEvent, down: boolean) {
         // Only process input if input is enabled (not during countdown)
@@ -473,6 +476,8 @@ export class Ship {
         if (e.code === 'ArrowUp' || e.code === 'KeyW') this.input.up = down;     // throttle
         if (e.code === 'ArrowDown' || e.code === 'KeyS') this.input.down = down; // brake (no reverse)
         if (e.code === 'Space') this.input.boost = down;
+        // Drift (hold)
+        if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') this.input.drift = down;
         // Disable Q/E yaw in new scheme (ignored)
         if (e.code === 'KeyQ') this.input.yawLeft = false;
         if (e.code === 'KeyE') this.input.yawRight = false;
@@ -518,6 +523,8 @@ export class Ship {
         this.input.boost = false;
         this.input.yawLeft = false;
         this.input.yawRight = false;
+        this.input.drift = false;
+        // Do not change autoThrottle here; preserve state across pause/free-fly
     }
 
     setCameraControl(enabled: boolean) {
@@ -549,6 +556,8 @@ export class Ship {
         this.prevT = this.state.t;
         this.lapStartTime = this.now; // Initialize lap start time
         this.lapTime = 0; // Reset lap time
+        // Enable gentle auto-throttle so ship begins moving without W
+        this.autoThrottleActive = true;
     }
 
     reset() {
@@ -675,6 +684,10 @@ export class Ship {
 
         const manual = isBoosting ? PHYSICS.boostMultiplier : 1;
 
+        // Precompute yaw input and drift state early (used by speed reward below)
+        const yawInput = (this.input.right ? 1 : 0) - (this.input.left ? 1 : 0);
+        const driftActive = (this.input.drift && Math.abs(yawInput) > 0.01);
+
         // Tunnel boost logic: progressive boost based on center alignment
         const tunnelInfo = this.track.getTunnelAtT(this.state.t, this.state.lateralOffset);
         this.state.inTunnel = tunnelInfo.inTunnel;
@@ -741,19 +754,45 @@ export class Ship {
         const reachedMaxNonBoost = this.baseSpeedKmh >= PHYSICS.maxNonBoostKmh - 0.001;
         if (throttleHeld) {
             this.baseSpeedKmh = Math.min(PHYSICS.maxNonBoostKmh, this.baseSpeedKmh + PHYSICS.throttleAccelKmhPerSec * dt);
+            // User provided input; disable auto-throttle
+            this.autoThrottleActive = false;
         } else if (brakeHeld) {
             this.baseSpeedKmh = Math.max(0, this.baseSpeedKmh - PHYSICS.brakeDecelKmhPerSec * dt);
+            this.autoThrottleActive = false;
         } else {
-            // Coast behavior: decay unless at max non-boost speed; hold when at max
-            if (reachedMaxNonBoost) {
-                this.baseSpeedKmh = PHYSICS.maxNonBoostKmh;
+            if (this.autoThrottleActive) {
+                // Gently ramp toward a baseline cruising speed without user input
+                const cruise = PHYSICS.baseSpeed;
+                const accel = PHYSICS.throttleAccelKmhPerSec * 0.6;
+                if (this.baseSpeedKmh < cruise) {
+                    this.baseSpeedKmh = Math.min(cruise, this.baseSpeedKmh + accel * dt);
+                } else if (!reachedMaxNonBoost) {
+                    // If above cruise but below non-boost max, let normal decay handle it
+                    this.baseSpeedKmh = Math.max(cruise, this.baseSpeedKmh - PHYSICS.coastDecelKmhPerSec * dt);
+                }
             } else {
-                this.baseSpeedKmh = Math.max(0, this.baseSpeedKmh - PHYSICS.coastDecelKmhPerSec * dt);
+                // Coast behavior: decay unless at max non-boost speed; hold when at max
+                if (reachedMaxNonBoost) {
+                    this.baseSpeedKmh = PHYSICS.maxNonBoostKmh;
+                } else {
+                    this.baseSpeedKmh = Math.max(0, this.baseSpeedKmh - PHYSICS.coastDecelKmhPerSec * dt);
+                }
             }
         }
 
         // Apply environment multipliers after base cap
         let targetSpeed = this.baseSpeedKmh * manual * this.tunnelBoostAccumulator * this.boostPadMultiplier;
+        // Drift speed reward: increase target speed when drifting, scaled by slip angle
+        if (driftActive) {
+            const slipFrac = THREE.MathUtils.clamp(Math.abs(this.driftSlipAngle) / Math.max(1e-6, DRIFT.slipAngleMaxRad), 0, 1);
+            const k = THREE.MathUtils.clamp((DRIFT.driftSpeedFromSlip ?? 1.0) * slipFrac, 0, 1);
+            const driftMult = THREE.MathUtils.lerp(
+                (DRIFT.driftSpeedMinMultiplier ?? 1.0),
+                (DRIFT.driftSpeedMaxMultiplier ?? 1.0),
+                k
+            );
+            targetSpeed *= driftMult;
+        }
 
         // Drafting can raise target above multiplier path if needed
         if (this.draftingActive) {
@@ -838,9 +877,11 @@ export class Ship {
         this.hasCrossedCheckpointThisFrame = false;
 
         // Yaw-driven turning: A/D (or arrows) control yaw and lateral
-        const yawInput = (this.input.right ? 1 : 0) - (this.input.left ? 1 : 0);
-        const targetSideVel = yawInput * PHYSICS.lateralAccel;
-        this.velocitySide = THREE.MathUtils.damp(this.velocitySide, targetSideVel, PHYSICS.lateralDamping, dt);
+        let targetSideVel = yawInput * PHYSICS.lateralAccel;
+        // Reduce grip and damping while drifting for a slippy feel
+        const lateralDamping = driftActive ? (PHYSICS.lateralDamping * DRIFT.driftDampingFactor) : PHYSICS.lateralDamping;
+        if (driftActive) targetSideVel *= DRIFT.driftGripFactor;
+        this.velocitySide = THREE.MathUtils.damp(this.velocitySide, targetSideVel, lateralDamping, dt);
 
         // Force velocitySide to 0 when there's no input and it's very small (prevents drift)
         if (Math.abs(yawInput) < 0.01 && Math.abs(this.velocitySide) < 0.01) {
@@ -877,79 +918,92 @@ export class Ship {
         const turningActive = dir !== 0;
         let desiredRoll = this.state.roll;
 
-        // Update hold timers and direction state
-        if (turningActive) {
-            if (this.turnHoldDir === 0 || this.turnHoldDir === dir) {
-                this.turnHoldTimer += dt;
-                this.turnHoldDir = dir;
-            } else {
-                // Direction changed while holding: reset timers and sideways state
-                this.turnHoldDir = dir;
-                this.turnHoldTimer = 0;
-                this.rollSideReached = false;
-                this.rollSideDir = 0;
-                this.rollSidePauseTimer = 0;
-                this.rollReturnAnimating = false;
-                this.rollReturnProgress = 0;
-            }
-        } else {
-            // Not turning: stop accumulating hold timer
+        if (driftActive) {
+            // While drifting, ship should not roll: force target roll to 0 and reset roll state machine
+            desiredRoll = 0;
+            this.turnHoldTimer = 0;
             this.turnHoldDir = 0;
-        }
-
-        // Determine desired roll
-        if (turningActive) {
-            // Cancel any pending return if user resumes holding turn
-            if (this.rollReturnAnimating) {
-                this.rollReturnAnimating = false;
-                this.rollReturnProgress = 0;
-            }
-            // Ramp toward sideways
-            const progress = THREE.MathUtils.clamp(this.turnHoldTimer / PHYSICS.rollHoldToSideSec, 0, 1);
-            const targetSide = dir * PHYSICS.rollSideAngle;
-            desiredRoll = THREE.MathUtils.lerp(0, targetSide, progress);
-            // Mark sideways reached
-            if (progress >= 1) {
-                this.rollSideReached = true;
-                this.rollSideDir = dir;
-                // While holding, keep timer at pause minimum but we don't use it until release
-            } else {
-                // Not yet sideways; ensure pause timer not accumulating
-                this.rollSidePauseTimer = 0;
-            }
+            this.rollSideReached = false;
+            this.rollSideDir = 0;
+            this.rollSidePauseTimer = 0;
+            this.rollReturnAnimating = false;
+            this.rollReturnProgress = 0;
         } else {
-            // Not turning: if sideways was reached before, enforce a pause at sideways, then return
-            if (this.rollSideReached && !this.rollReturnAnimating) {
-                // Accumulate pause time at full sideways
-                this.rollSidePauseTimer += dt;
-                desiredRoll = this.rollSideDir * PHYSICS.rollSideAngle;
-                if (this.rollSidePauseTimer >= PHYSICS.rollSidePauseSec) {
-                    // Begin return to level at same rate it took to reach sideways
-                    this.rollReturnAnimating = true;
-                    this.rollReturnProgress = 0;
-                    this.rollReturnStartAngle = this.state.roll;
-                }
-            } else if (this.rollReturnAnimating) {
-                // Animate return to level over rollHoldToSideSec
-                this.rollReturnProgress = Math.min(1, this.rollReturnProgress + dt / PHYSICS.rollHoldToSideSec);
-                desiredRoll = THREE.MathUtils.lerp(this.rollReturnStartAngle, 0, this.rollReturnProgress);
-                if (this.rollReturnProgress >= 1) {
-                    // Reset all state after completing return
-                    this.rollReturnAnimating = false;
+            // Update hold timers and direction state
+            if (turningActive) {
+                if (this.turnHoldDir === 0 || this.turnHoldDir === dir) {
+                    this.turnHoldTimer += dt;
+                    this.turnHoldDir = dir;
+                } else {
+                    // Direction changed while holding: reset timers and sideways state
+                    this.turnHoldDir = dir;
+                    this.turnHoldTimer = 0;
                     this.rollSideReached = false;
                     this.rollSideDir = 0;
                     this.rollSidePauseTimer = 0;
-                    this.turnHoldTimer = 0;
+                    this.rollReturnAnimating = false;
+                    this.rollReturnProgress = 0;
                 }
             } else {
-                // No special state: simple return to level
-                desiredRoll = 0;
-                // Reset hold timer to avoid unintended progress accumulation on next press
-                this.turnHoldTimer = 0;
+                // Not turning: stop accumulating hold timer
+                this.turnHoldDir = 0;
+            }
+
+            // Determine desired roll
+            if (turningActive) {
+                // Cancel any pending return if user resumes holding turn
+                if (this.rollReturnAnimating) {
+                    this.rollReturnAnimating = false;
+                    this.rollReturnProgress = 0;
+                }
+                // Ramp toward sideways
+                const progress = THREE.MathUtils.clamp(this.turnHoldTimer / PHYSICS.rollHoldToSideSec, 0, 1);
+                const targetSide = dir * PHYSICS.rollSideAngle;
+                desiredRoll = THREE.MathUtils.lerp(0, targetSide, progress);
+                // Mark sideways reached
+                if (progress >= 1) {
+                    this.rollSideReached = true;
+                    this.rollSideDir = dir;
+                    // While holding, keep timer at pause minimum but we don't use it until release
+                } else {
+                    // Not yet sideways; ensure pause timer not accumulating
+                    this.rollSidePauseTimer = 0;
+                }
+            } else {
+                // Not turning: if sideways was reached before, enforce a pause at sideways, then return
+                if (this.rollSideReached && !this.rollReturnAnimating) {
+                    // Accumulate pause time at full sideways
+                    this.rollSidePauseTimer += dt;
+                    desiredRoll = this.rollSideDir * PHYSICS.rollSideAngle;
+                    if (this.rollSidePauseTimer >= PHYSICS.rollSidePauseSec) {
+                        // Begin return to level at same rate it took to reach sideways
+                        this.rollReturnAnimating = true;
+                        this.rollReturnProgress = 0;
+                        this.rollReturnStartAngle = this.state.roll;
+                    }
+                } else if (this.rollReturnAnimating) {
+                    // Animate return to level over rollHoldToSideSec
+                    this.rollReturnProgress = Math.min(1, this.rollReturnProgress + dt / PHYSICS.rollHoldToSideSec);
+                    desiredRoll = THREE.MathUtils.lerp(this.rollReturnStartAngle, 0, this.rollReturnProgress);
+                    if (this.rollReturnProgress >= 1) {
+                        // Reset all state after completing return
+                        this.rollReturnAnimating = false;
+                        this.rollSideReached = false;
+                        this.rollSideDir = 0;
+                        this.rollSidePauseTimer = 0;
+                        this.turnHoldTimer = 0;
+                    }
+                } else {
+                    // No special state: simple return to level
+                    desiredRoll = 0;
+                    // Reset hold timer to avoid unintended progress accumulation on next press
+                    this.turnHoldTimer = 0;
+                }
             }
         }
 
-        this.state.roll = THREE.MathUtils.damp(this.state.roll, desiredRoll, PHYSICS.rollDamping, dt);
+        const rollDamping = driftActive ? (PHYSICS.rollDamping * 3.0) : PHYSICS.rollDamping;
+        this.state.roll = THREE.MathUtils.damp(this.state.roll, desiredRoll, rollDamping, dt);
         this.velocityRoll = 0;
 
         // Vertical behavior: spring toward base hover height (no free flight)
@@ -973,9 +1027,9 @@ export class Ship {
             }
         }
 
-        // Drift detection: turning (yaw-driven) AND boosting simultaneously
+        // Drift detection: hold Shift while turning (replaces boost+turn)
         const isTurning = Math.abs(yawInput) > 0.01;
-        const isDriftingNow = isTurning && isBoosting;
+        const isDriftingNow = driftActive;
 
         // Update drift state
         if (isDriftingNow && !this.wasDrifting) {
@@ -1058,10 +1112,17 @@ export class Ship {
 
         // Apply rotations independently using Euler angles for player input
         // Standard approach in racing games: base orientation from track, inputs as separate Euler rotations
-        // Base yaw from input (reduced so roll visually dominates); slight amplification while boosting
-        const baseYaw = -yawInput * CAMERA.shipYawFromInput * 0.4;
-        const driftYawTarget = isBoosting && turning ? baseYaw * 1.15 : baseYaw;
-        this.driftYaw = THREE.MathUtils.damp(this.driftYaw, driftYawTarget, isBoosting ? 6 : 10, dt);
+        // Base yaw from input (stronger multiplier while drifting for sideways look)
+        const baseYawMult = driftActive ? 1.1 : 0.5;
+        let baseYaw = -yawInput * CAMERA.shipYawFromInput * baseYawMult;
+        // Amplify yaw slightly while drifting for readability
+        if (driftActive) baseYaw *= DRIFT.yawGainWhileDrifting;
+        // Build/decay a slip angle while drifting to show body sliding relative to path
+        const slipDir = yawInput > 0 ? 1 : (yawInput < 0 ? -1 : 0);
+        const slipTarget = driftActive ? slipDir * DRIFT.slipAngleMaxRad : 0;
+        this.driftSlipAngle = THREE.MathUtils.damp(this.driftSlipAngle, slipTarget, driftActive ? DRIFT.slipBuild : DRIFT.slipDecay, dt);
+        const driftYawTarget = baseYaw + this.driftSlipAngle;
+        this.driftYaw = THREE.MathUtils.damp(this.driftYaw, driftYawTarget, driftActive ? 12 : 10, dt);
         const shipYaw = this.driftYaw;
         const rollAngle = this.state.roll;
 

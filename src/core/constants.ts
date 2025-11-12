@@ -395,7 +395,18 @@ export const DRIFT = {
     sparkSize: 0.06, // world units
     sparkUpwardSpeed: 1.6, // base upward velocity (m/s)
     sparkLateralSpeed: 1.2, // across-track binormal jitter (m/s)
-    sparkForwardSpeed: 0.6 // along-track forward push (m/s)
+    sparkForwardSpeed: 0.6, // along-track forward push (m/s)
+    // Control parameters for Shift-hold drifting
+    driftGripFactor: 0.4,         // lower grip for more lateral slide
+    driftDampingFactor: 0.35,     // lower damping while drifting
+    yawGainWhileDrifting: 2.2,    // stronger visual yaw during drift
+    slipAngleMaxRad: 0.9,         // up to ~52° slip for very sideways look
+    slipBuild: 10.0,              // faster slip build
+    slipDecay: 12.0,              // faster slip decay
+    // Speed reward while drifting (arcade-style)
+    driftSpeedMinMultiplier: 1.06, // base speed bonus when drifting starts
+    driftSpeedMaxMultiplier: 1.18, // max speed bonus at max slip
+    driftSpeedFromSlip: 1.0        // weighting from slip fraction (0..1) to bonus
 };
 
 // NPC lane preference tuning

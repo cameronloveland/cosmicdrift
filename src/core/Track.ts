@@ -213,10 +213,19 @@ export class Track {
             const tan = this.curve.getTangentAt(t).normalize();
             if (i === 0) tmpPrevTangent.copy(tan);
 
-            // Parallel transport: adjust normal to stay perpendicular and smooth
+            // Parallel transport with degeneracy fallback:
             // project previous normal onto plane perpendicular to current tangent
             tmp.copy(tmpNormal).sub(tan.clone().multiplyScalar(tmpNormal.dot(tan))).normalize();
-            if (!Number.isFinite(tmp.x)) tmp.set(0, 1, 0);
+            // Fallbacks to avoid degeneracy/flip
+            if (!Number.isFinite(tmp.x) || tmp.length() < 0.1) {
+                const cross = new THREE.Vector3().crossVectors(tan, tmpNormal);
+                if (cross.length() > 0.01) {
+                    tmp.copy(cross).cross(tan).normalize();
+                } else {
+                    const arbitrary = Math.abs(tan.x) < 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+                    tmp.copy(arbitrary).sub(tan.clone().multiplyScalar(arbitrary.dot(tan))).normalize();
+                }
+            }
             tmpNormal.copy(tmp);
             tmpBinormal.copy(tan).cross(tmpNormal).normalize();
 
@@ -293,7 +302,8 @@ export class Track {
         const indices: number[] = [];
 
         // Initialize with full opacity - we'll update this after tunnels are built
-        for (let i = 0; i <= segments; i++) {
+        // Build exactly 'segments' vertices (no duplicate seam)
+        for (let i = 0; i < segments; i++) {
             const idx = i % segments;
             const center = this.cachedPositions[idx];
             const binormal = this.cachedBinormals[idx];
@@ -321,8 +331,8 @@ export class Track {
         for (let i = 0; i < segments; i++) {
             const a = i * 2;
             const b = a + 1;
-            const c = a + 2;
-            const d = a + 3;
+            const c = ((i + 1) % segments) * 2;
+            const d = c + 1;
             indices.push(a, b, d, a, d, c);
         }
 
@@ -855,7 +865,7 @@ export class Track {
         const colors = colorAttr.array as Float32Array;
 
         // For each vertex pair (left and right edge of track)
-        for (let i = 0; i <= this.samples; i++) {
+        for (let i = 0; i < this.samples; i++) {
             const idx = i % this.samples;
             const t = idx / this.samples;
 
